@@ -109,18 +109,19 @@ export async function handleJornadaFlow(ctx, res) {
 
     const codigoEquipo = msgUpper.replace("REPORTE:", "").trim();
 
-    // Buscar equipo: código interno exacto -> patente exacta -> sufijo de patente
-    // (algunos operadores reconocen el equipo por los últimos dígitos de la patente, ej. "25")
+    // Buscar equipo: código interno exacto -> patente exacta -> partes compuestas -> sufijo de patente
     let equipo = null;
     let equiposAmbiguos = null;
 
+    // 1. Coincidencia exacta por codigo_interno
     const { data: porCodigo } = await supabase
       .from("equipos")
       .select("*, proyectos(*)")
-      .eq("codigo_interno", codigoEquipo)
+      .ilike("codigo_interno", codigoEquipo)
       .maybeSingle();
     equipo = porCodigo;
 
+    // 2. Coincidencia exacta por patente
     if (!equipo) {
       const { data: porPatente } = await supabase
         .from("equipos")
@@ -130,7 +131,39 @@ export async function handleJornadaFlow(ctx, res) {
       equipo = porPatente;
     }
 
-    if (!equipo && codigoEquipo.length >= 2 && codigoEquipo.length <= 4) {
+    // 3. Si viene con formato compuesto (ej: "RTEX-0006 - LPPX-47"), buscar por sus subpartes
+    if (!equipo) {
+      const subpartes = codigoEquipo.split(/\s*[-–—]\s{1,}|\s{1,}[-–—]\s*|\s*[/|]\s*/).map(p => p.trim()).filter(Boolean);
+      for (const p of subpartes) {
+        if (p.length < 2) continue;
+        const { data: pEq } = await supabase
+          .from("equipos")
+          .select("*, proyectos(*)")
+          .or(`codigo_interno.ilike.${p},patente.ilike.${p}`)
+          .maybeSingle();
+        if (pEq) {
+          equipo = pEq;
+          break;
+        }
+      }
+    }
+
+    // 4. Búsqueda por contención (cuando en la BD dice "RTEX-0007 - LPPX-46" y el operador ingresa "RTEX-0007" o "LPPX-46")
+    if (!equipo) {
+      const { data: porContencion } = await supabase
+        .from("equipos")
+        .select("*, proyectos(*)")
+        .or(`codigo_interno.ilike.%${codigoEquipo}%,patente.ilike.%${codigoEquipo}%`);
+
+      if (porContencion && porContencion.length === 1) {
+        equipo = porContencion[0];
+      } else if (porContencion && porContencion.length > 1) {
+        equiposAmbiguos = porContencion;
+      }
+    }
+
+    // 5. Sufijo de patente (2 a 4 caracteres)
+    if (!equipo && !equiposAmbiguos && codigoEquipo.length >= 2 && codigoEquipo.length <= 4) {
       const { data: porSufijo } = await supabase
         .from("equipos")
         .select("*, proyectos(*)")
@@ -310,9 +343,21 @@ export async function handleJornadaFlow(ctx, res) {
     const equipoActivo = reporteActivo?.equipos;
 
     const patenteActiva = (equipoActivo?.patente || "").toUpperCase();
+    const codigoActivo = (equipoActivo?.codigo_interno || "").toUpperCase();
+
+    // Subpartes del código escaneado (ej: si viene "RTEX-0007 - LPPX-46")
+    const subpartesScan = codigoScan.split(/\s*[-–—]\s{1,}|\s{1,}[-–—]\s*|\s*[/|]\s*/).map(p => p.trim()).filter(Boolean);
+
     const esMismoEquipo = equipoActivo && (
-      equipoActivo.codigo_interno.toUpperCase() === codigoScan ||
-      (patenteActiva && (patenteActiva === codigoScan || patenteActiva.endsWith(codigoScan)))
+      codigoActivo === codigoScan ||
+      codigoActivo.includes(codigoScan) ||
+      codigoScan.includes(codigoActivo) ||
+      (patenteActiva && (
+        patenteActiva === codigoScan ||
+        patenteActiva.endsWith(codigoScan) ||
+        codigoScan.includes(patenteActiva)
+      )) ||
+      subpartesScan.some(p => p === codigoActivo || (patenteActiva && p === patenteActiva))
     );
 
     if (esMismoEquipo) {

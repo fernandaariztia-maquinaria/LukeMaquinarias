@@ -27,9 +27,15 @@ export default async function handler(req, res) {
   const { phone, jid, message, audio, image, localImagePath, senderPn, location } = req.body;
   const geminiKey = process.env.GEMINI_API_KEY;
   
-  let searchPhone = senderPn || phone || "";
-  if (typeof searchPhone === "string") {
-    searchPhone = searchPhone.split("@")[0].split(":")[0];
+  let searchPhone = senderPn || "";
+  if (!searchPhone && jid && typeof jid === "string" && jid.includes("@s.whatsapp.net")) {
+    searchPhone = jid.split("@")[0].split(":")[0];
+  }
+  if (!searchPhone) {
+    searchPhone = phone || "";
+    if (typeof searchPhone === "string") {
+      searchPhone = searchPhone.split("@")[0].split(":")[0];
+    }
   }
   const phoneClean = searchPhone.replace(/[^0-9]/g, "");
 

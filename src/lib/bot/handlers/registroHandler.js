@@ -6,11 +6,60 @@ async function resolverEquipoYProyecto(supabase, codigoEquipo) {
   const c = (codigoEquipo || "").trim();
   if (!c) return null;
 
-  const { data: equipo } = await supabase
+  // 1. Coincidencia exacta por codigo_interno
+  let { data: equipo } = await supabase
     .from("equipos")
-    .select("id, codigo_interno, descripcion_equipo, proyecto_actual_id, proyectos(id, nombre_proyecto, codigo_cc)")
+    .select("id, codigo_interno, descripcion_equipo, proyecto_actual_id, patente, proyectos(id, nombre_proyecto, codigo_cc)")
     .ilike("codigo_interno", c)
     .maybeSingle();
+
+  // 2. Coincidencia exacta por patente
+  if (!equipo) {
+    const { data: eqPat } = await supabase
+      .from("equipos")
+      .select("id, codigo_interno, descripcion_equipo, proyecto_actual_id, patente, proyectos(id, nombre_proyecto, codigo_cc)")
+      .ilike("patente", c)
+      .maybeSingle();
+    equipo = eqPat;
+  }
+
+  // 3. Si viene con formato "CODIGO - PATENTE", extraer las partes separadas por guión con espacio o slash
+  if (!equipo) {
+    const subpartes = c.split(/\s*[-–—]\s{1,}|\s{1,}[-–—]\s*|\s*[/|]\s*/).map(p => p.trim()).filter(Boolean);
+    for (const p of subpartes) {
+      if (p.length < 2) continue;
+      const { data: pEq } = await supabase
+        .from("equipos")
+        .select("id, codigo_interno, descripcion_equipo, proyecto_actual_id, patente, proyectos(id, nombre_proyecto, codigo_cc)")
+        .or(`codigo_interno.ilike.${p},patente.ilike.${p}`)
+        .maybeSingle();
+      if (pEq) {
+        equipo = pEq;
+        break;
+      }
+    }
+  }
+
+  // 4. Búsqueda por contención o prefijo (ej: en la BD dice "RTEX-0007 - LPPX-46" y el operador escribe "RTEX-0007" o "LPPX-46")
+  if (!equipo) {
+    const { data: porContencion } = await supabase
+      .from("equipos")
+      .select("id, codigo_interno, descripcion_equipo, proyecto_actual_id, patente, proyectos(id, nombre_proyecto, codigo_cc)")
+      .or(`codigo_interno.ilike.%${c}%,patente.ilike.%${c}%`);
+
+    if (porContencion && porContencion.length === 1) {
+      equipo = porContencion[0];
+    }
+  }
+
+  // 5. Búsqueda de sufijo de patente (2 a 4 caracteres)
+  if (!equipo && c.length >= 2 && c.length <= 4) {
+    const { data: porSufijo } = await supabase
+      .from("equipos")
+      .select("id, codigo_interno, descripcion_equipo, proyecto_actual_id, patente, proyectos(id, nombre_proyecto, codigo_cc)")
+      .ilike("patente", `%${c}`);
+    if (porSufijo && porSufijo.length === 1) equipo = porSufijo[0];
+  }
 
   return equipo;
 }
@@ -67,6 +116,12 @@ export async function handleRegistroFlow(ctx, res) {
 
   const msgText = (message || "").trim();
   const prefix = "REGISTRO:";
+
+  let rutContexto = null;
+  let equipoContexto = null;
+  let nombreDirecto = null;
+  const SUFIJOS_RESERVADOS = ["OPERADOR", "RIGGER", "SUPERVISOR", "JEFE DE AREA", "ADMINISTRADOR"];
+
   // Caso prioritario: Si la solicitud ya fue enviada y está pendiente de aprobación por el Admin
   if (registroPendiente?.estado === "pendiente") {
     const rol = registroPendiente.rol_solicitado || "Operador";
@@ -88,11 +143,19 @@ export async function handleRegistroFlow(ctx, res) {
     }
 
     // Verificar si viene con payload de equipo: ej. NUEVO_EQ_EIMI00387 o EQ_EIMI00387 (delimitado antes de _RUT_)
-    const matchEq = resto.match(/(?:NUEVO_)?EQ_([a-zA-Z0-9-]+?)(?:_RUT_|_RUT:|$)/i);
+    const matchEq = resto.match(/(?:NUEVO_)?EQ_([a-zA-Z0-9 -]+?)(?:_RUT_|_RUT:|$)/i);
     if (matchEq) {
       equipoContexto = await resolverEquipoYProyecto(supabase, matchEq[1]);
     } else if (resto && !SUFIJOS_RESERVADOS.includes(resto.toUpperCase())) {
       nombreDirecto = resto;
+    }
+  }
+
+  // Detección de código de equipo escaneado por operador no registrado (ej: REPORTE:RTEX-0007 - LPPX-46 o REPORTE:EIMI00387)
+  if (msgText.toUpperCase().startsWith("REPORTE:")) {
+    const codEquipo = msgText.slice("REPORTE:".length).trim();
+    if (codEquipo) {
+      equipoContexto = await resolverEquipoYProyecto(supabase, codEquipo);
     }
   }
 
