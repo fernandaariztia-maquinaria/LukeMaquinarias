@@ -50,11 +50,12 @@ export default async function handler(req, res) {
 
     // 2. Obtener el número de teléfono del bot de WhatsApp
     const { data: configBot } = await supabase
+      .schema("maquinaria")
       .from("configuracion_bot")
       .select("valor")
       .eq("clave", "bot_phone")
       .maybeSingle();
-    const botPhone = configBot?.valor || "56911110001";
+    const botPhone = configBot?.valor || "56940470139";
 
     let operador = null;
     let reportes = [];

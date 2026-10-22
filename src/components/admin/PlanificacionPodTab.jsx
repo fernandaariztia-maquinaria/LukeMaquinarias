@@ -872,7 +872,7 @@ export default function PlanificacionPodTab({ hookProps, currentUser, setCurrent
 
   // ── URL del QR → WhatsApp directo para unirse sin abrir web ──
   const projectCode = proyectoActivoInfo?.codigo_cc || proyectoActivoId || "";
-  const cleanBotPhone = botPhone ? botPhone.replace(/[^0-9]/g, "") : "56911110001";
+  const cleanBotPhone = botPhone ? botPhone.replace(/[^0-9]/g, "") : "56940470139";
   const podJoinUrl = projectCode
     ? `https://wa.me/${cleanBotPhone}?text=PARTICIPAR_POD_${projectCode}`
     : "";

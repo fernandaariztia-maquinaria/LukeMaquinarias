@@ -32,21 +32,27 @@ export default function QrPuente() {
   }, []);
 
   const handleSaveBotPhone = async () => {
-    if (!botPhone.trim()) return;
+    const cleanPhone = botPhone.replace(/[^0-9]/g, "");
+    if (!cleanPhone) {
+      setToastMsg("⚠️ Ingresa un número válido");
+      setTimeout(() => setToastMsg(null), 3000);
+      return;
+    }
     setSavingBotPhone(true);
     try {
       const r = await fetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ valor: botPhone.trim() }),
+        body: JSON.stringify({ valor: cleanPhone }),
       });
       const json = await r.json();
       if (json.success) {
+        setBotPhone(cleanPhone);
         setToastMsg("✅ Guardado con éxito");
         setTimeout(() => setToastMsg(null), 3000);
       } else {
-        setToastMsg("❌ Error al guardar");
-        setTimeout(() => setToastMsg(null), 3000);
+        setToastMsg(`❌ ${json.error || json.message || "Error al guardar"}`);
+        setTimeout(() => setToastMsg(null), 4000);
       }
     } catch (e) {
       console.error(e);

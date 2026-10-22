@@ -258,11 +258,11 @@ export function useAdminMaquinaria(proyectoActivoId, rolActual = null) {
         if (json.success && json.valor) {
           setBotPhone(json.valor);
         } else {
-          setBotPhone("56911110001");
+          setBotPhone("56940470139");
         }
       } catch (e) {
         console.error("Error al cargar configuración del bot:", e);
-        setBotPhone("56911110001");
+        setBotPhone("56940470139");
       }
     };
     loadBotPhone();

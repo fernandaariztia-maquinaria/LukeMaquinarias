@@ -19,7 +19,7 @@ export default function PodJoin() {
   const [joined, setJoined] = useState(null);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
-  const [botPhone, setBotPhone] = useState("56911110001");
+  const [botPhone, setBotPhone] = useState("56940470139");
 
   // Cargar configuración del bot
   useEffect(() => {
