@@ -6,7 +6,7 @@ const WhatsAppIcon = ({ size = 18, color = "currentColor" }) => (
   </svg>
 );
 
-export default function PersonalAvatar({ persona, rolEtiqueta, cfgBorder }) {
+export default function PersonalAvatar({ persona, rolEtiqueta, cfgBorder, mostrarTexto = true }) {
   const [isHovered, setIsHovered] = useState(false);
   const [imgError, setImgError] = useState(false);
   if (!persona) return null;
@@ -28,7 +28,13 @@ export default function PersonalAvatar({ persona, rolEtiqueta, cfgBorder }) {
 
   return (
     <div
-      style={{ position: "relative", display: "inline-block" }}
+      style={{
+        position: "relative",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "8px",
+        maxWidth: "100%",
+      }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -53,8 +59,9 @@ export default function PersonalAvatar({ persona, rolEtiqueta, cfgBorder }) {
           boxShadow: isHovered
             ? "0 4px 10px rgba(37, 211, 102, 0.35)"
             : "0 1px 3px rgba(0, 0, 0, 0.08)",
-          transform: isHovered ? "scale(1.12)" : "scale(1)",
+          transform: isHovered ? "scale(1.08)" : "scale(1)",
           transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+          flexShrink: 0,
         }}
       >
         {isHovered && whatsappUrl ? (
@@ -73,7 +80,39 @@ export default function PersonalAvatar({ persona, rolEtiqueta, cfgBorder }) {
         )}
       </div>
 
-      {/* Tooltip con solo el nombre */}
+      {/* Nombre y Cargo al lado de la foto */}
+      {mostrarTexto && (
+        <div style={{ display: "flex", flexDirection: "column", minWidth: 0, lineHeight: 1.25 }}>
+          <span
+            title={persona.nombre_completo}
+            style={{
+              fontSize: "12px",
+              fontWeight: 700,
+              color: "var(--color-text)",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              maxWidth: "150px",
+            }}
+          >
+            {persona.nombre_completo}
+          </span>
+          {rolEtiqueta && (
+            <span
+              style={{
+                fontSize: "10px",
+                fontWeight: 600,
+                color: cfgBorder || "var(--color-text-muted)",
+                letterSpacing: "0.2px",
+              }}
+            >
+              {rolEtiqueta}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Tooltip con información y WhatsApp al pasar el mouse */}
       {isHovered && (
         <div
           style={{
@@ -83,7 +122,7 @@ export default function PersonalAvatar({ persona, rolEtiqueta, cfgBorder }) {
             transform: "translateX(-50%)",
             background: "#0f172a",
             color: "#ffffff",
-            padding: "4px 9px",
+            padding: "5px 10px",
             borderRadius: "6px",
             fontSize: "11px",
             fontWeight: 600,
@@ -91,13 +130,13 @@ export default function PersonalAvatar({ persona, rolEtiqueta, cfgBorder }) {
             boxShadow: "0 4px 12px rgba(0, 0, 0, 0.25)",
             pointerEvents: "none",
             zIndex: 100,
-            lineHeight: 1.2,
+            lineHeight: 1.3,
           }}
         >
           <div>{persona.nombre_completo}</div>
           {rolEtiqueta && (
-            <div style={{ fontSize: "9px", color: "#94a3b8", fontWeight: 500, marginTop: "2px" }}>
-              {rolEtiqueta}
+            <div style={{ fontSize: "9px", color: "#94a3b8", fontWeight: 500 }}>
+              {rolEtiqueta} {whatsappUrl ? "• Clic para WhatsApp 💬" : ""}
             </div>
           )}
           <div
