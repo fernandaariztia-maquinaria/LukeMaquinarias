@@ -17,7 +17,7 @@ export default function Home() {
         alignItems: "center",
         background: "#0a1120",
         color: "#f8fafc",
-        fontFamily: "'Plus Jakarta Sans', sans-serif",
+        fontFamily: "'Poppins', sans-serif",
         padding: "2rem",
       }}>
         <h1 style={{ fontSize: "3rem", marginBottom: "1rem" }}>

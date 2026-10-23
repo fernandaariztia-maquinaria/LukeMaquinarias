@@ -294,7 +294,7 @@ export default function QrPuente() {
         }
 
         body {
-          font-family: 'Outfit', sans-serif;
+          font-family: 'Poppins', sans-serif;
           background: var(--bg-app);
           color: var(--color-text);
           min-height: 100vh;

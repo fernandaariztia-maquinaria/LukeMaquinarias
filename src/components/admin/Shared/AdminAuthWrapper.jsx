@@ -261,12 +261,12 @@ export default function AdminAuthWrapper({ children }) {
         <Head>
           <title>Iniciar Sesión — LukeEquipos</title>
           <link rel="preconnect" href="https://fonts.googleapis.com" />
-          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+          <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
         </Head>
         <div style={{
           minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
           background: "radial-gradient(circle at center, #121e36, #090f1e)",
-          fontFamily: "'Inter', sans-serif", color: "white", padding: "24px",
+          fontFamily: "'Poppins', sans-serif", color: "white", padding: "24px",
         }}>
           <div style={{ position: "absolute", width: "350px", height: "350px", background: "rgba(255, 48, 62, 0.12)", borderRadius: "50%", filter: "blur(90px)", pointerEvents: "none", zIndex: 0 }} />
 

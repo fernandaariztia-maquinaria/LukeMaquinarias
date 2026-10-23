@@ -112,12 +112,12 @@ export default function PodJoin() {
         <Head>
           <title>¡En la Sala POD! — LukeEquipos</title>
           <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" />
+          <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet" />
         </Head>
         <div style={{
           minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
           background: "radial-gradient(ellipse at center, #071a0e 0%, #040d08 100%)",
-          fontFamily: "'Inter', sans-serif", color: "white", padding: "24px",
+          fontFamily: "'Poppins', sans-serif", color: "white", padding: "24px",
           textAlign: "center",
         }}>
           {/* Orbe de fondo animado */}
@@ -246,12 +246,12 @@ export default function PodJoin() {
       <Head>
         <title>Unirse al POD — LukeEquipos</title>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" />
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet" />
       </Head>
       <div style={{
         minHeight: "100vh",
         background: "radial-gradient(ellipse at top, #0f1f2e 0%, #060d14 100%)",
-        fontFamily: "'Inter', sans-serif", color: "white",
+        fontFamily: "'Poppins', sans-serif", color: "white",
         display: "flex", flexDirection: "column",
       }}>
         {/* Header */}

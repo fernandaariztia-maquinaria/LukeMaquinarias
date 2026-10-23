@@ -934,7 +934,7 @@ export default function QrLanding() {
         }
 
         body {
-          font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          font-family: 'Poppins', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
           background: #0a1120;
           color: #f8fafc;
           min-height: 100vh;

@@ -117,7 +117,7 @@ function AdminMaquinariaContent({ currentUser, setCurrentUser, onChangeUser, onS
         minHeight: "100vh",
         backgroundImage: "linear-gradient(rgba(253, 253, 251, 0.94), rgba(253, 253, 251, 0.94)), url('https://www.arcus-global.com/wp/wp-content/uploads/2016/04/mquinaria-arcus-global_opt.jpg')",
         backgroundSize: "cover", backgroundPosition: "center", backgroundAttachment: "fixed",
-        fontFamily: "'Inter', sans-serif", color: "var(--color-text)",
+        fontFamily: "'Poppins', sans-serif", color: "var(--color-text)",
       }}>
 
         {/* ========== SIDEBAR ========== */}

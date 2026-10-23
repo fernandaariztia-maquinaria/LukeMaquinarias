@@ -1310,7 +1310,7 @@ export default function PlanificacionPodTab({ hookProps, currentUser, setCurrent
   // RENDER
   // ================================================================
   return (
-    <div style={{ padding: "20px 24px", maxWidth: "1600px", fontFamily: "'Inter', sans-serif" }}>
+    <div style={{ padding: "20px 24px", maxWidth: "1600px", fontFamily: "'Poppins', sans-serif" }}>
       {/* ── HEADER ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
