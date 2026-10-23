@@ -8,6 +8,7 @@ const WhatsAppIcon = ({ size = 18, color = "currentColor" }) => (
 
 export default function PersonalAvatar({ persona, rolEtiqueta, cfgBorder }) {
   const [isHovered, setIsHovered] = useState(false);
+  const [imgError, setImgError] = useState(false);
   if (!persona) return null;
 
   const iniciales = persona.nombre_completo
@@ -58,10 +59,11 @@ export default function PersonalAvatar({ persona, rolEtiqueta, cfgBorder }) {
       >
         {isHovered && whatsappUrl ? (
           <WhatsAppIcon size={18} color="#ffffff" />
-        ) : persona.foto_url ? (
+        ) : persona.foto_url && !imgError ? (
           <img
             src={persona.foto_url}
             alt={persona.nombre_completo}
+            onError={() => setImgError(true)}
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
         ) : (

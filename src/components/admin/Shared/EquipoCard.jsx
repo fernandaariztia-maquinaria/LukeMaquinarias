@@ -233,9 +233,7 @@ export default function EquipoCard({ equipo, onPautaClick, onHistorialClick }) {
             {/* Header de Asignación / Especialidad POD */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "4px" }}>
               <div style={{ color: "var(--color-text-muted)", fontSize: "9px", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.5px" }}>
-                {equipo.estado_actual === "Disponible"
-                  ? (equipo.pod_actual ? "Asignación POD" : "Personal")
-                  : (equipo.pod_actual ? "Asignación & Turno" : "Personal en Turno")}
+                {equipo.pod_actual ? "Asignación POD" : "Personal en Turno"}
               </div>
 
               {equipo.pod_actual?.especialidades?.nombre_oficial && (
@@ -264,17 +262,21 @@ export default function EquipoCard({ equipo, onPautaClick, onHistorialClick }) {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
               {/* Contenedor de Avatares */}
               <div style={{ display: "flex", gap: "8px", alignItems: "center", minHeight: "32px", flexWrap: "wrap" }}>
-                {/* 1. Operador en Turno Activo (solo si el equipo NO está Disponible) */}
-                {equipo.tipo_seguimiento !== "vehiculo" && equipo.estado_actual !== "Disponible" && equipo.reporte_hoy?.operador && (
-                  <PersonalAvatar
-                    persona={equipo.reporte_hoy.operador}
-                    rolEtiqueta="Operador"
-                    cfgBorder={cfg.border}
-                  />
-                )}
+                {/* 1. Operador en Turno Activo o Confirmado */}
+                {(() => {
+                  const operador = equipo.reporte_hoy?.operador || equipo.pod_actual?.operador_confirmador;
+                  if (!operador) return null;
+                  return (
+                    <PersonalAvatar
+                      persona={operador}
+                      rolEtiqueta={equipo.tipo_seguimiento === "vehiculo" ? "Conductor" : "Operador"}
+                      cfgBorder={cfg.border}
+                    />
+                  );
+                })()}
 
-                {/* 2. Rigger en Terreno (solo si turno activo) */}
-                {equipo.tipo_seguimiento !== "vehiculo" && equipo.estado_actual !== "Disponible" && equipo.reporte_hoy?.rigger && (
+                {/* 2. Rigger en Terreno */}
+                {equipo.reporte_hoy?.rigger && (
                   <PersonalAvatar
                     persona={equipo.reporte_hoy.rigger}
                     rolEtiqueta="Rigger"
@@ -282,8 +284,8 @@ export default function EquipoCard({ equipo, onPautaClick, onHistorialClick }) {
                   />
                 )}
 
-                {/* 3. Supervisor Vehículo (Camionetas) */}
-                {equipo.tipo_seguimiento === "vehiculo" && equipo.reporte_hoy?.supervisor && (
+                {/* 3. Supervisor (Vehículo o Turno) */}
+                {equipo.reporte_hoy?.supervisor && (
                   <PersonalAvatar
                     persona={equipo.reporte_hoy.supervisor}
                     rolEtiqueta="Supervisor"
@@ -291,8 +293,8 @@ export default function EquipoCard({ equipo, onPautaClick, onHistorialClick }) {
                   />
                 )}
 
-                {/* 4. Supervisor POD Asignado */}
-                {equipo.pod_actual?.supervisor && (
+                {/* 4. Supervisor POD Asignado (si no es el mismo que reporte_hoy) */}
+                {equipo.pod_actual?.supervisor && equipo.pod_actual.supervisor.id !== equipo.reporte_hoy?.supervisor?.id && (
                   <PersonalAvatar
                     persona={equipo.pod_actual.supervisor}
                     rolEtiqueta={
@@ -305,6 +307,17 @@ export default function EquipoCard({ equipo, onPautaClick, onHistorialClick }) {
                     cfgBorder="#f59e0b"
                   />
                 )}
+
+                {/* Si no hay personal asignado */}
+                {!equipo.reporte_hoy?.operador &&
+                  !equipo.pod_actual?.operador_confirmador &&
+                  !equipo.reporte_hoy?.rigger &&
+                  !equipo.reporte_hoy?.supervisor &&
+                  !equipo.pod_actual?.supervisor && (
+                    <span style={{ color: "var(--color-text-muted)", fontSize: "11px", fontStyle: "italic" }}>
+                      Sin operador registrado
+                    </span>
+                  )}
               </div>
 
               {/* Bloque Horario POD */}
