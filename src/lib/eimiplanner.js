@@ -187,3 +187,168 @@ export async function getEspecialidades() {
 export async function getCurvaS() {
   return eimiplannerFetch("/getSCurve");
 }
+
+/**
+ * Obtiene las actividades operativas del Lookahead (Tipo A y SA) agrupadas por disciplina normalizada
+ */
+export async function getLookaheadActivitiesByDiscipline(projectId = "418") {
+  const tasks = await getAllLookahead(projectId);
+  const byDiscipline = {};
+
+  tasks.forEach((t) => {
+    if (t.type_task === "T") return; // Omitir títulos / agrupadores
+    const rawEsp = (t.especialidad || "Otros").trim();
+    if (!byDiscipline[rawEsp]) byDiscipline[rawEsp] = [];
+
+    byDiscipline[rawEsp].push({
+      idtask: t.idtask,
+      codigo: t.group || null,
+      nombre: (t.activity_name || "").trim(),
+      tipo: t.type_task,
+      unid: t.unid || null,
+      hh: t.hh_efectiva || null,
+      dotacion: t.dotacion || null,
+      duracion: t.duracion || null,
+      inicio: t["3wl_start"] || null,
+      fin: t["3wl_finish"] || null,
+      responsable: t.responsable || null,
+    });
+  });
+
+  return byDiscipline;
+}
+
+/**
+ * Sincroniza las actividades de EIMIPLANNER (Spence 418) con la tabla `tareas_programadas` de Supabase
+ * garantizando que la Sala POD y las Disciplinas muestren exactamente las actividades del EIMIPLANNER.
+ */
+export async function syncEimiplannerActivities(supabase, projectId = "418") {
+  if (!supabase) throw new Error("Cliente Supabase requerido para la sincronización.");
+
+  // 1. Obtener especialidades en Supabase (schema maquinaria)
+  const { data: especialidadesDb, error: errEsp } = await supabase
+    .from("especialidades")
+    .select("id, nombre_oficial");
+
+  if (errEsp) throw new Error(`Error al leer especialidades: ${errEsp.message}`);
+
+  const norm = (str) =>
+    (str || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+
+  const espMap = new Map();
+  especialidadesDb.forEach((e) => {
+    espMap.set(norm(e.nombre_oficial), e.id);
+  });
+
+  // Mapeo de disciplinas EIMIPLANNER -> Nombre de Especialidad en BD
+  const equivalencias = {
+    piping: "piping",
+    estructura: "estructuras",
+    estructuras: "estructuras",
+    civil: "obras civiles",
+    "obras civiles": "obras civiles",
+    enfierradura: "obras civiles",
+    electrica: "electricidad",
+    electricidad: "electricidad",
+    instrumentacion: "instrumentacion",
+    "mov. de tierra": "movimiento de tierras",
+    "movimiento de tierras": "movimiento de tierras",
+    mecanica: "estructuras",
+  };
+
+  // 2. Traer tareas del Lookahead desde la API de EIMIPLANNER
+  const tasks = await getAllLookahead(projectId);
+  const dedupe = new Map();
+
+  tasks.forEach((t) => {
+    if (t.type_task === "T") return; // Omitir títulos
+    const rawEspNorm = norm(t.especialidad);
+    const targetEspNorm = equivalencias[rawEspNorm];
+    if (!targetEspNorm) return;
+
+    const espId = espMap.get(targetEspNorm);
+    if (!espId) return;
+
+    const nombre = (t.activity_name || "").trim();
+    if (!nombre) return;
+
+    const key = `${espId}::${nombre.toLowerCase()}`;
+    if (!dedupe.has(key)) {
+      dedupe.set(key, {
+        especialidad_id: espId,
+        nombre,
+        codigo: t.group || null,
+        descripcion: `[EIMIPLANNER ${t.idtask}] ${t.type_task === "SA" ? "Subactividad" : "Actividad"}${t.group ? " · WBS: " + t.group : ""}${t.unid ? " · " + t.unid : ""}`,
+        activa: true,
+        es_libre: false,
+      });
+    }
+  });
+
+  // 3. Obtener tareas ya existentes para no duplicar ni alterar foreign keys
+  const { data: tareasExistentes } = await supabase
+    .from("tareas_programadas")
+    .select("id, especialidad_id, nombre");
+
+  const existMap = new Map();
+  (tareasExistentes || []).forEach((te) => {
+    existMap.set(`${te.especialidad_id}::${(te.nombre || "").trim().toLowerCase()}`, te.id);
+  });
+
+  const toInsert = [];
+  const toUpdate = [];
+
+  for (const [key, item] of dedupe.entries()) {
+    const existingId = existMap.get(key);
+    if (existingId) {
+      toUpdate.push({ id: existingId, ...item });
+    } else {
+      toInsert.push(item);
+    }
+  }
+
+  // 4. Ejecutar inserts en lotes
+  let totalInsertadas = 0;
+  let totalActualizadas = 0;
+
+  if (toInsert.length > 0) {
+    const BATCH_SIZE = 100;
+    for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
+      const batch = toInsert.slice(i, i + BATCH_SIZE);
+      const { error: errIns } = await supabase.from("tareas_programadas").insert(batch);
+      if (errIns) {
+        console.error("[EIMIPLANNER SYNC] Error insert batch:", errIns.message);
+      } else {
+        totalInsertadas += batch.length;
+      }
+    }
+  }
+
+  // 5. Ejecutar updates si aplica
+  if (toUpdate.length > 0) {
+    for (const item of toUpdate) {
+      await supabase
+        .from("tareas_programadas")
+        .update({
+          codigo: item.codigo,
+          descripcion: item.descripcion,
+          activa: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", item.id);
+      totalActualizadas++;
+    }
+  }
+
+  return {
+    success: true,
+    projectId,
+    totalProcesadas: dedupe.size,
+    totalInsertadas,
+    totalActualizadas,
+  };
+}

@@ -606,17 +606,28 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
     equipo_id: data.equipo?.id || "",
   });
 
-  // ── Tareas programadas para la especialidad seleccionada ──
+  // ── Tareas programadas para la especialidad seleccionada (EIMIPLANNER) ──
   const [tareasModal, setTareasModal] = useState([]);
   const [modoLibreModal, setModoLibreModal] = useState(esVirtual);
+  const [filtroActividadModal, setFiltroActividadModal] = useState("");
 
   useEffect(() => {
     if (!form.especialidad_id) { setTareasModal([]); return; }
+    setFiltroActividadModal("");
     fetch(`/api/admin/tareas-programadas?especialidad_id=${form.especialidad_id}`)
       .then(r => r.json())
       .then(j => { if (j.success) setTareasModal(j.data || []); })
       .catch(() => setTareasModal([]));
   }, [form.especialidad_id]);
+
+  const tareasFiltradasModal = (tareasModal || []).filter(t => {
+    if (!filtroActividadModal.trim()) return true;
+    const q = filtroActividadModal.toLowerCase();
+    return (
+      (t.nombre && t.nombre.toLowerCase().includes(q)) ||
+      (t.codigo && t.codigo.toLowerCase().includes(q))
+    );
+  });
 
   const horasOpciones = Array.from({ length: (HORA_FIN - HORA_INI) * 2 + 1 }, (_, i) => {
     const min = HORA_INI * 60 + i * 30;
@@ -713,7 +724,7 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
         </div>
 
         <div style={{ marginBottom: "14px" }}>
-          <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "6px" }}>Especialidad</label>
+          <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "6px" }}>Especialidad / Disciplina</label>
           <select
             value={form.especialidad_id}
             onChange={e => {
@@ -728,30 +739,61 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
         </div>
 
         <div style={{ marginBottom: "20px" }}>
-          <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "6px" }}>Actividad</label>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+            <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase" }}>
+              Actividad {tareasModal.length > 0 && <span style={{ color: "#10b981", fontWeight: 800 }}>· EIMIPLANNER</span>}
+            </label>
+            {tareasModal.length > 0 && (
+              <span style={{ fontSize: "10px", color: "var(--color-text-muted)" }}>
+                {tareasFiltradasModal.length} de {tareasModal.length} disponibles
+              </span>
+            )}
+          </div>
 
           {/* Select de tareas programadas si hay para la especialidad */}
           {tareasModal.length > 0 && !modoLibreModal ? (
-            <select
-              value={form.tarea_programada_id}
-              onChange={e => {
-                if (e.target.value === "__libre__") {
-                  setModoLibreModal(true);
-                  setForm(f => ({ ...f, tarea_programada_id: "", descripcion: "" }));
-                } else {
-                  setForm(f => ({ ...f, tarea_programada_id: e.target.value, descripcion: "" }));
-                }
-              }}
-              style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "9px 10px", fontSize: "13px", cursor: "pointer" }}
-            >
-              <option value="">— Seleccionar tarea programada —</option>
-              {tareasModal.map(t => (
-                <option key={t.id} value={t.id}>
-                  {t.codigo ? `[${t.codigo}] ` : ""}{t.nombre}
-                </option>
-              ))}
-              <option value="__libre__">✏️ Otra actividad (escribir)</option>
-            </select>
+            <div>
+              {tareasModal.length > 8 && (
+                <div style={{ marginBottom: "6px" }}>
+                  <input
+                    type="text"
+                    value={filtroActividadModal}
+                    onChange={e => setFiltroActividadModal(e.target.value)}
+                    placeholder="🔍 Filtrar actividad EIMIPLANNER por texto o WBS..."
+                    style={{
+                      width: "100%", background: "var(--bg-input,#f8fafc)",
+                      border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "6px",
+                      padding: "6px 10px", fontSize: "11px", boxSizing: "border-box", outline: "none"
+                    }}
+                  />
+                </div>
+              )}
+              <select
+                value={form.tarea_programada_id}
+                onChange={e => {
+                  if (e.target.value === "__libre__") {
+                    setModoLibreModal(true);
+                    setForm(f => ({ ...f, tarea_programada_id: "", descripcion: "" }));
+                  } else {
+                    const sel = tareasModal.find(x => x.id === e.target.value);
+                    setForm(f => ({
+                      ...f,
+                      tarea_programada_id: e.target.value,
+                      descripcion: sel ? sel.nombre : ""
+                    }));
+                  }
+                }}
+                style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "9px 10px", fontSize: "12px", cursor: "pointer" }}
+              >
+                <option value="">— Seleccionar actividad del EIMIPLANNER —</option>
+                {tareasFiltradasModal.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.codigo ? `[${t.codigo}] ` : ""}{t.nombre}
+                  </option>
+                ))}
+                <option value="__libre__">✏️ Otra actividad (escribir descripción libre)</option>
+              </select>
+            </div>
           ) : (
             <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
               <input
@@ -764,10 +806,10 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
                 <button
                   type="button"
                   onClick={() => { setModoLibreModal(false); setForm(f => ({ ...f, tarea_programada_id: "", descripcion: "" })); }}
-                  title="Volver al listado"
+                  title="Volver al listado de EIMIPLANNER"
                   style={{ background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "9px 10px", cursor: "pointer", color: "var(--color-text-muted)", fontSize: "12px", whiteSpace: "nowrap" }}
                 >
-                  📋 Lista
+                  📋 EIMIPLANNER
                 </button>
               )}
             </div>

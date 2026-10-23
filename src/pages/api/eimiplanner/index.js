@@ -145,6 +145,31 @@ export default async function handler(req, res) {
       });
     }
 
+    if (section === "actividades") {
+      const { disciplina } = req.query;
+      const operativas = (lookahead || []).filter((t) => t.type_task !== "T");
+      let filtradas = operativas;
+
+      if (disciplina && disciplina !== "TODAS") {
+        const norm = (str) =>
+          (str || "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .trim();
+        const dNorm = norm(disciplina);
+        filtradas = operativas.filter((t) => norm(t.especialidad).includes(dNorm));
+      }
+
+      return res.status(200).json({
+        success: true,
+        project,
+        total: filtradas.length,
+        datos: filtradas,
+        cachedAt: new Date(cacheData.timestamp).toISOString(),
+      });
+    }
+
     // Default: resumen general completo
     return res.status(200).json({
       success: true,

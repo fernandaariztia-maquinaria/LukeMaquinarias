@@ -1,9 +1,12 @@
-﻿import { createAdminClient } from "../../../lib/supabase-server";
+import { createAdminClient } from "../../../lib/supabase-server";
+import { syncEimiplannerActivities } from "../../../lib/eimiplanner";
 
 /**
  * /api/admin/tareas-programadas
  * GET  ?especialidad_id=UUID  → lista tareas activas (todas si sin param)
+ * GET  ?sync_eimiplanner=true → sincroniza tareas desde el Lookahead de EIMIPLANNER (Spence 418)
  * GET  ?incluir_inactivas=1   → incluye inactivas
+ * POST ?action=sync_eimiplanner body: { projectId? } → sincroniza con EIMIPLANNER
  * POST { nombre, especialidad_id?, ... }  → crear tarea
  * POST ?bulk=true  body: { tareas: [...] } → carga masiva (CSV parseado)
  * PATCH { id, ...campos }     → editar tarea
@@ -14,25 +17,65 @@ export default async function handler(req, res) {
 
   // ── GET ──────────────────────────────────────────────────
   if (req.method === "GET") {
-    const { especialidad_id, incluir_inactivas } = req.query;
+    const { especialidad_id, incluir_inactivas, sync_eimiplanner, projectId } = req.query;
+
+    if (sync_eimiplanner === "true") {
+      try {
+        const syncRes = await syncEimiplannerActivities(supabase, projectId || "418");
+        return res.status(200).json({ success: true, sync: syncRes });
+      } catch (err) {
+        return res.status(500).json({ success: false, error: err.message });
+      }
+    }
 
     let query = supabase
       .from("tareas_programadas")
       .select("*, especialidades(id, nombre_oficial, color)")
-      .order("orden", { ascending: true })
+      .order("codigo", { ascending: true })
       .order("nombre", { ascending: true });
 
     if (especialidad_id) query = query.eq("especialidad_id", especialidad_id);
     if (!incluir_inactivas) query = query.eq("activa", true);
 
-    const { data, error } = await query;
+    let { data, error } = await query;
     if (error) return res.status(500).json({ success: false, error: error.message });
+
+    // Si la especialidad no tiene tareas registradas aún, sincronizar automáticamente con EIMIPLANNER
+    if (especialidad_id && (!data || data.length === 0)) {
+      try {
+        await syncEimiplannerActivities(supabase, projectId || "418");
+        const recheck = await supabase
+          .from("tareas_programadas")
+          .select("*, especialidades(id, nombre_oficial, color)")
+          .eq("especialidad_id", especialidad_id)
+          .eq("activa", true)
+          .order("codigo", { ascending: true })
+          .order("nombre", { ascending: true });
+        if (recheck.data && recheck.data.length > 0) {
+          data = recheck.data;
+        }
+      } catch (e) {
+        console.warn("[tareas-programadas] Auto-sync EIMIPLANNER omitido:", e.message);
+      }
+    }
+
     return res.status(200).json({ success: true, data });
   }
 
   // ── POST ─────────────────────────────────────────────────
   if (req.method === "POST") {
-    const { bulk } = req.query;
+    const { bulk, action } = req.query;
+
+    // --- Sincronizar con EIMIPLANNER ---
+    if (action === "sync_eimiplanner" || req.body?.action === "sync_eimiplanner") {
+      try {
+        const targetProj = req.body?.projectId || req.query.projectId || "418";
+        const syncRes = await syncEimiplannerActivities(supabase, targetProj);
+        return res.status(200).json({ success: true, sync: syncRes });
+      } catch (err) {
+        return res.status(500).json({ success: false, error: err.message });
+      }
+    }
 
     // --- Carga masiva ---
     if (bulk === "true") {
