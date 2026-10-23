@@ -69,7 +69,6 @@ function AdminMaquinariaContent({ currentUser, setCurrentUser, onChangeUser, onS
     { id: "eimiplanner",    label: "EIMIPLANNER", icon: Layers },
     ...(esAdminGlobal ? [
       { id: "proyectos",      label: "Proyectos",   icon: Building2 },
-      { id: "especialidades", label: "Disciplinas", icon: Tag },
       { id: "personal",       label: "Personal",    icon: Users },
     ] : []),
     ...(puedeGestionarRegistros ? [

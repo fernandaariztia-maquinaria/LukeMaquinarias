@@ -595,29 +595,41 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
 
   const initialHours = getInitialHours();
 
+  const [tabModo, setTabModo] = useState(esVirtual ? "manual" : "eimiplanner"); // "eimiplanner" | "manual"
   const [form, setForm] = useState({
     hora_inicio: horaStr(initialHours.ini),
     hora_fin: horaStr(initialHours.fin),
     especialidad_id: getInitialEspId(),
     tarea_programada_id: "",
     descripcion: getInitialActividad(),
+    motivo_manual: "",
     cantidad_planificada: "",
     unidad: "",
     equipo_id: data.equipo?.id || "",
   });
 
-  // ── Tareas programadas para la especialidad seleccionada (EIMIPLANNER) ──
+  const [selectedTaskObj, setSelectedTaskObj] = useState(null);
   const [tareasModal, setTareasModal] = useState([]);
-  const [modoLibreModal, setModoLibreModal] = useState(esVirtual);
+  const [loadingTareas, setLoadingTareas] = useState(false);
   const [filtroActividadModal, setFiltroActividadModal] = useState("");
 
+  // Cargar actividades desde /api/pod/actividades según especialidad
   useEffect(() => {
-    if (!form.especialidad_id) { setTareasModal([]); return; }
-    setFiltroActividadModal("");
-    fetch(`/api/admin/tareas-programadas?especialidad_id=${form.especialidad_id}`)
+    if (!form.especialidad_id) {
+      setTareasModal([]);
+      setSelectedTaskObj(null);
+      return;
+    }
+    setLoadingTareas(true);
+    setSelectedTaskObj(null);
+    fetch(`/api/pod/actividades?especialidad_id=${form.especialidad_id}`)
       .then(r => r.json())
-      .then(j => { if (j.success) setTareasModal(j.data || []); })
-      .catch(() => setTareasModal([]));
+      .then(j => {
+        if (j.success) setTareasModal(j.data || []);
+        else setTareasModal([]);
+      })
+      .catch(() => setTareasModal([]))
+      .finally(() => setLoadingTareas(false));
   }, [form.especialidad_id]);
 
   const tareasFiltradasModal = (tareasModal || []).filter(t => {
@@ -625,7 +637,12 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
     const q = filtroActividadModal.toLowerCase();
     return (
       (t.nombre && t.nombre.toLowerCase().includes(q)) ||
-      (t.codigo && t.codigo.toLowerCase().includes(q))
+      (t.codigo && t.codigo.toLowerCase().includes(q)) ||
+      (t.idtask && t.idtask.toLowerCase().includes(q)) ||
+      (t.area && t.area.toLowerCase().includes(q)) ||
+      (t.subarea && t.subarea.toLowerCase().includes(q)) ||
+      (t.item_itemizado && t.item_itemizado.toLowerCase().includes(q)) ||
+      (t.descripcion_partida && t.descripcion_partida.toLowerCase().includes(q))
     );
   });
 
@@ -645,228 +662,397 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
   const bloqueSolapado = bloquesEquipo.find(o => (iniMinSel < minFromStr(o.hora_fin) && finMinSel > minFromStr(o.hora_inicio)));
   const esHorarioInvalido = iniMinSel >= finMinSel;
 
+  const handleSubmit = () => {
+    if (tabModo === "eimiplanner" && selectedTaskObj) {
+      const wbsTag = selectedTaskObj.codigo ? `[${selectedTaskObj.codigo}] ` : "";
+      const areaTag = selectedTaskObj.area ? ` · Área: ${selectedTaskObj.area}` : "";
+      const partidaTag = selectedTaskObj.descripcion_partida
+        ? ` · Partida: ${selectedTaskObj.item_itemizado ? `[${selectedTaskObj.item_itemizado}] ` : ""}${selectedTaskObj.descripcion_partida}`
+        : "";
+      const actTexto = `${wbsTag}${selectedTaskObj.nombre}${areaTag}${partidaTag}`;
+
+      onConfirm({
+        ...form,
+        origen_actividad: "eimiplanner",
+        tarea_programada_id: selectedTaskObj.idtask,
+        descripcion: selectedTaskObj.nombre,
+        actividad_especifica: actTexto,
+        unidad: form.unidad || selectedTaskObj.unid || "",
+        equipo_id: data.equipo?.id || form.equipo_id,
+        supervisor_id: data.supervisor.personal.id,
+        fecha: data.fecha,
+      });
+    } else {
+      const actTexto = `[MANUAL] ${form.descripcion || "Actividad adicional"}${form.motivo_manual ? ` · Motivo: ${form.motivo_manual}` : ""}`;
+      onConfirm({
+        ...form,
+        origen_actividad: "manual",
+        tarea_programada_id: null,
+        actividad_especifica: actTexto,
+        equipo_id: data.equipo?.id || form.equipo_id,
+        supervisor_id: data.supervisor.personal.id,
+        fecha: data.fecha,
+      });
+    }
+  };
+
+  const isFormValid =
+    form.especialidad_id &&
+    (data.equipo?.id || form.equipo_id) &&
+    !bloqueSolapado &&
+    !esHorarioInvalido &&
+    ((tabModo === "eimiplanner" && selectedTaskObj) || (tabModo === "manual" && form.descripcion?.trim()));
+
   return (
     <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)",
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)",
       zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center",
+      padding: "16px",
     }}>
       <div style={{
-        background: "var(--bg-card, #fff)", borderRadius: "16px", padding: "28px",
-        width: "min(500px, 94vw)", boxShadow: "0 24px 64px rgba(0,0,0,0.25)",
+        background: "var(--bg-card, #fff)", borderRadius: "18px", padding: "24px 28px",
+        width: "min(680px, 96vw)", maxHeight: "90vh", display: "flex", flexDirection: "column",
+        boxShadow: "0 24px 64px rgba(0,0,0,0.3)", border: "1px solid var(--border-container, #e2e8f0)",
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-          <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 800, color: "var(--color-text)" }}>
-            ⚡ Asignar bloque
-          </h3>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-text-muted)" }}>
-            <X size={18} />
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div style={{
+              width: "36px", height: "36px", borderRadius: "10px",
+              background: "rgba(16, 185, 129, 0.12)", border: "1px solid rgba(16, 185, 129, 0.3)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <Zap size={18} color="#10b981" />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 800, color: "var(--color-text)" }}>
+                Asignar Bloque Horario
+              </h3>
+              <div style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>
+                Planificación Operativa de Equipos · Sala POD
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-text-muted)", padding: "4px" }}>
+            <X size={20} />
           </button>
         </div>
 
-        {/* Supervisor info */}
-        <div style={{ display: "flex", gap: "10px", marginBottom: "18px", padding: "12px", background: "rgba(16,185,129,0.06)", borderRadius: "10px", alignItems: "center" }}>
-          <div style={{
-            width: "36px", height: "36px", borderRadius: "50%",
-            background: `${color}25`, border: `2px solid ${color}`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: "13px", fontWeight: 800, color, flexShrink: 0,
-          }}>
-            {initials}
-          </div>
-          <div>
-            <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--color-text)" }}>{nombre}</div>
-            {esp && <div style={{ fontSize: "11px", color, fontWeight: 600 }}>{esp.nombre_oficial}</div>}
-          </div>
-        </div>
-
-        {/* Equipo: selector si viene de click directo, fijo si viene de drop */}
-        {data.equipo ? (
-          <div style={{ marginBottom: "14px", padding: "8px 12px", background: "rgba(16,185,129,0.06)", borderRadius: "8px", fontSize: "13px", fontWeight: 700, color: "var(--color-text)" }}>
-            🔧 {data.equipo.codigo_interno} — {data.equipo.descripcion_equipo}
-          </div>
-        ) : (
-          <div style={{ marginBottom: "14px" }}>
-            <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "6px" }}>Equipo</label>
-            <select
-              value={form.equipo_id}
-              onChange={e => setForm(f => ({ ...f, equipo_id: e.target.value }))}
-              style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "9px 10px", fontSize: "13px", cursor: "pointer" }}
-            >
-              <option value="">Seleccionar equipo…</option>
-              {(equiposList || []).map(eq => (
-                <option key={eq.id} value={eq.id}>{eq.codigo_interno} — {eq.descripcion_equipo}</option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "14px" }}>
-          <div>
-            <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "6px" }}>Hora inicio</label>
-            <select
-              value={form.hora_inicio}
-              onChange={e => setForm(f => ({ ...f, hora_inicio: e.target.value }))}
-              style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "9px 10px", fontSize: "13px", cursor: "pointer" }}
-            >
-              {horasOpciones.map(h => <option key={h} value={h}>{h}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "6px" }}>Hora fin</label>
-            <select
-              value={form.hora_fin}
-              onChange={e => setForm(f => ({ ...f, hora_fin: e.target.value }))}
-              style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "9px 10px", fontSize: "13px", cursor: "pointer" }}
-            >
-              {horasOpciones.map(h => <option key={h} value={h}>{h}</option>)}
-            </select>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: "14px" }}>
-          <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "6px" }}>Especialidad / Disciplina</label>
-          <select
-            value={form.especialidad_id}
-            onChange={e => {
-              setForm(f => ({ ...f, especialidad_id: e.target.value, tarea_programada_id: "", descripcion: "" }));
-              setModoLibreModal(false);
-            }}
-            style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "9px 10px", fontSize: "13px", cursor: "pointer" }}
-          >
-            <option value="">Sin especialidad</option>
-            {especialidades.map(e => <option key={e.id} value={e.id}>{e.nombre_oficial}</option>)}
-          </select>
-        </div>
-
-        <div style={{ marginBottom: "20px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-            <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase" }}>
-              Actividad {tareasModal.length > 0 && <span style={{ color: "#10b981", fontWeight: 800 }}>· EIMIPLANNER</span>}
-            </label>
-            {tareasModal.length > 0 && (
-              <span style={{ fontSize: "10px", color: "var(--color-text-muted)" }}>
-                {tareasFiltradasModal.length} de {tareasModal.length} disponibles
-              </span>
-            )}
+        {/* Info Supervisor + Equipo */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "16px" }}>
+          <div style={{ display: "flex", gap: "10px", padding: "10px 12px", background: "rgba(16,185,129,0.06)", borderRadius: "10px", alignItems: "center" }}>
+            <div style={{
+              width: "34px", height: "34px", borderRadius: "50%",
+              background: `${color}25`, border: `2px solid ${color}`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: "12px", fontWeight: 800, color, flexShrink: 0,
+            }}>
+              {initials}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--color-text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {nombre}
+              </div>
+              {esp && <div style={{ fontSize: "10px", color, fontWeight: 700 }}>{esp.nombre_oficial}</div>}
+            </div>
           </div>
 
-          {/* Select de tareas programadas si hay para la especialidad */}
-          {tareasModal.length > 0 && !modoLibreModal ? (
-            <div>
-              {tareasModal.length > 8 && (
-                <div style={{ marginBottom: "6px" }}>
-                  <input
-                    type="text"
-                    value={filtroActividadModal}
-                    onChange={e => setFiltroActividadModal(e.target.value)}
-                    placeholder="🔍 Filtrar actividad EIMIPLANNER por texto o WBS..."
-                    style={{
-                      width: "100%", background: "var(--bg-input,#f8fafc)",
-                      border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "6px",
-                      padding: "6px 10px", fontSize: "11px", boxSizing: "border-box", outline: "none"
-                    }}
-                  />
+          {data.equipo ? (
+            <div style={{ padding: "10px 12px", background: "rgba(59, 130, 246, 0.08)", border: "1px solid rgba(59, 130, 246, 0.2)", borderRadius: "10px", display: "flex", alignItems: "center", minWidth: 0 }}>
+              <div>
+                <div style={{ fontSize: "12px", fontWeight: 800, color: "#1d4ed8" }}>
+                  🚜 {data.equipo.codigo_interno}
                 </div>
-              )}
-              <select
-                value={form.tarea_programada_id}
-                onChange={e => {
-                  if (e.target.value === "__libre__") {
-                    setModoLibreModal(true);
-                    setForm(f => ({ ...f, tarea_programada_id: "", descripcion: "" }));
-                  } else {
-                    const sel = tareasModal.find(x => x.id === e.target.value);
-                    setForm(f => ({
-                      ...f,
-                      tarea_programada_id: e.target.value,
-                      descripcion: sel ? sel.nombre : ""
-                    }));
-                  }
-                }}
-                style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "9px 10px", fontSize: "12px", cursor: "pointer" }}
-              >
-                <option value="">— Seleccionar actividad del EIMIPLANNER —</option>
-                {tareasFiltradasModal.map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.codigo ? `[${t.codigo}] ` : ""}{t.nombre}
-                  </option>
-                ))}
-                <option value="__libre__">✏️ Otra actividad (escribir descripción libre)</option>
-              </select>
+                <div style={{ fontSize: "11px", color: "var(--color-text-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {data.equipo.descripcion_equipo}
+                </div>
+              </div>
             </div>
           ) : (
-            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-              <input
-                type="text" value={form.descripcion}
-                onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))}
-                placeholder={tareasModal.length > 0 ? "Describe la actividad no programada" : "Ej: Instalación vigas eje 5"}
-                style={{ flex: 1, background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "9px 12px", fontSize: "13px", outline: "none", boxSizing: "border-box" }}
-              />
-              {tareasModal.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => { setModoLibreModal(false); setForm(f => ({ ...f, tarea_programada_id: "", descripcion: "" })); }}
-                  title="Volver al listado de EIMIPLANNER"
-                  style={{ background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "9px 10px", cursor: "pointer", color: "var(--color-text-muted)", fontSize: "12px", whiteSpace: "nowrap" }}
-                >
-                  📋 EIMIPLANNER
-                </button>
-              )}
+            <div>
+              <select
+                value={form.equipo_id}
+                onChange={e => setForm(f => ({ ...f, equipo_id: e.target.value }))}
+                style={{ width: "100%", height: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "10px", padding: "8px 10px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+              >
+                <option value="">Seleccionar equipo…</option>
+                {(equiposList || []).map(eq => (
+                  <option key={eq.id} value={eq.id}>{eq.codigo_interno} — {eq.descripcion_equipo}</option>
+                ))}
+              </select>
             </div>
           )}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "20px" }}>
+        {/* Selector de Horarios y Especialidad */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.3fr", gap: "10px", marginBottom: "14px" }}>
           <div>
-            <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "6px" }}>Cantidad planificada</label>
+            <label style={{ fontSize: "10px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "4px" }}>Hora Inicio</label>
+            <select
+              value={form.hora_inicio}
+              onChange={e => setForm(f => ({ ...f, hora_inicio: e.target.value }))}
+              style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "8px 10px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+            >
+              {horasOpciones.map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: "10px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "4px" }}>Hora Fin</label>
+            <select
+              value={form.hora_fin}
+              onChange={e => setForm(f => ({ ...f, hora_fin: e.target.value }))}
+              style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "8px 10px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+            >
+              {horasOpciones.map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: "10px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "4px" }}>Especialidad</label>
+            <select
+              value={form.especialidad_id}
+              onChange={e => {
+                setForm(f => ({ ...f, especialidad_id: e.target.value, tarea_programada_id: "", descripcion: "" }));
+                setSelectedTaskObj(null);
+              }}
+              style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "8px 10px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+            >
+              <option value="">Seleccionar especialidad…</option>
+              {especialidades.map(e => <option key={e.id} value={e.id}>{e.nombre_oficial}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Pestañas de Modo: EIMIPLANNER vs Tarea Manual */}
+        <div style={{ display: "flex", gap: "8px", marginBottom: "12px", borderBottom: "1px solid var(--border-container, #e2e8f0)", paddingBottom: "8px" }}>
+          <button
+            type="button"
+            onClick={() => setTabModo("eimiplanner")}
+            style={{
+              flex: 1, padding: "8px 12px", borderRadius: "8px", border: "none",
+              background: tabModo === "eimiplanner" ? "rgba(16, 185, 129, 0.15)" : "transparent",
+              color: tabModo === "eimiplanner" ? "#059669" : "var(--color-text-muted)",
+              fontWeight: tabModo === "eimiplanner" ? 800 : 600,
+              fontSize: "12px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+              transition: "all 0.15s",
+            }}
+          >
+            📋 Actividades EIMIPLANNER ({tareasModal.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setTabModo("manual")}
+            style={{
+              flex: 1, padding: "8px 12px", borderRadius: "8px", border: "none",
+              background: tabModo === "manual" ? "rgba(59, 130, 246, 0.15)" : "transparent",
+              color: tabModo === "manual" ? "#2563eb" : "var(--color-text-muted)",
+              fontWeight: tabModo === "manual" ? 800 : 600,
+              fontSize: "12px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+              transition: "all 0.15s",
+            }}
+          >
+            ➕ Tarea Adicional / Manual
+          </button>
+        </div>
+
+        {/* CONTENIDO SEGÚN MODO */}
+        <div style={{ flex: 1, overflowY: "auto", minHeight: "160px", maxHeight: "250px", marginBottom: "14px", paddingRight: "4px" }}>
+          {tabModo === "eimiplanner" ? (
+            <div>
+              <div style={{ marginBottom: "8px" }}>
+                <input
+                  type="text"
+                  value={filtroActividadModal}
+                  onChange={e => setFiltroActividadModal(e.target.value)}
+                  placeholder="🔍 Buscar por nombre, WBS, área o partida..."
+                  style={{
+                    width: "100%", background: "var(--bg-input,#f8fafc)",
+                    border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px",
+                    padding: "8px 12px", fontSize: "12px", boxSizing: "border-box", outline: "none",
+                  }}
+                />
+              </div>
+
+              {loadingTareas ? (
+                <div style={{ padding: "24px", textAlign: "center", color: "var(--color-text-muted)", fontSize: "12px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+                  <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} />
+                  Cargando actividades de EIMIPLANNER...
+                </div>
+              ) : tareasFiltradasModal.length === 0 ? (
+                <div style={{ padding: "24px", textAlign: "center", color: "var(--color-text-muted)", fontSize: "12px" }}>
+                  {tareasModal.length === 0
+                    ? "No hay actividades de EIMIPLANNER para la especialidad seleccionada."
+                    : "No se encontraron actividades con ese filtro."}
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  {tareasFiltradasModal.map((t) => {
+                    const isSelected = selectedTaskObj?.idtask === t.idtask;
+                    return (
+                      <div
+                        key={t.idtask}
+                        onClick={() => {
+                          setSelectedTaskObj(t);
+                          setForm(f => ({
+                            ...f,
+                            tarea_programada_id: t.idtask,
+                            descripcion: t.nombre,
+                            unidad: t.unid || f.unidad,
+                          }));
+                        }}
+                        style={{
+                          padding: "10px 12px",
+                          borderRadius: "10px",
+                          border: isSelected ? "2px solid #10b981" : "1px solid var(--border-container, #e2e8f0)",
+                          background: isSelected ? "rgba(16, 185, 129, 0.08)" : "var(--bg-input, #f8fafc)",
+                          cursor: "pointer",
+                          transition: "all 0.15s",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--color-text)" }}>
+                              {t.nombre}
+                            </div>
+
+                            {/* Área / Ubicación */}
+                            {t.area && (
+                              <div style={{ fontSize: "11px", color: "#059669", fontWeight: 600, marginTop: "2px", display: "flex", alignItems: "center", gap: "4px" }}>
+                                <span>📍</span>
+                                <span>{t.area}</span>
+                                {t.subarea && t.subarea !== t.area && (
+                                  <span style={{ color: "var(--color-text-muted)", fontWeight: 400 }}>· {t.subarea}</span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Partida / Itemizado */}
+                            {(t.descripcion_partida || t.item_itemizado) && (
+                              <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "2px", display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap" }}>
+                                {t.item_itemizado && (
+                                  <span style={{ background: "rgba(59, 130, 246, 0.12)", color: "#2563eb", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, fontSize: "10px" }}>
+                                    {t.item_itemizado}
+                                  </span>
+                                )}
+                                {t.descripcion_partida && (
+                                  <span style={{ fontStyle: "italic" }}>
+                                    {t.descripcion_partida}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* WBS y Task ID */}
+                            <div style={{ fontSize: "10px", color: "var(--color-text-muted)", marginTop: "4px", display: "flex", gap: "8px" }}>
+                              {t.codigo && <span>WBS: <strong>{t.codigo}</strong></span>}
+                              <span>ID: <strong>#{t.idtask}</strong></span>
+                              {t.fechas && <span>Fechas: {t.fechas}</span>}
+                              {t.unid && <span>Unidad: {t.unid}</span>}
+                            </div>
+                          </div>
+
+                          {isSelected && (
+                            <div style={{
+                              background: "#10b981", color: "white", borderRadius: "50%",
+                              width: "20px", height: "20px", display: "flex", alignItems: "center", justifyContent: "center",
+                              flexShrink: 0,
+                            }}>
+                              <Check size={12} />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "4px" }}>
+                  Descripción de la Tarea Manual *
+                </label>
+                <input
+                  type="text"
+                  value={form.descripcion}
+                  onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))}
+                  placeholder="Ej: Apoyo extraordinario traslado de componentes"
+                  style={{
+                    width: "100%", background: "var(--bg-input,#f8fafc)",
+                    border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px",
+                    padding: "9px 12px", fontSize: "13px", outline: "none", boxSizing: "border-box",
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "4px" }}>
+                  Motivo / Observación de Trabajo No Programado
+                </label>
+                <input
+                  type="text"
+                  value={form.motivo_manual}
+                  onChange={e => setForm(f => ({ ...f, motivo_manual: e.target.value }))}
+                  placeholder="Ej: Emergencia climática / solicitud urgente de faena"
+                  style={{
+                    width: "100%", background: "var(--bg-input,#f8fafc)",
+                    border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px",
+                    padding: "9px 12px", fontSize: "13px", outline: "none", boxSizing: "border-box",
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Cantidad y Unidad */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "14px" }}>
+          <div>
+            <label style={{ fontSize: "10px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "4px" }}>Cantidad Planificada (Opcional)</label>
             <input
               type="number" value={form.cantidad_planificada}
               onChange={e => setForm(f => ({ ...f, cantidad_planificada: e.target.value }))}
-              placeholder="Opcional, ej: 40"
-              style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "9px 12px", fontSize: "13px", outline: "none", boxSizing: "border-box" }}
+              placeholder="Ej: 40"
+              style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "7px 10px", fontSize: "12px", outline: "none", boxSizing: "border-box" }}
             />
           </div>
           <div>
-            <label style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "6px" }}>Unidad</label>
+            <label style={{ fontSize: "10px", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", display: "block", marginBottom: "4px" }}>Unidad</label>
             <input
               type="text" value={form.unidad}
               onChange={e => setForm(f => ({ ...f, unidad: e.target.value }))}
-              placeholder="Ej: ml, m3, un"
-              style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "9px 12px", fontSize: "13px", outline: "none", boxSizing: "border-box" }}
+              placeholder="Ej: M3, ML, TON, GL"
+              style={{ width: "100%", background: "var(--bg-input,#f8fafc)", border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px", padding: "7px 10px", fontSize: "12px", outline: "none", boxSizing: "border-box" }}
             />
           </div>
         </div>
 
-        {/* Advertencias de Solapamiento e Horarios */}
+        {/* Advertencias */}
         {bloqueSolapado && (
-          <div style={{ padding: "10px 12px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "8px", color: "#dc2626", fontSize: "12px", fontWeight: 600, marginBottom: "14px" }}>
-            ⚠️ Solapamiento de horario: Ya existe un bloque de {bloqueSolapado.supervisor?.nombre_completo || 'Mantenimiento'} ({bloqueSolapado.hora_inicio.slice(0,5)} - {bloqueSolapado.hora_fin.slice(0,5)}) para este equipo.
+          <div style={{ padding: "8px 12px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "8px", color: "#dc2626", fontSize: "11px", fontWeight: 600, marginBottom: "10px" }}>
+            ⚠️ Solapamiento de horario: Ya existe un bloque de {bloqueSolapado.supervisor?.nombre_completo || 'Mantenimiento'} ({bloqueSolapado.hora_inicio?.slice(0,5)} - {bloqueSolapado.hora_fin?.slice(0,5)}) para este equipo.
           </div>
         )}
 
         {esHorarioInvalido && (
-          <div style={{ padding: "10px 12px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "8px", color: "#dc2626", fontSize: "12px", fontWeight: 600, marginBottom: "14px" }}>
+          <div style={{ padding: "8px 12px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "8px", color: "#dc2626", fontSize: "11px", fontWeight: 600, marginBottom: "10px" }}>
             ⚠️ La hora de inicio debe ser menor a la hora de fin.
           </div>
         )}
 
-        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-          <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: "8px", border: "1px solid var(--border-input,#e2e8f0)", background: "transparent", color: "var(--color-text-muted)", cursor: "pointer", fontSize: "14px", fontWeight: 600 }}>
+        {/* Footer */}
+        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "auto" }}>
+          <button onClick={onClose} style={{ padding: "8px 16px", borderRadius: "8px", border: "1px solid var(--border-input,#e2e8f0)", background: "transparent", color: "var(--color-text-muted)", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
             Cancelar
           </button>
           <button
-            onClick={() => onConfirm({
-              ...form,
-              equipo_id: data.equipo?.id || form.equipo_id,
-              supervisor_id: data.supervisor.personal.id,
-              fecha: data.fecha
-            })}
-            disabled={saving || !form.especialidad_id || !(data.equipo?.id || form.equipo_id) || !!bloqueSolapado || esHorarioInvalido}
+            onClick={handleSubmit}
+            disabled={saving || !isFormValid}
             style={{
-              padding: "9px 22px", borderRadius: "8px", border: "none",
+              padding: "8px 20px", borderRadius: "8px", border: "none",
               background: "linear-gradient(135deg, #10b981, #059669)",
-              color: "white", cursor: (saving || !!bloqueSolapado || esHorarioInvalido) ? "not-allowed" : "pointer",
-              fontSize: "14px", fontWeight: 700, opacity: (saving || !form.especialidad_id || !(data.equipo?.id || form.equipo_id) || !!bloqueSolapado || esHorarioInvalido) ? 0.6 : 1,
+              color: "white", cursor: (saving || !isFormValid) ? "not-allowed" : "pointer",
+              fontSize: "13px", fontWeight: 700, opacity: (saving || !isFormValid) ? 0.6 : 1,
               display: "flex", alignItems: "center", gap: "8px",
             }}
           >

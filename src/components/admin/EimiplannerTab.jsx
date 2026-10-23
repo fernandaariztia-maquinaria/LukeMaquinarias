@@ -38,6 +38,7 @@ export default function EimiplannerTab({ currentUser }) {
   // Filtros de Lookahead
   const [searchLookahead, setSearchLookahead] = useState("");
   const [filtroTipoLookahead, setFiltroTipoLookahead] = useState("TODOS");
+  const [filtroEspecialidadLookahead, setFiltroEspecialidadLookahead] = useState("TODAS");
   const [pageLookahead, setPageLookahead] = useState(1);
   const PAGE_SIZE_LOOKAHEAD = 25;
 
@@ -101,6 +102,18 @@ export default function EimiplannerTab({ currentUser }) {
     return ["TODAS", ...Array.from(set)];
   }, [data]);
 
+  // Especialidades únicas en Lookahead
+  const especialidadesLookahead = useMemo(() => {
+    const list = data?.lookaheadSample || [];
+    const set = new Set();
+    list.forEach((t) => {
+      if (t.especialidad && t.especialidad.trim()) {
+        set.add(t.especialidad.trim());
+      }
+    });
+    return ["TODAS", ...Array.from(set).sort()];
+  }, [data]);
+
   // --- FILTRADO Y PAGINACIÓN DE LOOKAHEAD ---
   const lookaheadFiltrado = useMemo(() => {
     const list = data?.lookaheadSample || [];
@@ -110,15 +123,21 @@ export default function EimiplannerTab({ currentUser }) {
         (t.activity_name && t.activity_name.toLowerCase().includes(searchLookahead.toLowerCase())) ||
         (t.group && t.group.toLowerCase().includes(searchLookahead.toLowerCase())) ||
         (t.idtask && String(t.idtask).includes(searchLookahead)) ||
+        (t.descripcion_partida && t.descripcion_partida.toLowerCase().includes(searchLookahead.toLowerCase())) ||
+        (t.area && t.area.toLowerCase().includes(searchLookahead.toLowerCase())) ||
         (t.especialidad && t.especialidad.toLowerCase().includes(searchLookahead.toLowerCase()));
 
       const matchTipo =
         filtroTipoLookahead === "TODOS" ||
         t.type_task === filtroTipoLookahead;
 
-      return matchSearch && matchTipo;
+      const matchEsp =
+        filtroEspecialidadLookahead === "TODAS" ||
+        (t.especialidad && t.especialidad.trim().toLowerCase() === filtroEspecialidadLookahead.trim().toLowerCase());
+
+      return matchSearch && matchTipo && matchEsp;
     });
-  }, [data, searchLookahead, filtroTipoLookahead]);
+  }, [data, searchLookahead, filtroTipoLookahead, filtroEspecialidadLookahead]);
 
   const totalPagesLookahead = Math.ceil(lookaheadFiltrado.length / PAGE_SIZE_LOOKAHEAD) || 1;
   const lookaheadPaginado = useMemo(() => {
@@ -653,29 +672,57 @@ export default function EimiplannerTab({ currentUser }) {
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-              <span style={{ fontSize: "12px", color: "var(--color-text-muted)", fontWeight: 600 }}>Tipo Tarea:</span>
-              <select
-                value={filtroTipoLookahead}
-                onChange={(e) => {
-                  setFiltroTipoLookahead(e.target.value);
-                  setPageLookahead(1);
-                }}
-                style={{
-                  background: "var(--bg-input)",
-                  border: "1px solid var(--border-input)",
-                  color: "var(--color-text)",
-                  borderRadius: "8px",
-                  padding: "6px 10px",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                }}
-              >
-                <option value="TODOS">Todos los niveles</option>
-                <option value="T">Títulos (T)</option>
-                <option value="A">Actividades (A)</option>
-                <option value="SA">Subactividades (SA)</option>
-              </select>
+            <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <span style={{ fontSize: "12px", color: "var(--color-text-muted)", fontWeight: 600 }}>Especialidad:</span>
+                <select
+                  value={filtroEspecialidadLookahead}
+                  onChange={(e) => {
+                    setFiltroEspecialidadLookahead(e.target.value);
+                    setPageLookahead(1);
+                  }}
+                  style={{
+                    background: "var(--bg-input)",
+                    border: "1px solid var(--border-input)",
+                    color: "var(--color-text)",
+                    borderRadius: "8px",
+                    padding: "6px 10px",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                  }}
+                >
+                  {especialidadesLookahead.map((esp) => (
+                    <option key={esp} value={esp}>
+                      {esp === "TODAS" ? "Todas las especialidades" : esp}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <span style={{ fontSize: "12px", color: "var(--color-text-muted)", fontWeight: 600 }}>Tipo Tarea:</span>
+                <select
+                  value={filtroTipoLookahead}
+                  onChange={(e) => {
+                    setFiltroTipoLookahead(e.target.value);
+                    setPageLookahead(1);
+                  }}
+                  style={{
+                    background: "var(--bg-input)",
+                    border: "1px solid var(--border-input)",
+                    color: "var(--color-text)",
+                    borderRadius: "8px",
+                    padding: "6px 10px",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                  }}
+                >
+                  <option value="TODOS">Todos los niveles</option>
+                  <option value="T">Títulos (T)</option>
+                  <option value="A">Actividades (A)</option>
+                  <option value="SA">Subactividades (SA)</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -695,6 +742,7 @@ export default function EimiplannerTab({ currentUser }) {
                     <th style={{ padding: "12px 16px", fontWeight: 700, width: "60px" }}>Tipo</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>ID Task</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Nombre de la Actividad</th>
+                    <th style={{ padding: "12px 16px", fontWeight: 700 }}>Área / Ubicación</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>WBS / Grupo</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Fechas (3WL)</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Duración</th>
@@ -704,7 +752,7 @@ export default function EimiplannerTab({ currentUser }) {
                 <tbody>
                   {lookaheadPaginado.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ padding: "32px", textAlign: "center", color: "var(--color-text-muted)" }}>
+                      <td colSpan={8} style={{ padding: "32px", textAlign: "center", color: "var(--color-text-muted)" }}>
                         No se encontraron tareas con los filtros actuales.
                       </td>
                     </tr>
@@ -745,6 +793,32 @@ export default function EimiplannerTab({ currentUser }) {
                               {esSub && "↳ "}
                               {t.activity_name || "Sin nombre"}
                             </div>
+                            {(t.descripcion_partida || t.item_itemizado) && (
+                              <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "4px", paddingLeft: esSub ? "14px" : "0", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                                {t.item_itemizado && (
+                                  <span style={{ background: "rgba(59, 130, 246, 0.12)", color: "#2563eb", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, fontSize: "10px" }}>
+                                    {t.item_itemizado}
+                                  </span>
+                                )}
+                                {t.descripcion_partida && (
+                                  <span style={{ fontStyle: "italic" }}>
+                                    {t.descripcion_partida}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ padding: "12px 16px", fontSize: "12px" }}>
+                            {t.area ? (
+                              <div>
+                                <div style={{ fontWeight: 600, color: "var(--color-text)" }}>{t.area}</div>
+                                {t.subarea && t.subarea !== t.area && (
+                                  <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "2px" }}>{t.subarea}</div>
+                                )}
+                              </div>
+                            ) : (
+                              <span style={{ color: "var(--color-text-muted)" }}>—</span>
+                            )}
                           </td>
                           <td style={{ padding: "12px 16px", fontFamily: "monospace", fontSize: "11px", color: "var(--color-text-muted)" }}>
                             {t.group || "—"}

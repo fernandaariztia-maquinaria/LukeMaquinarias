@@ -184,7 +184,7 @@ export default async function handler(req, res) {
         supervisoresRegistrados: productividad?.length || 0,
         especialidadesActivas: especialidades?.length || 0,
       },
-      lookaheadSample: (lookahead || []).slice(0, 150),
+      lookaheadSample: lookahead || [],
       lookaheadTotal: totalTareas,
       logRequisitos: logRequisitos || [],
       productividad: productividad || [],
