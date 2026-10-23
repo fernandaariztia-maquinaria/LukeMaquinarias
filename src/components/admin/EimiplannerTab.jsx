@@ -23,6 +23,108 @@ import {
   Minus
 } from "lucide-react";
 
+export function parseFechaEimi(str) {
+  if (!str) return null;
+  const parts = String(str).trim().split(/[-\/]/);
+  if (parts.length === 3) {
+    if (parts[2].length === 4) return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+    if (parts[0].length === 4) return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  }
+  return null;
+}
+
+export function getVencimientoInfo(r, hoy = new Date()) {
+  const estado = (r.estado || "").toUpperCase();
+  if (estado === "CERRADA" || estado === "RESUELTA") {
+    return {
+      tipo: "RESUELTA",
+      badgeText: "✔️ RESUELTA",
+      label: r.fecha_resolucion ? `Resuelta (${r.fecha_resolucion})` : "Resuelta / Cerrada",
+      dias: null,
+      color: "#10b981",
+      bg: "rgba(16, 185, 129, 0.12)",
+      border: "rgba(16, 185, 129, 0.3)",
+    };
+  }
+
+  const dStr = r.fecha_comprometida || r.fecha_requerida_resolucion;
+  const targetDate = parseFechaEimi(dStr);
+
+  if (!targetDate) {
+    if (estado === "VENCIDA") {
+      return {
+        tipo: "ATRASADA",
+        badgeText: "🚨 VENCIDA",
+        label: "Vencida según registro",
+        dias: -1,
+        color: "#ef4444",
+        bg: "rgba(239, 68, 68, 0.14)",
+        border: "rgba(239, 68, 68, 0.4)",
+      };
+    }
+    return {
+      tipo: "SIN_FECHA",
+      badgeText: "SIN FECHA",
+      label: "Sin fecha compromiso",
+      dias: null,
+      color: "#6b7280",
+      bg: "rgba(107, 114, 128, 0.1)",
+      border: "rgba(107, 114, 128, 0.25)",
+    };
+  }
+
+  const hoyInicio = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  const targetInicio = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+  const diffDays = Math.round((targetInicio.getTime() - hoyInicio.getTime()) / (1000 * 60 * 60 * 24));
+
+  if (diffDays < 0 || estado === "VENCIDA") {
+    const atraso = Math.abs(diffDays);
+    return {
+      tipo: "ATRASADA",
+      badgeText: `🚨 ATRASADA (${atraso}d)`,
+      label: `Atrasada hace ${atraso} ${atraso === 1 ? "día" : "días"}`,
+      dias: diffDays,
+      color: "#ef4444",
+      bg: "rgba(239, 68, 68, 0.15)",
+      border: "rgba(239, 68, 68, 0.4)",
+    };
+  }
+
+  if (diffDays === 0) {
+    return {
+      tipo: "POR_VENCER",
+      badgeText: "⚠️ VENCE HOY",
+      label: "Vence hoy",
+      dias: 0,
+      color: "#d97706",
+      bg: "rgba(245, 158, 11, 0.18)",
+      border: "rgba(245, 158, 11, 0.45)",
+    };
+  }
+
+  if (diffDays <= 7) {
+    return {
+      tipo: "POR_VENCER",
+      badgeText: `⏳ VENCE EN ${diffDays}D`,
+      label: `Vence en ${diffDays} ${diffDays === 1 ? "día" : "días"}`,
+      dias: diffDays,
+      color: "#d97706",
+      bg: "rgba(245, 158, 11, 0.14)",
+      border: "rgba(245, 158, 11, 0.35)",
+    };
+  }
+
+  return {
+    tipo: "EN_PLAZO",
+    badgeText: `🟢 EN PLAZO (${diffDays}d)`,
+    label: `En plazo (${diffDays} días)`,
+    dias: diffDays,
+    color: "#2563eb",
+    bg: "rgba(37, 99, 235, 0.1)",
+    border: "rgba(37, 99, 235, 0.25)",
+  };
+}
+
 export default function EimiplannerTab({ currentUser }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -33,6 +135,7 @@ export default function EimiplannerTab({ currentUser }) {
   const [searchRestricciones, setSearchRestricciones] = useState("");
   const [filtroEstadoRestr, setFiltroEstadoRestr] = useState("TODOS");
   const [filtroDisciplinaRestr, setFiltroDisciplinaRestr] = useState("TODAS");
+  const [filtroVencimientoRestr, setFiltroVencimientoRestr] = useState("TODOS"); // 'TODOS' | 'ATRASADAS' | 'POR_VENCER' | 'CRITICAS' | 'EN_PLAZO' | 'RESUELTAS'
   const [selectedRestriccion, setSelectedRestriccion] = useState(null);
 
   // Filtros de Lookahead
@@ -66,6 +169,32 @@ export default function EimiplannerTab({ currentUser }) {
     fetchData(false);
   }, []);
 
+  // --- MÉTRICAS DE VENCIMIENTO DE RESTRICCIONES ---
+  const conteosVencimiento = useMemo(() => {
+    const list = data?.logRequisitos || [];
+    let atrasadas = 0;
+    let porVencer = 0;
+    let enPlazo = 0;
+    let resueltas = 0;
+
+    list.forEach((r) => {
+      const v = getVencimientoInfo(r);
+      if (v.tipo === "ATRASADA") atrasadas++;
+      else if (v.tipo === "POR_VENCER") porVencer++;
+      else if (v.tipo === "EN_PLAZO") enPlazo++;
+      else if (v.tipo === "RESUELTA") resueltas++;
+    });
+
+    return {
+      total: list.length,
+      atrasadas,
+      porVencer,
+      criticas: atrasadas + porVencer,
+      enPlazo,
+      resueltas,
+    };
+  }, [data]);
+
   // --- FILTRADO DE RESTRICCIONES ---
   const restriccionesFiltradas = useMemo(() => {
     const list = data?.logRequisitos || [];
@@ -88,9 +217,18 @@ export default function EimiplannerTab({ currentUser }) {
         (r.disciplina || "").toUpperCase() === filtroDisciplinaRestr ||
         (r.categoria || "").toUpperCase() === filtroDisciplinaRestr;
 
-      return matchSearch && matchEstado && matchDisc;
+      const vInfo = getVencimientoInfo(r);
+      const matchVencimiento =
+        filtroVencimientoRestr === "TODOS" ||
+        (filtroVencimientoRestr === "ATRASADAS" && vInfo.tipo === "ATRASADA") ||
+        (filtroVencimientoRestr === "POR_VENCER" && vInfo.tipo === "POR_VENCER") ||
+        (filtroVencimientoRestr === "CRITICAS" && (vInfo.tipo === "ATRASADA" || vInfo.tipo === "POR_VENCER")) ||
+        (filtroVencimientoRestr === "EN_PLAZO" && vInfo.tipo === "EN_PLAZO") ||
+        (filtroVencimientoRestr === "RESUELTAS" && vInfo.tipo === "RESUELTA");
+
+      return matchSearch && matchEstado && matchDisc && matchVencimiento;
     });
-  }, [data, searchRestricciones, filtroEstadoRestr, filtroDisciplinaRestr]);
+  }, [data, searchRestricciones, filtroEstadoRestr, filtroDisciplinaRestr, filtroVencimientoRestr]);
 
   // Disciplinas únicas en restricciones
   const disciplinasUnicas = useMemo(() => {
@@ -295,8 +433,10 @@ export default function EimiplannerTab({ currentUser }) {
             <div style={{ fontSize: "26px", fontWeight: 900, color: "var(--color-text)", marginTop: "8px" }}>
               {metricas.totalRestricciones}
             </div>
-            <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "4px" }}>
-              {metricas.restriccionesAbiertas} abiertas · {metricas.restriccionesCerradas + metricas.restriccionesResueltas} resueltas
+            <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "4px", display: "flex", gap: "4px", flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ color: "#dc2626", fontWeight: 700 }}>🚨 {conteosVencimiento.atrasadas} atrasadas</span> ·
+              <span style={{ color: "#d97706", fontWeight: 700 }}>⏳ {conteosVencimiento.porVencer} por vencer</span> ·
+              <span>{conteosVencimiento.resueltas} resueltas</span>
             </div>
           </div>
 
@@ -384,6 +524,155 @@ export default function EimiplannerTab({ currentUser }) {
       {/* ============================================================ */}
       {subTab === "restricciones" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          {/* Panel de Alertas y Acceso Rápido por Vencimiento */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+              gap: "10px",
+            }}
+          >
+            <button
+              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "ATRASADAS" ? "TODOS" : "ATRASADAS")}
+              style={{
+                background: filtroVencimientoRestr === "ATRASADAS" ? "rgba(239, 68, 68, 0.16)" : "var(--bg-container)",
+                border: filtroVencimientoRestr === "ATRASADAS" ? "2px solid #ef4444" : "1px solid var(--border-container)",
+                borderRadius: "12px",
+                padding: "12px 14px",
+                cursor: "pointer",
+                textAlign: "left",
+                transition: "all 0.15s ease",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                <span style={{ fontSize: "11px", fontWeight: 800, color: "#dc2626", textTransform: "uppercase" }}>
+                  🚨 Atrasadas
+                </span>
+                <span style={{ fontSize: "10px", background: "rgba(239,68,68,0.15)", color: "#b91c1c", fontWeight: 800, padding: "2px 6px", borderRadius: "10px" }}>
+                  Acción Urgente
+                </span>
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 900, color: "#dc2626" }}>
+                {conteosVencimiento.atrasadas}
+              </div>
+              <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "2px" }}>
+                Fecha compromiso vencida
+              </div>
+            </button>
+
+            <button
+              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "POR_VENCER" ? "TODOS" : "POR_VENCER")}
+              style={{
+                background: filtroVencimientoRestr === "POR_VENCER" ? "rgba(245, 158, 11, 0.18)" : "var(--bg-container)",
+                border: filtroVencimientoRestr === "POR_VENCER" ? "2px solid #f59e0b" : "1px solid var(--border-container)",
+                borderRadius: "12px",
+                padding: "12px 14px",
+                cursor: "pointer",
+                textAlign: "left",
+                transition: "all 0.15s ease",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                <span style={{ fontSize: "11px", fontWeight: 800, color: "#d97706", textTransform: "uppercase" }}>
+                  ⏳ Por Vencer
+                </span>
+                <span style={{ fontSize: "10px", background: "rgba(245,158,11,0.18)", color: "#b45309", fontWeight: 800, padding: "2px 6px", borderRadius: "10px" }}>
+                  Próximos 7 días
+                </span>
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 900, color: "#d97706" }}>
+                {conteosVencimiento.porVencer}
+              </div>
+              <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "2px" }}>
+                Vencen dentro de la semana
+              </div>
+            </button>
+
+            <button
+              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "CRITICAS" ? "TODOS" : "CRITICAS")}
+              style={{
+                background: filtroVencimientoRestr === "CRITICAS" ? "rgba(234, 88, 12, 0.16)" : "var(--bg-container)",
+                border: filtroVencimientoRestr === "CRITICAS" ? "2px solid #ea580c" : "1px solid var(--border-container)",
+                borderRadius: "12px",
+                padding: "12px 14px",
+                cursor: "pointer",
+                textAlign: "left",
+                transition: "all 0.15s ease",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                <span style={{ fontSize: "11px", fontWeight: 800, color: "#ea580c", textTransform: "uppercase" }}>
+                  ⚠️ Riesgo Operativo
+                </span>
+                <span style={{ fontSize: "10px", background: "rgba(234,88,12,0.18)", color: "#c2410c", fontWeight: 800, padding: "2px 6px", borderRadius: "10px" }}>
+                  Atrasadas + Por Vencer
+                </span>
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 900, color: "#ea580c" }}>
+                {conteosVencimiento.criticas}
+              </div>
+              <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "2px" }}>
+                Total de alertas activas
+              </div>
+            </button>
+
+            <button
+              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "EN_PLAZO" ? "TODOS" : "EN_PLAZO")}
+              style={{
+                background: filtroVencimientoRestr === "EN_PLAZO" ? "rgba(59, 130, 246, 0.14)" : "var(--bg-container)",
+                border: filtroVencimientoRestr === "EN_PLAZO" ? "2px solid #3b82f6" : "1px solid var(--border-container)",
+                borderRadius: "12px",
+                padding: "12px 14px",
+                cursor: "pointer",
+                textAlign: "left",
+                transition: "all 0.15s ease",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                <span style={{ fontSize: "11px", fontWeight: 800, color: "#2563eb", textTransform: "uppercase" }}>
+                  🟢 En Plazo
+                </span>
+                <span style={{ fontSize: "10px", background: "rgba(59,130,246,0.15)", color: "#1d4ed8", fontWeight: 800, padding: "2px 6px", borderRadius: "10px" }}>
+                  {">"} 7 días
+                </span>
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 900, color: "#2563eb" }}>
+                {conteosVencimiento.enPlazo}
+              </div>
+              <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "2px" }}>
+                Con margen de gestión
+              </div>
+            </button>
+
+            <button
+              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "RESUELTAS" ? "TODOS" : "RESUELTAS")}
+              style={{
+                background: filtroVencimientoRestr === "RESUELTAS" ? "rgba(16, 185, 129, 0.16)" : "var(--bg-container)",
+                border: filtroVencimientoRestr === "RESUELTAS" ? "2px solid #10b981" : "1px solid var(--border-container)",
+                borderRadius: "12px",
+                padding: "12px 14px",
+                cursor: "pointer",
+                textAlign: "left",
+                transition: "all 0.15s ease",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                <span style={{ fontSize: "11px", fontWeight: 800, color: "#059669", textTransform: "uppercase" }}>
+                  ✔️ Resueltas
+                </span>
+                <span style={{ fontSize: "10px", background: "rgba(16,185,129,0.15)", color: "#047857", fontWeight: 800, padding: "2px 6px", borderRadius: "10px" }}>
+                  Cerradas
+                </span>
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 900, color: "#059669" }}>
+                {conteosVencimiento.resueltas}
+              </div>
+              <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "2px" }}>
+                Liberadas exitosamente
+              </div>
+            </button>
+          </div>
+
           {/* Barra de Búsqueda y Filtros */}
           <div
             style={{
@@ -430,7 +719,32 @@ export default function EimiplannerTab({ currentUser }) {
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+              {/* Filtro Vencimiento */}
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <span style={{ fontSize: "12px", color: "var(--color-text-muted)", fontWeight: 600 }}>Vencimiento:</span>
+                <select
+                  value={filtroVencimientoRestr}
+                  onChange={(e) => setFiltroVencimientoRestr(e.target.value)}
+                  style={{
+                    background: "var(--bg-input)",
+                    border: filtroVencimientoRestr === "ATRASADAS" ? "1px solid #ef4444" : filtroVencimientoRestr === "POR_VENCER" ? "1px solid #f59e0b" : "1px solid var(--border-input)",
+                    color: filtroVencimientoRestr === "ATRASADAS" ? "#dc2626" : filtroVencimientoRestr === "POR_VENCER" ? "#d97706" : "var(--color-text)",
+                    borderRadius: "8px",
+                    padding: "6px 10px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                  }}
+                >
+                  <option value="TODOS">Todos los plazos</option>
+                  <option value="ATRASADAS">🚨 Solo Atrasadas / Vencidas ({conteosVencimiento.atrasadas})</option>
+                  <option value="POR_VENCER">⏳ Solo Por Vencer en 7d ({conteosVencimiento.porVencer})</option>
+                  <option value="CRITICAS">⚠️ Atrasadas + Por Vencer ({conteosVencimiento.criticas})</option>
+                  <option value="EN_PLAZO">🟢 En Plazo ({conteosVencimiento.enPlazo})</option>
+                  <option value="RESUELTAS">✔️ Resueltas / Cerradas ({conteosVencimiento.resueltas})</option>
+                </select>
+              </div>
+
               {/* Filtro Estado */}
               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                 <span style={{ fontSize: "12px", color: "var(--color-text-muted)", fontWeight: 600 }}>Estado:</span>
@@ -447,8 +761,10 @@ export default function EimiplannerTab({ currentUser }) {
                     fontWeight: 600,
                   }}
                 >
-                  <option value="TODOS">Todos</option>
-                  <option value="ABIERTA">Abierta</option>
+                  <option value="TODOS">Todos los estados</option>
+                  <option value="IDENTIFICADA">Identificada</option>
+                  <option value="EN CURSO">En Curso</option>
+                  <option value="VENCIDA">Vencida</option>
                   <option value="CERRADA">Cerrada</option>
                   <option value="RESUELTA">Resuelta</option>
                 </select>
@@ -494,6 +810,7 @@ export default function EimiplannerTab({ currentUser }) {
                 <thead>
                   <tr style={{ background: "var(--bg-sidebar)", borderBottom: "1px solid var(--border-container)" }}>
                     <th style={{ padding: "12px 16px", fontWeight: 700, width: "70px" }}>Prio</th>
+                    <th style={{ padding: "12px 16px", fontWeight: 700 }}>Vencimiento & Plazo</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Categoría / Disciplina</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Actividad & Restricción</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Responsable</th>
@@ -505,7 +822,7 @@ export default function EimiplannerTab({ currentUser }) {
                 <tbody>
                   {restriccionesFiltradas.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ padding: "32px", textAlign: "center", color: "var(--color-text-muted)" }}>
+                      <td colSpan={8} style={{ padding: "32px", textAlign: "center", color: "var(--color-text-muted)" }}>
                         No se encontraron restricciones con los filtros actuales.
                       </td>
                     </tr>
@@ -514,12 +831,15 @@ export default function EimiplannerTab({ currentUser }) {
                       const esP1 = String(r.prioridad) === "1";
                       const esP2 = String(r.prioridad) === "2";
                       const estado = (r.estado || "").toUpperCase();
+                      const vInfo = getVencimientoInfo(r);
 
                       const badgeEstadoStyle =
                         estado === "CERRADA" || estado === "RESUELTA"
                           ? { bg: "rgba(16, 185, 129, 0.12)", color: "#10b981", border: "rgba(16, 185, 129, 0.25)" }
-                          : estado === "ABIERTA"
+                          : estado === "VENCIDA"
                           ? { bg: "rgba(239, 68, 68, 0.12)", color: "#ef4444", border: "rgba(239, 68, 68, 0.25)" }
+                          : estado === "EN CURSO"
+                          ? { bg: "rgba(59, 130, 246, 0.12)", color: "#2563eb", border: "rgba(59, 130, 246, 0.25)" }
                           : { bg: "rgba(245, 158, 11, 0.12)", color: "#f59e0b", border: "rgba(245, 158, 11, 0.25)" };
 
                       return (
@@ -527,7 +847,20 @@ export default function EimiplannerTab({ currentUser }) {
                           key={r.id_restriccion || idx}
                           style={{
                             borderBottom: "1px solid var(--border-container)",
-                            background: idx % 2 === 0 ? "transparent" : "rgba(0,0,0,0.01)",
+                            background:
+                              vInfo.tipo === "ATRASADA"
+                                ? "rgba(239, 68, 68, 0.03)"
+                                : vInfo.tipo === "POR_VENCER"
+                                ? "rgba(245, 158, 11, 0.03)"
+                                : idx % 2 === 0
+                                ? "transparent"
+                                : "rgba(0,0,0,0.01)",
+                            borderLeft:
+                              vInfo.tipo === "ATRASADA"
+                                ? "4px solid #ef4444"
+                                : vInfo.tipo === "POR_VENCER"
+                                ? "4px solid #f59e0b"
+                                : "4px solid transparent",
                             transition: "background 0.15s",
                           }}
                         >
@@ -545,6 +878,26 @@ export default function EimiplannerTab({ currentUser }) {
                             >
                               P{r.prioridad || "—"}
                             </span>
+                          </td>
+                          <td style={{ padding: "12px 16px", minWidth: "140px" }}>
+                            <span
+                              style={{
+                                display: "inline-block",
+                                padding: "4px 8px",
+                                borderRadius: "6px",
+                                fontSize: "11px",
+                                fontWeight: 800,
+                                background: vInfo.bg,
+                                color: vInfo.color,
+                                border: `1px solid ${vInfo.border}`,
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {vInfo.badgeText}
+                            </span>
+                            <div style={{ fontSize: "11px", color: vInfo.color, fontWeight: 600, marginTop: "4px" }}>
+                              {vInfo.label}
+                            </div>
                           </td>
                           <td style={{ padding: "12px 16px" }}>
                             <div style={{ fontWeight: 700, color: "var(--color-text)" }}>{r.categoria || r.disciplina || "General"}</div>
@@ -569,9 +922,9 @@ export default function EimiplannerTab({ currentUser }) {
                               <div style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>Apoyo: {r.responsable2}</div>
                             )}
                           </td>
-                          <td style={{ padding: "12px 16px", fontSize: "11px", color: "var(--color-text-muted)" }}>
+                          <td style={{ padding: "12px 16px", fontSize: "11px", color: "var(--color-text-muted)", minWidth: "130px" }}>
                             <div>Identificada: <strong style={{ color: "var(--color-text)" }}>{r.fecha_identificacion || "—"}</strong></div>
-                            <div>Compromiso: <strong style={{ color: "var(--color-text)" }}>{r.fecha_comprometida || r.fecha_requerida_resolucion || "—"}</strong></div>
+                            <div>Compromiso: <strong style={{ color: vInfo.tipo === "ATRASADA" ? "#dc2626" : "var(--color-text)" }}>{r.fecha_comprometida || r.fecha_requerida_resolucion || "—"}</strong></div>
                             {r.fecha_resolucion && <div>Resuelta: <strong style={{ color: "#10b981" }}>{r.fecha_resolucion}</strong></div>}
                           </td>
                           <td style={{ padding: "12px 16px" }}>
@@ -585,6 +938,7 @@ export default function EimiplannerTab({ currentUser }) {
                                 background: badgeEstadoStyle.bg,
                                 color: badgeEstadoStyle.color,
                                 border: `1px solid ${badgeEstadoStyle.border}`,
+                                whiteSpace: "nowrap",
                               }}
                             >
                               {r.estado || "PENDIENTE"}
@@ -1269,6 +1623,47 @@ export default function EimiplannerTab({ currentUser }) {
                   <div style={{ fontWeight: 600, color: "#ff303e" }}>{selectedRestriccion.fecha_comprometida || "—"}</div>
                 </div>
               </div>
+
+              {(() => {
+                const vSel = getVencimientoInfo(selectedRestriccion);
+                return (
+                  <div
+                    style={{
+                      background: vSel.bg,
+                      border: `1px solid ${vSel.border}`,
+                      borderRadius: "10px",
+                      padding: "12px 14px",
+                      marginTop: "12px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "10px",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: "11px", fontWeight: 800, color: vSel.color, textTransform: "uppercase" }}>
+                        Diagnóstico de Vencimiento
+                      </div>
+                      <div style={{ fontSize: "13px", fontWeight: 700, color: vSel.color, marginTop: "2px" }}>
+                        {vSel.label}
+                      </div>
+                    </div>
+                    <span
+                      style={{
+                        background: vSel.color,
+                        color: "white",
+                        padding: "5px 10px",
+                        borderRadius: "20px",
+                        fontSize: "11px",
+                        fontWeight: 800,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {vSel.badgeText}
+                    </span>
+                  </div>
+                );
+              })()}
             </div>
 
             <div style={{ marginTop: "20px", display: "flex", justifyContent: "flex-end" }}>
