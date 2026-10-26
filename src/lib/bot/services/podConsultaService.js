@@ -44,16 +44,22 @@ export async function enviarConsolidadoPendientes(supabase, telefonoSupervisor, 
   const pendientes = await obtenerPendientes(supabase, telefonoSupervisor);
   if (pendientes.length === 0) return;
 
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://equipos.lukeapp.cl";
+
   let msg;
   if (pendientes.length === 1) {
     const p = pendientes[0];
     const equipoLabel = equipoLabelDePendiente(p);
     const operadorNombre = operadorNombreDePendiente(p);
-    const encabezado = operadorNombre ? `🔧 *${equipoLabel}* listo con operador *${operadorNombre}*.` : `🔧 *${equipoLabel}* listo, esperando actividad.`;
+    const encabezado = operadorNombre 
+      ? `🚜 *¡Equipo Disponible en Sala POD!*\n*${equipoLabel}* ya está listo con el operador *${operadorNombre}*.` 
+      : `🚜 *¡Equipo Disponible en Sala POD!*\n*${equipoLabel}* ya está listo para tu especialidad.`;
     const tareas = p.tareas_enviadas || [];
+    const webLink = `${baseUrl}/supervisor/actividades?bloque_id=${p.planificacion_id}`;
+
     msg = tareas.length > 0
-      ? `${encabezado}\n¿Qué actividad ejecutarás hoy?\n\n${bloqueListaTareas(tareas)}\n0️⃣ Otra actividad (describe brevemente)\n\n_Responde con el número de tu tarea o escribe la actividad libremente._`
-      : `${encabezado}\nPor favor, responda indicando la actividad específica o describa la labor fuera de programa.`;
+      ? `${encabezado}\n\n¿Qué actividad ejecutarás con este recurso?\n\n${bloqueListaTareas(tareas)}\n0️⃣ Otra actividad (describe libremente)\n\n📲 *Gestionar en la Web (EIMIPLANNER 3WL):*\n👉 ${webLink}\n\n_Puedes responder con el número de tu tarea por WhatsApp o ingresar al enlace web._`
+      : `${encabezado}\n\n📲 *Asignar Tareas en la Web (EIMIPLANNER 3WL):*\n👉 ${webLink}\n\n_O responde este mensaje indicando la actividad específica._`;
   } else {
     const bloques = pendientes.map((p, i) => {
       const ancla = ANCLAS[i] || `(${i + 1})`;
@@ -61,12 +67,13 @@ export async function enviarConsolidadoPendientes(supabase, telefonoSupervisor, 
       const operadorNombre = operadorNombreDePendiente(p);
       const tareas = p.tareas_enviadas || [];
       const listaTareas = tareas.length > 0 ? `\n${bloqueListaTareas(tareas)}  0️⃣ Otra` : "";
-      return `${ancla} *${equipoLabel}*${operadorNombre ? ` — operador *${operadorNombre}*` : ""}${listaTareas}`;
+      const webLink = `${baseUrl}/supervisor/actividades?bloque_id=${p.planificacion_id}`;
+      return `${ancla} *${equipoLabel}*${operadorNombre ? ` — operador *${operadorNombre}*` : ""}${listaTareas}\n   👉 Web: ${webLink}`;
     }).join("\n\n");
 
     const ejemplo = pendientes.slice(0, 2).map(p => `${equipoLabelDePendiente(p)}: 1`).join(", ");
 
-    msg = `📋 Tienes ${pendientes.length} confirmaciones de actividad pendientes:\n\n${bloques}\n\nPuedes responder todo en un solo mensaje, por ejemplo:\n"${ejemplo}"`;
+    msg = `🚜 *¡Equipos Solicitados Disponibles!* 📋 Tienes ${pendientes.length} recursos listos:\n\n${bloques}\n\nPuedes abrir los enlaces para gestionar cada equipo o responder todo junto por WhatsApp (ej: "${ejemplo}").`;
   }
 
   await enviarMensajeWhatsApp(null, telefonoSupervisor, msg, false, geminiKey);

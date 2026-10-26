@@ -703,19 +703,21 @@ export async function handleJornadaFlow(ctx, res) {
     });
   }
 
-  // Actualizar combustible si se mencionó
-  if (resultado.petroleo_litros || resultado.horometro_carga_combustible || (resultado.combustible_nivel_porcentaje !== null && resultado.combustible_nivel_porcentaje !== undefined)) {
+  // Actualizar combustible y labores si se mencionó
+  const updatesReporte = {};
+  if (resultado.petroleo_litros) updatesReporte.petroleo_litros = resultado.petroleo_litros;
+  if (resultado.horometro_carga_combustible) updatesReporte.horometro_carga_combustible = resultado.horometro_carga_combustible;
+  if (resultado.combustible_nivel_porcentaje !== null && resultado.combustible_nivel_porcentaje !== undefined) {
+    updatesReporte.combustible_nivel_porcentaje = resultado.combustible_nivel_porcentaje;
+  }
+  if (resultado.labores_descripcion) {
+    updatesReporte.labores_resumen = resultado.labores_descripcion;
+  }
+
+  if (Object.keys(updatesReporte).length > 0) {
     await supabase
       .from("reportes_diarios")
-      .update({
-        ...(resultado.petroleo_litros && { petroleo_litros: resultado.petroleo_litros }),
-        ...(resultado.horometro_carga_combustible && {
-          horometro_carga_combustible: resultado.horometro_carga_combustible,
-        }),
-        ...(resultado.combustible_nivel_porcentaje !== null && resultado.combustible_nivel_porcentaje !== undefined && {
-          combustible_nivel_porcentaje: resultado.combustible_nivel_porcentaje
-        })
-      })
+      .update(updatesReporte)
       .eq("id", sesion.reporte_activo_id);
 
     const eqUpdateHito = {};
@@ -724,6 +726,9 @@ export async function handleJornadaFlow(ctx, res) {
     }
     if (resultado.combustible_nivel_porcentaje !== null && resultado.combustible_nivel_porcentaje !== undefined) {
       eqUpdateHito.combustible_nivel_porcentaje = resultado.combustible_nivel_porcentaje;
+    }
+    if (estadoHito && estadoHito !== "CIERRE") {
+      eqUpdateHito.estado_actual = estadoHito;
     }
     if (Object.keys(eqUpdateHito).length > 0) {
       await supabase.from("equipos")

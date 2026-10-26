@@ -79,6 +79,7 @@ export default function QrLanding() {
   const [showBypassGps, setShowBypassGps] = useState(false);
   const [combustibleNivel, setCombustibleNivel] = useState(100);
   const [capacidadEstanque, setCapacidadEstanque] = useState("");
+  const [estadoEquipo, setEstadoEquipo] = useState("Equipo Operativo");
 
   // Estados de integración POD del día siguiente
   const [podBloque, setPodBloque] = useState(null);
@@ -301,7 +302,8 @@ export default function QrLanding() {
           pautaConfirmada: equipo.pauta_preventiva_activa ? true : false,
           destinoRuta: esVehiculo ? destinoRuta : null,
           combustibleNivel: combustibleNivel,
-          capacidadEstanque: equipo.capacidad_estanque_litros ? parseInt(equipo.capacidad_estanque_litros) : (capacidadEstanque ? parseInt(capacidadEstanque) : null)
+          capacidadEstanque: equipo.capacidad_estanque_litros ? parseInt(equipo.capacidad_estanque_litros) : (capacidadEstanque ? parseInt(capacidadEstanque) : null),
+          estadoEquipo: estadoEquipo
         })
       });
 
@@ -873,6 +875,41 @@ export default function QrLanding() {
                     </div>
                   </div>
                 )}
+
+                {/* Selector de Estado del Equipo (Dropdown oficial de la faena) */}
+                <div className="input-group mt-4" style={{ textAlign: "left" }}>
+                  <label htmlFor="estado-equipo-select" style={{ display: "block", color: "#94a3b8", fontSize: "11px", fontWeight: 700, letterSpacing: "0.5px", marginBottom: "6px" }}>
+                    Seleccione el estado correspondiente
+                  </label>
+                  <select
+                    id="estado-equipo-select"
+                    value={estadoEquipo}
+                    onChange={(e) => setEstadoEquipo(e.target.value)}
+                    style={{
+                      width: "100%",
+                      background: "var(--bg-input, #090f1d)",
+                      border: "1px solid var(--border-input, #1e293b)",
+                      borderRadius: "8px",
+                      color: "var(--color-input-text, #f8fafc)",
+                      padding: "9px 12px",
+                      fontSize: "13px",
+                      outline: "none",
+                      boxSizing: "border-box",
+                      fontFamily: "inherit",
+                      cursor: "pointer"
+                    }}
+                  >
+                    <option value="Equipo Operativo">Equipo Operativo</option>
+                    <option value="Equipo Fuera de Servicio (Panne)">Equipo Fuera de Servicio (Panne)</option>
+                    <option value="Equipo Disponible sin Operador">Equipo Disponible sin Operador</option>
+                    <option value="Equipo traslado">Equipo traslado</option>
+                    <option value="Equipo en Mantención Programada">Equipo en Mantención Programada</option>
+                    <option value="Equipo Desvinculado pero en Obra">Equipo Desvinculado pero en Obra</option>
+                    <option value="Equipo Desvinculado">Equipo Desvinculado</option>
+                    <option value="Equipo en Proceso de Acreditación">Equipo en Proceso de Acreditación</option>
+                    <option value="Equipo en Proceso de Armado">Equipo en Proceso de Armado</option>
+                  </select>
+                </div>
 
                 {/* 3. Mensajes de error locales */}
                 {errorMessageLocal && (

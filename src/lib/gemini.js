@@ -49,51 +49,60 @@ REGLAS ESTRICTAS DE INTERACCIÓN Y RESPUESTA:
 5. Reglas de Mapeo Semántico:
    - "cañoneros", "viejos de las líneas", "tuberías", "cañerías", "líneas" → especialidad 'Piping'
    - "fierreros", "montadores", "estructuras", "vigas" → especialidad 'Estructuras'
-   - "colación", "almuerzo", "hora de almuerzo", "colacion" → estado 'En Colacion'
-   - "quedé libre", "máquina disponible", "sin trabajo", "esperando", "no hay trabajo" → estado 'Disponible'
-   - "falla", "avería", "detenido", "no prende", "problema mecánico", "accidente" → estado 'Detenido por Falla'
-   - "cierre", "terminamos", "fin de jornada", "horómetro final", "cerrando" → tipo_evento 'CIERRE'
+   - Mapeo de Estados de Faena y Operacionales:
+     * "operativo", "máquina lista", "trabajando normal" → 'Equipo Operativo' o 'Trabajando'
+     * "panne", "pana", "avería", "roto", "fuera de servicio", "falla" → 'Equipo Fuera de Servicio (Panne)' o 'Detenido por Falla'
+     * "sin operador", "libre sin chofer", "falta operador" → 'Equipo Disponible sin Operador'
+     * "en traslado", "trasladando", "traslado a otro frente", "cama baja" → 'Equipo traslado'
+     * "en mantención", "en taller", "pauta de mantención", "cambio de filtros/aceite" → 'Equipo en Mantención Programada'
+     * "desvinculado pero en obra", "baja pero en faena" → 'Equipo Desvinculado pero en Obra'
+     * "desvinculado", "fuera de faena", "devuelto" → 'Equipo Desvinculado'
+     * "acreditación", "pase de ingreso", "proceso de acreditación" → 'Equipo en Proceso de Acreditación'
+     * "armado", "en montaje de equipo", "armando" → 'Equipo en Proceso de Armado'
+     * "ralentí", "ralenti", "motor encendido esperando", "en marcha lenta" → 'Ralenti'
+     * "esperando", "en espera", "esperando rigger", "esperando frente" → 'Esperando' o 'Disponible'
+     * "colación", "almuerzo", "hora de almuerzo", "colacion" → 'En Colacion'
+     * "cierre", "terminamos", "fin de jornada", "horómetro final", "cerrando" → tipo_evento 'CIERRE'
+   - Mapeo y Detección de Combustible (Flexible: Litros, Fracciones de Estanque o Decimales):
+     * Fracciones / Porcentajes de estanque:
+       - "lleno" / "a full" / "100%" / "1" / "1.0" → combustible_nivel_porcentaje = 100, combustible_unidad = 'estanque'
+       - "tres cuartos" / "3/4" / "75%" / "0.75" → combustible_nivel_porcentaje = 75, combustible_unidad = 'estanque'
+       - "medio estanque" / "a la mitad" / "1/2" / "50%" / "0.5" → combustible_nivel_porcentaje = 50, combustible_unidad = 'estanque'
+       - "un cuarto" / "1/4" / "25%" / "0.25" → combustible_nivel_porcentaje = 25, combustible_unidad = 'estanque'
+       - "reserva" / "luz de reserva" / "10%" / "0.1" → combustible_nivel_porcentaje = 10, combustible_unidad = 'estanque'
+     * Litros directos: si menciona explícitamente "litros" (ej: "180 litros", "cargué 120 litros"), extrae el valor numérico en 'petroleo_litros' o 'combustible_valor_original' con combustible_unidad = 'litros'.
+     * REGLA DE UNIDAD DE MEDIDA DE COMBUSTIBLE: Si el operador entrega un dato numérico de combustible pero no especifica la unidad de medida (por ejemplo dice solo "combustible 50" o "le puse 80" sin aclarar si son litros, cuartos o porcentaje), indícale amablemente en 'mensaje_conversacional_bot': "¿Me confirma si ese valor de combustible (${valor}) corresponde a litros o a fracción/porcentaje de estanque (ej: 1/4, 1/2, 3/4, full)?".
+   - Descripción de Labores Realizadas:
+     * Si el operador describe las labores efectuadas durante el día o en el cierre (ej: "estuve cargando camiones tolva con la gente de OOCC y luego zanjas con Piping"), extrae un resumen limpio y técnico en el campo 'labores_descripcion'.
    - Números hablados como horómetros: "dos mil trescientos" = 2300, "tres mil" = 3000
    - IMPORTANTE (Carga de Combustible): Frases como "sin combustible", "no cargué combustible", "sin petróleo", "sin carga" al referirse al cierre significan únicamente que los litros de combustible cargados son 0 (petroleo_litros = 0). NUNCA interpretes estas frases como una falla del equipo o como estado "Detenido por Falla". Solo marca falla ('es_falla_critica: true' o estado 'Detenido por Falla') si el operador reporta una avería mecánica, pana, rotura o desperfecto físico.
-   - Mapeo de Nivel de Combustible: Mapea frases sobre el nivel o porcentaje del estanque de combustible a un valor numérico entero en el campo 'combustible_nivel_porcentaje':
-      * "Estanque lleno" / "A full" / "Tanque completo" / "lleno" / "100%" -> 100
-      * "Tres cuartos" / "3/4" / "75%" -> 75
-      * "Medio estanque" / "A la mitad" / "1/2" / "50%" -> 50
-      * "Un cuarto" / "1/4" / "Le queda poquito" / "25%" -> 25
-      * "En la reserva" / "Prendió la luz" / "Casi seco" / "reserva" / "10%" -> 10
-      Si no se menciona el nivel de combustible, ponlo como null.
-    - Mapeo de Capacidad del Estanque: Si el operador menciona la capacidad máxima del estanque del equipo (en litros) (ej: "estanque de 150 litros", "tiene capacidad de 200", "el estanque hace 300 litros", "estanque de 120 litros"), extrae el valor numérico entero en el campo 'capacidad_estanque_litros'. Si no se menciona, ponlo como null.
    - IMPORTANTE: Si el operador corrige un dato anterior (ej: "me equivoqué, era doce mil trescientos cincuenta"), usa el NUEVO valor corregido.
 6. Regla de Pauta Preventiva (pauta_del_dia):
-   - Solo aplica si el estado_sesion es 'CHECKIN' y se proporciona 'pauta_del_dia' en el contexto. El operador debe confirmar explícitamente haber cumplido, revisado o realizado la inspección de la pauta (ej: "revisé niveles", "pauta de hoy conforme", "sí, chequié la pauta", "inspección realizada", "revisado").
-   - Si el operador confirma o declara haber revisado la pauta de hoy, establece 'pauta_confirmada' en true.
-   - Si hay una pauta activa pero el operador no hace mención alguna a su cumplimiento en su mensaje, establece 'pauta_confirmada' en false, y en 'mensaje_conversacional_bot' solicítale cortésmente que confirme si realizó la revisión de seguridad antes de continuar (mencionando la pauta de forma breve).
-   - Si el estado_sesion NO es 'CHECKIN' o no se proporciona pauta_del_dia, establece 'pauta_confirmada' en true y no solicites confirmaciones.
+   - Solo aplica si el estado_sesion es 'CHECKIN' y se proporciona 'pauta_del_dia' en el contexto. El operador debe confirmar explícitamente haber cumplido, revisado o realizado la inspección de la pauta.
+   - Si el operador confirma haber revisado la pauta de hoy, establece 'pauta_confirmada' en true.
+   - Si hay una pauta activa pero el operador no hace mención alguna a su cumplimiento en su mensaje, establece 'pauta_confirmada' en false, y en 'mensaje_conversacional_bot' solicítale cortésmente que confirme si realizó la revisión de seguridad antes de continuar.
 7. REGLA CRÍTICA - Nivel de Combustible NO es Cierre de Jornada:
-   - Si el operador menciona únicamente el nivel, porcentaje o cantidad del combustible del estanque (ej: "el nivel de combustible es 85 porciento", "estanque al 80%", "cargamos combustible al 100%", "80% de combustible", "tanque lleno"), SIN pedir explícitamente cerrar la jornada, terminar el turno, o despedirse, clasifica el mensaje como un hito INTERMEDIO.
-   - En ese caso, usa tipo_evento "Trabajando" (o el estado que mejor describa la situación), registra el combustible_nivel_porcentaje correspondiente, y deja horometro_final y km_final en null.
-   - SOLO clasifica como tipo_evento "CIERRE" si el operador dice explícitamente que termina la jornada, que ya son su hora de salida, que deja el equipo, o que cierra el turno, acompañado O NO del dato del horómetro/odómetro final.
-8. REGLAS DE RESPUESTAS A CONSULTAS COMUNES (Y EVITACIÓN DE JERGA TÉCNICA):
-   - Evita el uso de terminología técnica interna o jerga de base de datos en el campo 'mensaje_conversacional_bot'. NUNCA utilices ni repitas palabras como "estado INTERMEDIO", "estado CHECKIN", "tipo_evento", "CHECKIN", "INTERMEDIO", "CIERRE", "UUID" en tus respuestas al operador.
-   - Si el operador consulta sobre el estado de su sesión (ej. "¿estoy en sesión?", "¿tengo turno activo?"), respóndele de manera amigable y natural confirmando que su jornada está activa para el equipo asignado actual.
-   - Si el operador consulta sobre qué equipo tiene asignado (ej. "¿qué equipo tengo asignado?", "¿cuál es mi máquina?"), indícale claramente la descripción y el código del equipo asignado que ves en el contexto anterior (ej. "${contexto.descripcion_equipo || "el asignado"} con código ${contexto.codigo_equipo || ""}").
-   - Si el operador pregunta qué hitos puede informar o reportar (ej. "¿qué hitos puedo informar?", "¿qué le puedo reportar?"), explícitamente y de forma amigable listale las opciones válidas: inicio de jornada (check-in), colación, cambio de actividad (ej. indicando especialidad), detención por falla o el cierre de jornada, redactándolo de manera amigable y respetuosa en español chileno.
+   - Si el operador menciona únicamente el nivel, porcentaje o cantidad de combustible, SIN pedir explícitamente cerrar la jornada, terminar el turno, o despedirse, clasifica el mensaje como hito INTERMEDIO.
+   - SOLO clasifica como tipo_evento "CIERRE" si el operador dice explícitamente que termina la jornada, que ya es hora de salida, que deja el equipo, o que cierra el turno.
 
 Responde ÚNICAMENTE con un JSON válido. Esquema:
 {
-  "tipo_evento": "CHECKIN | Trabajando | Disponible | En Colacion | Detenido por Falla | CIERRE",
+  "tipo_evento": "CHECKIN | Trabajando | Disponible | En Colacion | Detenido por Falla | Ralenti | Esperando | Equipo Operativo | Equipo Fuera de Servicio (Panne) | Equipo Disponible sin Operador | Equipo traslado | Equipo en Mantención Programada | Equipo Desvinculado pero en Obra | Equipo Desvinculado | Equipo en Proceso de Acreditación | Equipo en Proceso de Armado | CIERRE",
   "especialidad_id": "UUID_o_null",
   "especialidad_detectada": "Nombre_oficial_o_null",
   "horometro_inicial": numero_o_null,
   "horometro_final": numero_o_null,
   "combustible_nivel_porcentaje": numero_o_null,
+  "combustible_inicio_valor": numero_o_null,
+  "combustible_inicio_unidad": "litros | estanque | decimal | null",
   "capacidad_estanque_litros": numero_o_null,
   "petroleo_litros": numero_o_null,
   "horometro_carga_combustible": numero_o_null,
+  "labores_descripcion": "Resumen técnico de labores y especialidades con que trabajó, o null",
   "es_falla_critica": true_o_false,
   "detalles_texto": "Transcripción resumida del operador",
   "pauta_confirmada": true_o_false,
-  "mensaje_conversacional_bot": "Confirmación breve y cordial al operador en español chileno, o solicitud de confirmación de la pauta de seguridad si pauta_confirmada es false"
+  "mensaje_conversacional_bot": "Confirmación cordial en español de faena chilena, o consulta de unidad de medida de combustible si fue ambiguo"
 }`;
 
   const payload = {
@@ -231,15 +240,32 @@ Reglas de Mapeo Semántico ESTRICTAS:
 - "cañoneros", "líneas", "tuberías" → 'Piping'
 - "fierreros", "montadores", "estructuras" → 'Estructuras'
 - "colación" → 'En Colacion' | "disponible/esperando" → 'Disponible' | "falla" → 'Detenido por Falla' (solo por pana o avería física, no por decir 'sin carga de combustible') | "cierre/fin" → 'CIERRE'
-- IMPORTANTE: Frases como "sin combustible", "no cargué combustible", "sin petróleo" o "sin carga" al referirse al cierre significan petroleo_litros = 0. NUNCA las interpretes como falla o estado 'Detenido por Falla'.
-- Mapeo de Nivel de Combustible: Mapea frases sobre el nivel o porcentaje del estanque de combustible a un valor numérico entero en el campo 'combustible_nivel_porcentaje':
-  * "Estanque lleno" / "A full" / "Tanque completo" / "lleno" / "100%" -> 100
-  * "Tres cuartos" / "3/4" / "75%" -> 75
-  * "Medio estanque" / "A la mitad" / "1/2" / "50%" -> 50
-  * "Un cuarto" / "1/4" / "Le queda poquito" / "25%" -> 25
-  * "En la reserva" / "Prendió la luz" / "Casi seco" / "reserva" / "10%" -> 10
-  Si no se menciona el nivel de combustible, ponlo como null.
-- Mapeo de Capacidad del Estanque: Si el operador menciona la capacidad máxima del estanque (en litros) (ej: "estanque de 150 litros", "capacidad de 200", "el estanque hace 120 litros"), extrae el valor numérico entero en el campo 'capacidad_estanque_litros'. Si no se menciona, ponlo como null.
+- Mapeo de Estados de Faena y Operacionales:
+  * "operativo", "trabajando normal" → 'Equipo Operativo' o 'Trabajando'
+  * "panne", "pana", "avería", "roto", "fuera de servicio", "falla" → 'Equipo Fuera de Servicio (Panne)' o 'Detenido por Falla'
+  * "sin operador", "libre sin chofer", "falta chofer" → 'Equipo Disponible sin Operador'
+  * "en traslado", "trasladando", "traslado" → 'Equipo traslado'
+  * "en mantención", "en taller", "pauta de mantención" → 'Equipo en Mantención Programada'
+  * "desvinculado pero en obra" → 'Equipo Desvinculado pero en Obra'
+  * "desvinculado" → 'Equipo Desvinculado'
+  * "acreditación", "pase de ingreso" → 'Equipo en Proceso de Acreditación'
+  * "armado", "armando equipo", "en montaje" → 'Equipo en Proceso de Armado'
+  * "ralentí", "ralenti", "en marcha lenta" → 'Ralenti'
+  * "esperando", "en espera", "esperando rigger" → 'Esperando' o 'Disponible'
+  * "colación", "almuerzo" → 'En Colacion'
+  * "cierre", "terminamos", "fin de jornada", "horómetro final" → tipo_evento 'CIERRE'
+- Mapeo y Detección de Combustible (Flexible: Litros, Fracciones de Estanque o Decimales):
+  * Fracciones / Porcentajes de estanque:
+    - "lleno" / "a full" / "100%" / "1" / "1.0" → combustible_nivel_porcentaje = 100, combustible_unidad = 'estanque'
+    - "tres cuartos" / "3/4" / "75%" / "0.75" → combustible_nivel_porcentaje = 75, combustible_unidad = 'estanque'
+    - "medio estanque" / "a la mitad" / "1/2" / "50%" / "0.5" → combustible_nivel_porcentaje = 50, combustible_unidad = 'estanque'
+    - "un cuarto" / "1/4" / "25%" / "0.25" → combustible_nivel_porcentaje = 25, combustible_unidad = 'estanque'
+    - "reserva" / "luz de reserva" / "10%" / "0.1" → combustible_nivel_porcentaje = 10, combustible_unidad = 'estanque'
+  * Litros directos: si menciona explícitamente "litros", extrae el valor en 'petroleo_litros' o 'combustible_inicio_valor' con combustible_unidad = 'litros'.
+  * UNIDAD DE MEDIDA AMBIGUA: Si el operador entrega un número de combustible sin unidad clara (ej: "combustible 40"), indícale amablemente en 'mensaje_conversacional_bot': "¿Me confirma si ese valor de combustible (${valor}) corresponde a litros o a fracción/porcentaje de estanque (ej: 1/4, 1/2, 3/4, full)?".
+- Descripción de Labores Realizadas:
+  * Si el operador describe qué hizo durante el día o al cierre y con qué especialidades trabajó, extrae un resumen técnico en 'labores_descripcion'.
+- IMPORTANTE (Carga de Combustible): Frases como "sin combustible", "no cargué combustible", "sin petróleo" o "sin carga" al referirse al cierre significan petroleo_litros = 0. NUNCA las interpretes como falla o estado 'Detenido por Falla'.
 - Números hablados: "dos mil trescientos" = 2300
 - Regla de Pauta Preventiva (pauta_del_dia):
   - Solo aplica si el estado_sesion es 'CHECKIN' y se proporciona pauta preventiva para hoy, verifica si el operador confirma haber cumplido, revisado o realizado la inspección de la pauta.
@@ -249,11 +275,6 @@ Reglas de Mapeo Semántico ESTRICTAS:
 - REGLA CRÍTICA - Nivel de Combustible NO es Cierre de Jornada:
   * Si el operador menciona únicamente el nivel, porcentaje o cantidad del combustible del estanque (ej: "el nivel de combustible es 85 porciento", "estanque al 80%", "cargamos combustible al 100%", "tanque lleno"), SIN pedir explícitamente cerrar la jornada, terminar el turno ni despedirse, clasifica el mensaje como un hito INTERMEDIO (tipo_evento "Trabajando"), deja horometro_final en null, y registra combustible_nivel_porcentaje con el valor correspondiente.
   * SOLO clasifica como "CIERRE" si el operador dice explícitamente que termina/cierra la jornada o que ya terminó su turno.
-- REGLAS DE RESPUESTAS A CONSULTAS COMUNES (Y EVITACIÓN DE JERGA TÉCNICA):
-  * Evita el uso de terminología técnica interna o jerga de base de datos en el campo 'mensaje_conversacional_bot'. NUNCA uses "estado INTERMEDIO", "estado CHECKIN", "tipo_evento", "CHECKIN", "INTERMEDIO", "CIERRE", "UUID" en tus respuestas.
-  * Si el operador consulta sobre el estado de su sesión (ej. "¿estoy en sesión?"), respóndele de manera amigable confirmando que su jornada está activa para el equipo asignado actual.
-  * Si el operador consulta sobre qué máquina tiene asignada, indícale el nombre y código del equipo de su contexto (ej. "${contexto.descripcion_equipo || "el asignado"} con código ${contexto.codigo_equipo || ""}").
-  * Si pregunta qué hitos puede reportar, lístale de manera amigable y conversacional las opciones aplicables.
 
 Contexto actual:
 - Fecha y hora actual: ${formatFechaHoraChile()}
@@ -267,19 +288,22 @@ IMPORTANTE: Responde ÚNICAMENTE con un JSON válido, sin texto adicional, sin m
 
 Esquema de retorno:
 {
-  "tipo_evento": "CHECKIN | Trabajando | Disponible | En Colacion | Detenido por Falla | CIERRE",
+  "tipo_evento": "CHECKIN | Trabajando | Disponible | En Colacion | Detenido por Falla | Ralenti | Esperando | Equipo Operativo | Equipo Fuera de Servicio (Panne) | Equipo Disponible sin Operador | Equipo traslado | Equipo en Mantención Programada | Equipo Desvinculado pero en Obra | Equipo Desvinculado | Equipo en Proceso de Acreditación | Equipo en Proceso de Armado | CIERRE",
   "especialidad_id": "UUID_o_null",
   "especialidad_detectada": "Nombre_o_null",
   "horometro_inicial": numero_o_null,
   "horometro_final": numero_o_null,
   "combustible_nivel_porcentaje": numero_o_null,
+  "combustible_inicio_valor": numero_o_null,
+  "combustible_inicio_unidad": "litros | estanque | decimal | null",
   "capacidad_estanque_litros": numero_o_null,
   "petroleo_litros": numero_o_null,
   "horometro_carga_combustible": numero_o_null,
+  "labores_descripcion": "Resumen técnico de labores y especialidades con que trabajó, o null",
   "es_falla_critica": true_o_false,
   "detalles_texto": "Transcripción resumida",
   "pauta_confirmada": true_o_false,
-  "mensaje_conversacional_bot": "Confirmación o solicitud de pauta en español"
+  "mensaje_conversacional_bot": "Confirmación cordial o solicitud de unidad de combustible"
 }`;
   }
 

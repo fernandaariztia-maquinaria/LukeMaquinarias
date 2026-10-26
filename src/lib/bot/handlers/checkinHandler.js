@@ -197,6 +197,15 @@ export async function handleCheckinFlow(ctx, res) {
     updateCheckinStandard.combustible_inicio_porcentaje = resultado.combustible_nivel_porcentaje;
     updateCheckinStandard.combustible_nivel_porcentaje = resultado.combustible_nivel_porcentaje;
   }
+  if (resultado.combustible_inicio_valor !== null && resultado.combustible_inicio_valor !== undefined) {
+    updateCheckinStandard.combustible_inicio_valor = resultado.combustible_inicio_valor;
+  }
+  if (resultado.combustible_inicio_unidad) {
+    updateCheckinStandard.combustible_inicio_unidad = resultado.combustible_inicio_unidad;
+  }
+  if (resultado.labores_descripcion) {
+    updateCheckinStandard.labores_resumen = resultado.labores_descripcion;
+  }
   await supabase.from("reportes_diarios")
     .update(updateCheckinStandard)
     .eq("id", sesion.reporte_activo_id);

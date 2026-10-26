@@ -1,4 +1,5 @@
 import { createAdminClient } from "../../../lib/supabase-server";
+import { crearConsultaPendiente } from "../../../lib/bot/services/podConsultaService";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -7,7 +8,18 @@ export default async function handler(req, res) {
   }
 
   const supabase = createAdminClient();
-  const { equipoId, operadorId, valorLectura, latitud, longitud, pautaConfirmada, destinoRuta, combustibleNivel, capacidadEstanque } = req.body;
+  const { 
+    equipoId, 
+    operadorId, 
+    valorLectura, 
+    latitud, 
+    longitud, 
+    pautaConfirmada, 
+    destinoRuta, 
+    combustibleNivel, 
+    capacidadEstanque,
+    estadoEquipo
+  } = req.body;
 
   if (!equipoId || !operadorId || valorLectura === undefined) {
     return res.status(400).json({ success: false, message: "Parámetros insuficientes (equipoId, operadorId y valorLectura son requeridos)" });
@@ -161,6 +173,10 @@ export default async function handler(req, res) {
       eqUpdate.ultimo_horometro = valorLectura;
     }
 
+    if (estadoEquipo) {
+      eqUpdate.estado_actual = estadoEquipo;
+    }
+
     const { error: errEqUpdate } = await supabase
       .from("equipos")
       .update(eqUpdate)
@@ -184,16 +200,47 @@ export default async function handler(req, res) {
     const notaUbicacion = latitud && longitud 
       ? `Lat ${latitud.toFixed(5)}, Lng ${longitud.toFixed(5)}` 
       : "Sin GPS";
-    const { error: errHito } = await supabase
+    const hitoInicial = estadoEquipo || "Disponible";
+
+    const { data: eventoCreado, error: errHito } = await supabase
       .from("eventos_jornada")
       .insert({
         reporte_id: reporteId,
-        estado_hito: "Disponible",
+        estado_hito: hitoInicial,
         hora_evento: new Date().toISOString(),
-        nota_transcripcion: `📍 Check-in Web: ${esVehiculo ? "Odómetro" : "Horómetro"} inicial de ${valorLectura.toLocaleString("es-CL")} ${esVehiculo ? "km" : "hrs"} registrado. Ubicación: ${notaUbicacion}.`
-      });
+        nota_transcripcion: `📍 Check-in Web [${hitoInicial}]: ${esVehiculo ? "Odómetro" : "Horómetro"} inicial de ${valorLectura.toLocaleString("es-CL")} ${esVehiculo ? "km" : "hrs"} registrado. Ubicación: ${notaUbicacion}.`
+      })
+      .select()
+      .single();
 
     if (errHito) throw errHito;
+
+    // 7. Alerta proactiva al supervisor si el equipo fue planificado en la Sala POD hoy
+    try {
+      const { data: bloqueHoy } = await supabase
+        .from("planificacion_bloques_pod")
+        .select(`
+          id, especialidad_id,
+          supervisor:personal!planificacion_bloques_pod_supervisor_id_fkey(id, nombre_completo, whatsapp)
+        `)
+        .eq("equipo_id", equipoId)
+        .eq("fecha", hoy)
+        .order("hora_inicio", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (bloqueHoy?.supervisor?.whatsapp) {
+        await crearConsultaPendiente(supabase, {
+          telefonoSupervisor: bloqueHoy.supervisor.whatsapp,
+          planificacionId: bloqueHoy.id,
+          especialidadId: bloqueHoy.especialidad_id,
+          eventoOperadorId: eventoCreado?.id || null,
+          geminiKey: process.env.GEMINI_API_KEY,
+        });
+      }
+    } catch (errPodAlert) {
+      console.warn("[checkin-web] Alerta supervisor POD omitida:", errPodAlert.message);
+    }
 
     return res.status(200).json({ success: true, reporteId });
 
