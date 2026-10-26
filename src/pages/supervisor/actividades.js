@@ -13,7 +13,8 @@ import {
   CheckCircle2, 
   AlertCircle,
   Loader2,
-  FileSpreadsheet
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import { formatEquipoLabel } from "../../lib/equipoLabel";
 
@@ -237,6 +238,11 @@ export default function ActividadesSupervisorPage() {
     setTareasNoProgramadas(prev => prev.map(t => t.id === id ? { ...t, [field]: value } : t));
   };
 
+  // Conteo total de ítems activos
+  const totalItemsRegistrados = (cargaDescargaActiva ? lineasCargaDescarga.filter(l => l.id_3wl || l.cantidad).length : 0)
+    + Object.values(subactividadesData).filter(s => s.checked).length
+    + tareasNoProgramadas.filter(t => t.descripcion?.trim()).length;
+
   // Guardar actividades
   const handleGuardar = async () => {
     setSaving(true);
@@ -307,7 +313,7 @@ export default function ActividadesSupervisorPage() {
     }
 
     if (payloadActividades.length === 0) {
-      setErrorMsg("Debes ingresar al menos una labor o cantidad ejecutada antes de guardar.");
+      setErrorMsg("Ingresa al menos una línea con datos antes de guardar.");
       setSaving(false);
       return;
     }
@@ -326,14 +332,14 @@ export default function ActividadesSupervisorPage() {
 
       const json = await res.json();
       if (res.ok && json.success) {
-        setSuccessMsg("¡Actividades registradas exitosamente en la consola y vinculadas a la jornada!");
+        setSuccessMsg("¡Actividades guardadas y vinculadas exitosamente!");
         window.scrollTo({ top: 0, behavior: "smooth" });
       } else {
-        setErrorMsg(json.error || "Ocurrió un error al guardar las actividades.");
+        setErrorMsg(json.error || "Ocurrió un error al guardar.");
       }
     } catch (err) {
       console.error(err);
-      setErrorMsg("Error de red al intentar guardar.");
+      setErrorMsg("Error de red al guardar.");
     } finally {
       setSaving(false);
     }
@@ -341,20 +347,20 @@ export default function ActividadesSupervisorPage() {
 
   if (loading) {
     return (
-      <div className="loading-container">
-        <Loader2 className="spinner" size={38} />
-        <p>Cargando matriz de actividades 3WL...</p>
+      <div className="mobile-loading">
+        <Loader2 className="spinner" size={36} />
+        <p>Cargando actividades 3WL...</p>
         <style jsx>{`
-          .loading-container {
+          .mobile-loading {
             min-height: 100vh;
-            background: #0b1320;
+            background: #090e17;
             color: #94a3b8;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             font-family: 'Poppins', sans-serif;
-            gap: 16px;
+            gap: 12px;
           }
           :global(.spinner) {
             animation: spin 1s linear infinite;
@@ -370,408 +376,430 @@ export default function ActividadesSupervisorPage() {
   }
 
   return (
-    <div className="actividades-root">
+    <div className="app-shell">
       <Head>
-        <title>Asignación de Actividades 3WL | LukeMaquinarias</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Actividades 3WL | Supervisor</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
       </Head>
 
-      {/* Header Superior */}
-      <header className="header-bar">
-        <div className="header-inner">
-          <div className="header-left">
-            <button onClick={() => router.back()} className="btn-back" title="Volver">
-              <ArrowLeft size={18} />
-            </button>
-            <div>
-              <h1 className="header-title">
-                <Truck size={20} color="#fbbf24" />
-                Asignación de Actividades 3WL
-              </h1>
-              <p className="header-subtitle">
-                {equipo ? `${equipo.descripcion_equipo} (${formatEquipoLabel(equipo)})` : "Equipo de Faena"}
-              </p>
-            </div>
+      {/* HEADER MÓVIL / TABLET FIJO */}
+      <header className="mobile-header">
+        <div className="header-container">
+          <button onClick={() => router.back()} className="icon-btn" aria-label="Volver">
+            <ArrowLeft size={20} />
+          </button>
+          
+          <div className="header-titles">
+            <h1 className="header-main-title">Actividades 3WL</h1>
+            <span className="header-equipo-badge">
+              <Truck size={12} />
+              {equipo ? `${formatEquipoLabel(equipo)}` : "Equipo de Faena"}
+            </span>
           </div>
 
-          <button onClick={handleGuardar} disabled={saving} className="btn-save">
+          <button onClick={handleGuardar} disabled={saving} className="header-save-btn">
             {saving ? <Loader2 size={16} className="spinner" /> : <Save size={16} />}
-            <span>{saving ? "Guardando..." : "Guardar"}</span>
+            <span className="save-btn-txt">{saving ? "..." : "Guardar"}</span>
           </button>
         </div>
       </header>
 
-      <main className="main-content">
+      {/* CONTENIDO PRINCIPAL */}
+      <main className="mobile-main">
         {/* Notificaciones */}
         {successMsg && (
-          <div className="alert alert-success">
-            <CheckCircle2 size={20} color="#10b981" />
-            <p>{successMsg}</p>
+          <div className="banner-alert success">
+            <CheckCircle2 size={18} className="alert-ico" />
+            <span>{successMsg}</span>
           </div>
         )}
 
         {errorMsg && (
-          <div className="alert alert-error">
-            <AlertCircle size={20} color="#f43f5e" />
-            <p>{errorMsg}</p>
+          <div className="banner-alert error">
+            <AlertCircle size={18} className="alert-ico" />
+            <span>{errorMsg}</span>
           </div>
         )}
 
-        {/* Tarjetas de Resumen Operacional */}
-        <div className="summary-grid">
-          <div className="summary-card">
-            <div className="summary-icon blue">
-              <Truck size={18} />
+        {/* TARJETA DE RESUMEN OPERACIONAL COMPACTA PARA MÓVIL */}
+        <section className="summary-pill-card">
+          <div className="pill-item">
+            <div className="pill-icon blue">
+              <Truck size={16} />
             </div>
-            <div className="summary-info">
-              <span className="summary-label">Equipo</span>
-              <strong className="summary-val">{equipo?.descripcion_equipo || "—"}</strong>
-              <small className="summary-sub">{formatEquipoLabel(equipo)}</small>
-            </div>
-          </div>
-
-          <div className="summary-card">
-            <div className="summary-icon amber">
-              <User size={18} />
-            </div>
-            <div className="summary-info">
-              <span className="summary-label">Supervisor</span>
-              <strong className="summary-val">{supervisor?.nombre_completo || "Asignado"}</strong>
-              <small className="summary-sub">{supervisor?.especialidades?.nombre_oficial || "Especialidad"}</small>
+            <div className="pill-texts">
+              <span className="pill-label">Equipo</span>
+              <strong className="pill-val">{equipo?.descripcion_equipo || "—"}</strong>
             </div>
           </div>
 
-          <div className="summary-card">
-            <div className="summary-icon emerald">
-              <Clock size={18} />
+          <div className="pill-divider" />
+
+          <div className="pill-item">
+            <div className="pill-icon amber">
+              <User size={16} />
             </div>
-            <div className="summary-info">
-              <span className="summary-label">Horario Asignado</span>
-              <strong className="summary-val">
-                {bloque ? `${bloque.hora_inicio?.slice(0, 5)} - ${bloque.hora_fin?.slice(0, 5)}` : "Turno Completo"}
+            <div className="pill-texts">
+              <span className="pill-label">Supervisor</span>
+              <strong className="pill-val">{supervisor?.nombre_completo?.split(" ")[0] || "Asignado"}</strong>
+            </div>
+          </div>
+
+          <div className="pill-divider" />
+
+          <div className="pill-item">
+            <div className="pill-icon emerald">
+              <Clock size={16} />
+            </div>
+            <div className="pill-texts">
+              <span className="pill-label">Horario</span>
+              <strong className="pill-val">
+                {bloque ? `${bloque.hora_inicio?.slice(0, 5)} - ${bloque.hora_fin?.slice(0, 5)}` : "Turno"}
               </strong>
-              <small className="summary-sub">
-                {bloque?.operador?.nombre_completo ? `Op: ${bloque.operador.nombre_completo}` : "Operador asignado"}
-              </small>
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* SECCIÓN 1: Carga / Descarga */}
-        <section className="section-card">
-          <div className="section-header">
-            <label className="checkbox-toggle">
+        {/* 1. SECCIÓN CARGA / DESCARGA */}
+        <section className="card-section">
+          <div className="section-top-bar" onClick={() => setCargaDescargaActiva(!cargaDescargaActiva)}>
+            <label className="toggle-label-wrap" onClick={(e) => e.stopPropagation()}>
               <input
                 type="checkbox"
                 checked={cargaDescargaActiva}
                 onChange={(e) => setCargaDescargaActiva(e.target.checked)}
+                className="custom-checkbox"
               />
-              <span className="toggle-label">Carga/Descarga</span>
+              <span className="section-heading">Carga/Descarga</span>
             </label>
-            <span className="section-badge">Matriz de Izaje & Horómetro</span>
+            <span className="tag-pill">Izajes & Horómetro</span>
           </div>
 
           {cargaDescargaActiva && (
-            <div className="section-body">
-              <div className="rows-container">
-                {lineasCargaDescarga.map((linea) => (
-                  <div key={linea.id} className="matrix-row">
-                    <div className="field-group">
-                      <label className="field-lbl">Id 3WL:</label>
-                      <input
-                        type="text"
-                        placeholder="Ej: ELE-01"
-                        value={linea.id_3wl}
-                        onChange={(e) => handleUpdateLineaCarga(linea.id, "id_3wl", e.target.value)}
-                        className="input-base input-code"
-                      />
+            <div className="section-content">
+              <div className="cards-list">
+                {lineasCargaDescarga.map((linea, index) => (
+                  <div key={linea.id} className="item-card">
+                    <div className="item-card-header">
+                      <div className="input-group 3wl-input-group">
+                        <span className="group-prefix">Id 3WL:</span>
+                        <input
+                          type="text"
+                          placeholder="Ej: ELE-01"
+                          value={linea.id_3wl}
+                          onChange={(e) => handleUpdateLineaCarga(linea.id, "id_3wl", e.target.value)}
+                          className="input-cell id3wl"
+                        />
+                      </div>
+                      
+                      {lineasCargaDescarga.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveLineaCarga(linea.id)}
+                          className="trash-touch-btn"
+                          title="Eliminar"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </div>
 
-                    <div className="field-group">
-                      <label className="field-lbl">Cantidad:</label>
-                      <input
-                        type="number"
-                        step="any"
-                        placeholder="0.00"
-                        value={linea.cantidad}
-                        onChange={(e) => handleUpdateLineaCarga(linea.id, "cantidad", e.target.value)}
-                        className="input-base input-number"
-                      />
-                    </div>
+                    <div className="mobile-grid-inputs">
+                      {/* Cantidad y Unidad */}
+                      <div className="input-cell-pair">
+                        <span className="cell-label">Cantidad</span>
+                        <div className="pair-controls">
+                          <input
+                            type="number"
+                            step="any"
+                            inputMode="decimal"
+                            placeholder="0.00"
+                            value={linea.cantidad}
+                            onChange={(e) => handleUpdateLineaCarga(linea.id, "cantidad", e.target.value)}
+                            className="input-cell number-cell"
+                          />
+                          <select
+                            value={linea.unidad}
+                            onChange={(e) => handleUpdateLineaCarga(linea.id, "unidad", e.target.value)}
+                            className="select-cell"
+                          >
+                            <option value="Ton">Ton</option>
+                            <option value="m3">m3</option>
+                            <option value="m2">m2</option>
+                            <option value="un">un</option>
+                            <option value="kg">kg</option>
+                          </select>
+                        </div>
+                      </div>
 
-                    <div className="field-group">
-                      <select
-                        value={linea.unidad}
-                        onChange={(e) => handleUpdateLineaCarga(linea.id, "unidad", e.target.value)}
-                        className="select-base"
-                      >
-                        <option value="Ton">Ton</option>
-                        <option value="m3">m3</option>
-                        <option value="m2">m2</option>
-                        <option value="un">un</option>
-                        <option value="kg">kg</option>
-                      </select>
+                      {/* Izajes y Horómetro */}
+                      <div className="input-cell-pair">
+                        <span className="cell-label">Izajes / Horómetro</span>
+                        <div className="pair-controls">
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            placeholder="Izajes"
+                            value={linea.izajes}
+                            onChange={(e) => handleUpdateLineaCarga(linea.id, "izajes", e.target.value)}
+                            className="input-cell number-cell"
+                          />
+                          <div className="horo-wrapper">
+                            <input
+                              type="number"
+                              step="any"
+                              inputMode="decimal"
+                              placeholder="0.0"
+                              value={linea.horometro}
+                              onChange={(e) => handleUpdateLineaCarga(linea.id, "horometro", e.target.value)}
+                              className="input-cell number-cell horo"
+                            />
+                            <span className="unit-suffix">hrs</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-
-                    <div className="field-group">
-                      <label className="field-lbl">Izajes:</label>
-                      <input
-                        type="number"
-                        placeholder="0"
-                        value={linea.izajes}
-                        onChange={(e) => handleUpdateLineaCarga(linea.id, "izajes", e.target.value)}
-                        className="input-base input-small"
-                      />
-                    </div>
-
-                    <div className="field-group">
-                      <label className="field-lbl">Horómetro:</label>
-                      <input
-                        type="number"
-                        step="any"
-                        placeholder="0.0"
-                        value={linea.horometro}
-                        onChange={(e) => handleUpdateLineaCarga(linea.id, "horometro", e.target.value)}
-                        className="input-base input-small"
-                      />
-                      <span className="unit-tag">(hrs)</span>
-                    </div>
-
-                    {lineasCargaDescarga.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveLineaCarga(linea.id)}
-                        className="btn-trash"
-                        title="Eliminar fila"
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    )}
                   </div>
                 ))}
               </div>
 
-              <button type="button" onClick={handleAddLineaCarga} className="btn-add">
-                <Plus size={14} />
-                <span>Agregar línea</span>
+              <button type="button" onClick={handleAddLineaCarga} className="mobile-add-btn">
+                <Plus size={16} />
+                <span>Agregar línea de izaje</span>
               </button>
             </div>
           )}
         </section>
 
-        {/* SECCIÓN 2: Disciplinas y Especialidades */}
-        <section className="section-card">
-          <div className="section-header">
-            <div className="section-title-wrap">
+        {/* 2. SECCIÓN DISCIPLINAS Y ESPECIALIDADES (ACCORDION) */}
+        <section className="card-section">
+          <div className="section-top-bar static">
+            <div className="title-with-icon">
               <Building2 size={18} color="#38bdf8" />
-              <h2 className="section-title">Disciplinas y Especialidades Operacionales</h2>
+              <h2 className="section-heading">Disciplinas Operacionales</h2>
             </div>
-            <span className="section-hint">Selecciona para desplegar labores</span>
+            <span className="tag-pill">Toca para desplegar</span>
           </div>
 
-          <div className="section-body">
-            <div className="disciplines-list">
-              {DISCIPLINAS_ESTANDAR.map((disc) => {
-                const isOpen = disciplinasCheck[disc.key];
+          <div className="disciplines-accordion">
+            {DISCIPLINAS_ESTANDAR.map((disc) => {
+              const isOpen = disciplinasCheck[disc.key];
+              const subCount = disc.subactividades.filter(s => subactividadesData[s]?.checked).length;
 
-                return (
-                  <div key={disc.key} className={`discipline-box ${isOpen ? "active" : ""}`}>
-                    <label className="discipline-header">
+              return (
+                <div key={disc.key} className={`accordion-panel ${isOpen ? "open" : ""}`}>
+                  <div className="panel-header" onClick={() => toggleDisciplina(disc.key)}>
+                    <label className="panel-toggle" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={isOpen}
                         onChange={() => toggleDisciplina(disc.key)}
-                        className="checkbox-disc"
+                        className="custom-checkbox"
                       />
-                      <span className="discipline-name">{disc.label}</span>
+                      <span className="discipline-label">{disc.label}</span>
                     </label>
 
-                    {isOpen && (
-                      <div className="subactivities-container">
-                        {disc.subactividades.map((subName) => {
-                          const subData = subactividadesData[subName] || { checked: false };
-                          const isSubChecked = !!subData.checked;
+                    <div className="panel-meta">
+                      {subCount > 0 && (
+                        <span className="active-badge">{subCount} activa{subCount > 1 ? "s" : ""}</span>
+                      )}
+                      <button type="button" className="chevron-btn">
+                        {isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                      </button>
+                    </div>
+                  </div>
 
-                          return (
-                            <div key={subName} className="subactivity-item">
-                              <label className="subactivity-header">
-                                <input
-                                  type="checkbox"
-                                  checked={isSubChecked}
-                                  onChange={() => toggleSubactividad(subName, disc.label)}
-                                  className="checkbox-sub"
-                                />
-                                <span className={`subactivity-name ${isSubChecked ? "highlight" : ""}`}>
-                                  {subName}
-                                </span>
-                              </label>
+                  {isOpen && (
+                    <div className="panel-body">
+                      {disc.subactividades.map((subName) => {
+                        const subData = subactividadesData[subName] || { checked: false };
+                        const isChecked = !!subData.checked;
 
-                              {isSubChecked && (
-                                <div className="matrix-row sub-row">
-                                  <div className="field-group">
-                                    <label className="field-lbl">Id 3WL:</label>
+                        return (
+                          <div key={subName} className={`sub-item-block ${isChecked ? "selected" : ""}`}>
+                            <div className="sub-toggle-row" onClick={() => toggleSubactividad(subName, disc.label)}>
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => toggleSubactividad(subName, disc.label)}
+                                className="custom-checkbox sub"
+                              />
+                              <span className={`sub-name ${isChecked ? "active" : ""}`}>{subName}</span>
+                            </div>
+
+                            {isChecked && (
+                              <div className="sub-matrix-inputs">
+                                <div className="sub-input-row">
+                                  <div className="input-group full">
+                                    <span className="group-prefix">Id 3WL:</span>
                                     <input
                                       type="text"
-                                      placeholder="3WL"
+                                      placeholder="Código 3WL"
                                       value={subData.id_3wl || ""}
                                       onChange={(e) => updateSubactividad(subName, "id_3wl", e.target.value)}
-                                      className="input-base input-code"
+                                      className="input-cell id3wl"
                                     />
-                                  </div>
-
-                                  <div className="field-group">
-                                    <label className="field-lbl">Cant:</label>
-                                    <input
-                                      type="number"
-                                      step="any"
-                                      placeholder="0"
-                                      value={subData.cantidad || ""}
-                                      onChange={(e) => updateSubactividad(subName, "cantidad", e.target.value)}
-                                      className="input-base input-number"
-                                    />
-                                  </div>
-
-                                  <div className="field-group">
-                                    <select
-                                      value={subData.unidad || "Ton"}
-                                      onChange={(e) => updateSubactividad(subName, "unidad", e.target.value)}
-                                      className="select-base"
-                                    >
-                                      <option value="Ton">Ton</option>
-                                      <option value="m3">m3</option>
-                                      <option value="m2">m2</option>
-                                      <option value="un">un</option>
-                                      <option value="ml">ml</option>
-                                    </select>
-                                  </div>
-
-                                  <div className="field-group">
-                                    <label className="field-lbl">Izajes:</label>
-                                    <input
-                                      type="number"
-                                      placeholder="0"
-                                      value={subData.izajes || ""}
-                                      onChange={(e) => updateSubactividad(subName, "izajes", e.target.value)}
-                                      className="input-base input-small"
-                                    />
-                                  </div>
-
-                                  <div className="field-group">
-                                    <label className="field-lbl">Horómetro:</label>
-                                    <input
-                                      type="number"
-                                      step="any"
-                                      placeholder="0.0"
-                                      value={subData.horometro || ""}
-                                      onChange={(e) => updateSubactividad(subName, "horometro", e.target.value)}
-                                      className="input-base input-small"
-                                    />
-                                    <span className="unit-tag">(hrs)</span>
                                   </div>
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+
+                                <div className="mobile-grid-inputs">
+                                  <div className="input-cell-pair">
+                                    <span className="cell-label">Cantidad & Medida</span>
+                                    <div className="pair-controls">
+                                      <input
+                                        type="number"
+                                        step="any"
+                                        inputMode="decimal"
+                                        placeholder="0"
+                                        value={subData.cantidad || ""}
+                                        onChange={(e) => updateSubactividad(subName, "cantidad", e.target.value)}
+                                        className="input-cell number-cell"
+                                      />
+                                      <select
+                                        value={subData.unidad || "Ton"}
+                                        onChange={(e) => updateSubactividad(subName, "unidad", e.target.value)}
+                                        className="select-cell"
+                                      >
+                                        <option value="Ton">Ton</option>
+                                        <option value="m3">m3</option>
+                                        <option value="m2">m2</option>
+                                        <option value="un">un</option>
+                                        <option value="ml">ml</option>
+                                      </select>
+                                    </div>
+                                  </div>
+
+                                  <div className="input-cell-pair">
+                                    <span className="cell-label">Izajes / Horómetro</span>
+                                    <div className="pair-controls">
+                                      <input
+                                        type="number"
+                                        inputMode="numeric"
+                                        placeholder="Izajes"
+                                        value={subData.izajes || ""}
+                                        onChange={(e) => updateSubactividad(subName, "izajes", e.target.value)}
+                                        className="input-cell number-cell"
+                                      />
+                                      <div className="horo-wrapper">
+                                        <input
+                                          type="number"
+                                          step="any"
+                                          inputMode="decimal"
+                                          placeholder="0.0"
+                                          value={subData.horometro || ""}
+                                          onChange={(e) => updateSubactividad(subName, "horometro", e.target.value)}
+                                          className="input-cell number-cell horo"
+                                        />
+                                        <span className="unit-suffix">hrs</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
 
-        {/* SECCIÓN 3: Tareas No Programadas */}
-        <section className="section-card">
-          <div className="section-header">
+        {/* 3. SECCIÓN TAREAS NO PROGRAMADAS */}
+        <section className="card-section">
+          <div className="section-top-bar static">
             <div>
-              <h2 className="section-title">Tareas No Programadas</h2>
-              <p className="section-hint">Labores reactivas ejecutadas fuera del 3WL oficial</p>
+              <h2 className="section-heading">Tareas No Programadas</h2>
+              <span className="sub-helper">Labores fuera de programa</span>
             </div>
-            <button type="button" onClick={handleAddNoProgramada} className="btn-add amber">
+            <button type="button" onClick={handleAddNoProgramada} className="mobile-add-btn amber-small">
               <Plus size={14} />
-              <span>Agregar no programada</span>
+              <span>Agregar</span>
             </button>
           </div>
 
-          <div className="section-body">
+          <div className="section-content">
             {tareasNoProgramadas.length === 0 ? (
-              <p className="empty-text">No se han registrado tareas fuera de programa para este turno.</p>
+              <p className="empty-message">No se han registrado tareas fuera de programa para este turno.</p>
             ) : (
-              <div className="rows-container">
+              <div className="cards-list">
                 {tareasNoProgramadas.map((t) => (
-                  <div key={t.id} className="no-prog-card">
-                    <div className="no-prog-top">
+                  <div key={t.id} className="item-card no-prog">
+                    <div className="item-card-header">
                       <input
                         type="text"
-                        placeholder="Describe la labor realizada no programada..."
+                        placeholder="Descripción de la labor reactiva..."
                         value={t.descripcion}
                         onChange={(e) => handleUpdateNoProgramada(t.id, "descripcion", e.target.value)}
-                        className="input-base input-desc"
+                        className="input-cell full-desc"
                       />
                       <button
                         type="button"
                         onClick={() => handleRemoveNoProgramada(t.id)}
-                        className="btn-trash"
+                        className="trash-touch-btn"
                         title="Eliminar"
                       >
                         <Trash2 size={16} />
                       </button>
                     </div>
 
-                    <div className="matrix-row">
-                      <div className="field-group">
-                        <label className="field-lbl">Cantidad:</label>
-                        <input
-                          type="number"
-                          step="any"
-                          placeholder="0"
-                          value={t.cantidad}
-                          onChange={(e) => handleUpdateNoProgramada(t.id, "cantidad", e.target.value)}
-                          className="input-base input-number"
-                        />
+                    <div className="mobile-grid-inputs">
+                      <div className="input-cell-pair">
+                        <span className="cell-label">Cantidad & Medida</span>
+                        <div className="pair-controls">
+                          <input
+                            type="number"
+                            step="any"
+                            inputMode="decimal"
+                            placeholder="0"
+                            value={t.cantidad}
+                            onChange={(e) => handleUpdateNoProgramada(t.id, "cantidad", e.target.value)}
+                            className="input-cell number-cell"
+                          />
+                          <select
+                            value={t.unidad}
+                            onChange={(e) => handleUpdateNoProgramada(t.id, "unidad", e.target.value)}
+                            className="select-cell"
+                          >
+                            <option value="Ton">Ton</option>
+                            <option value="m3">m3</option>
+                            <option value="m2">m2</option>
+                            <option value="un">un</option>
+                            <option value="hrs">hrs</option>
+                          </select>
+                        </div>
                       </div>
 
-                      <div className="field-group">
-                        <select
-                          value={t.unidad}
-                          onChange={(e) => handleUpdateNoProgramada(t.id, "unidad", e.target.value)}
-                          className="select-base"
-                        >
-                          <option value="Ton">Ton</option>
-                          <option value="m3">m3</option>
-                          <option value="m2">m2</option>
-                          <option value="un">un</option>
-                          <option value="hrs">hrs</option>
-                        </select>
-                      </div>
-
-                      <div className="field-group">
-                        <label className="field-lbl">Izajes:</label>
-                        <input
-                          type="number"
-                          placeholder="0"
-                          value={t.izajes}
-                          onChange={(e) => handleUpdateNoProgramada(t.id, "izajes", e.target.value)}
-                          className="input-base input-small"
-                        />
-                      </div>
-
-                      <div className="field-group">
-                        <label className="field-lbl">Horómetro:</label>
-                        <input
-                          type="number"
-                          step="any"
-                          placeholder="0.0"
-                          value={t.horometro}
-                          onChange={(e) => handleUpdateNoProgramada(t.id, "horometro", e.target.value)}
-                          className="input-base input-small"
-                        />
-                        <span className="unit-tag">(hrs)</span>
+                      <div className="input-cell-pair">
+                        <span className="cell-label">Izajes / Horómetro</span>
+                        <div className="pair-controls">
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            placeholder="Izajes"
+                            value={t.izajes}
+                            onChange={(e) => handleUpdateNoProgramada(t.id, "izajes", e.target.value)}
+                            className="input-cell number-cell"
+                          />
+                          <div className="horo-wrapper">
+                            <input
+                              type="number"
+                              step="any"
+                              inputMode="decimal"
+                              placeholder="0.0"
+                              value={t.horometro}
+                              onChange={(e) => handleUpdateNoProgramada(t.id, "horometro", e.target.value)}
+                              className="input-cell number-cell horo"
+                            />
+                            <span className="unit-suffix">hrs</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -780,504 +808,628 @@ export default function ActividadesSupervisorPage() {
             )}
           </div>
         </section>
-
-        {/* Botón flotante inferior para guardar */}
-        <div className="bottom-bar">
-          <button onClick={handleGuardar} disabled={saving} className="btn-save-bottom">
-            {saving ? <Loader2 size={18} className="spinner" /> : <Save size={18} />}
-            <span>Guardar y Confirmar Actividades</span>
-          </button>
-        </div>
       </main>
 
+      {/* BARRA FLOTANTE FIJA INFERIOR PARA MÓVIL */}
+      <footer className="sticky-mobile-footer">
+        <div className="footer-inner">
+          <div className="footer-count">
+            <span className="count-dot" />
+            <span className="count-txt">
+              {totalItemsRegistrados > 0 
+                ? `${totalItemsRegistrados} labor${totalItemsRegistrados > 1 ? "es" : ""} lista${totalItemsRegistrados > 1 ? "s" : ""}` 
+                : "Sin labores aún"}
+            </span>
+          </div>
+
+          <button onClick={handleGuardar} disabled={saving} className="btn-confirm-sticky">
+            {saving ? <Loader2 size={18} className="spinner" /> : <Save size={18} />}
+            <span>{saving ? "Guardando..." : "Confirmar y Guardar"}</span>
+          </button>
+        </div>
+      </footer>
+
       <style jsx>{`
-        .actividades-root {
+        /* ESTILOS BASE MOBILE-FIRST & TABLET */
+        .app-shell {
           min-height: 100vh;
-          background: #090e17;
-          color: #f1f5f9;
-          font-family: 'Poppins', -apple-system, sans-serif;
-          padding-bottom: 80px;
+          background: #080d16;
+          color: #f8fafc;
+          font-family: 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif;
+          padding-bottom: 90px;
+          -webkit-tap-highlight-color: transparent;
         }
 
-        /* HEADER */
-        .header-bar {
-          background: rgba(15, 23, 42, 0.95);
-          backdrop-filter: blur(12px);
-          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        /* HEADER FIJO */
+        .mobile-header {
           position: sticky;
           top: 0;
-          z-index: 40;
-          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+          z-index: 50;
+          background: rgba(11, 19, 32, 0.96);
+          backdrop-filter: blur(14px);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
         }
-        .header-inner {
-          max-width: 960px;
+        .header-container {
+          max-width: 720px;
           margin: 0 auto;
-          padding: 12px 16px;
+          padding: 10px 14px;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 12px;
+          gap: 10px;
         }
-        .header-left {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-        .btn-back {
-          background: #1e293b;
+        .icon-btn {
+          width: 40px;
+          height: 40px;
+          border-radius: 10px;
+          background: #162233;
           border: 1px solid rgba(255, 255, 255, 0.1);
           color: #cbd5e1;
-          border-radius: 10px;
-          padding: 8px;
-          cursor: pointer;
           display: flex;
           align-items: center;
           justify-content: center;
-          transition: all 0.2s ease;
+          cursor: pointer;
+          flex-shrink: 0;
         }
-        .btn-back:hover {
-          background: #334155;
-          color: #ffffff;
+        .icon-btn:active {
+          background: #23354f;
+          transform: scale(0.96);
         }
-        .header-title {
-          font-size: 17px;
+        .header-titles {
+          display: flex;
+          flex-direction: column;
+          min-width: 0;
+          flex: 1;
+        }
+        .header-main-title {
+          font-size: 15px;
           font-weight: 700;
           color: #ffffff;
-          display: flex;
+          line-height: 1.2;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .header-equipo-badge {
+          display: inline-flex;
           align-items: center;
-          gap: 8px;
-          letter-spacing: -0.3px;
-        }
-        .header-subtitle {
-          font-size: 12px;
-          color: #94a3b8;
+          gap: 4px;
+          font-size: 11px;
+          color: #fbbf24;
+          font-weight: 600;
           margin-top: 1px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
-        .btn-save {
+        .header-save-btn {
           background: linear-gradient(135deg, #2563eb, #1d4ed8);
           color: white;
           border: none;
-          padding: 9px 18px;
+          padding: 8px 14px;
           border-radius: 10px;
           font-weight: 600;
           font-size: 13px;
-          cursor: pointer;
           display: flex;
           align-items: center;
-          gap: 8px;
-          box-shadow: 0 4px 15px rgba(37, 99, 235, 0.35);
-          transition: all 0.2s ease;
+          gap: 6px;
+          cursor: pointer;
+          box-shadow: 0 2px 10px rgba(37, 99, 235, 0.35);
+          flex-shrink: 0;
+          min-height: 38px;
         }
-        .btn-save:hover:not(:disabled) {
-          background: linear-gradient(135deg, #3b82f6, #2563eb);
-          transform: translateY(-1px);
+        .header-save-btn:active {
+          transform: scale(0.97);
         }
-        .btn-save:disabled {
+        .header-save-btn:disabled {
           opacity: 0.6;
-          cursor: not-allowed;
         }
 
         /* MAIN */
-        .main-content {
-          max-width: 960px;
+        .mobile-main {
+          max-width: 720px;
           margin: 0 auto;
-          padding: 20px 16px;
+          padding: 14px 12px;
           display: flex;
           flex-direction: column;
-          gap: 20px;
+          gap: 14px;
         }
 
-        /* ALERTS */
-        .alert {
-          padding: 12px 16px;
-          border-radius: 12px;
+        /* BANNER ALERTS */
+        .banner-alert {
+          padding: 10px 14px;
+          border-radius: 10px;
           display: flex;
           align-items: center;
-          gap: 12px;
-          font-size: 13px;
+          gap: 10px;
+          font-size: 12px;
           font-weight: 500;
         }
-        .alert-success {
-          background: rgba(16, 185, 129, 0.12);
-          border: 1px solid rgba(16, 185, 129, 0.3);
+        .banner-alert.success {
+          background: rgba(16, 185, 129, 0.15);
+          border: 1px solid rgba(16, 185, 129, 0.35);
           color: #6ee7b7;
         }
-        .alert-error {
-          background: rgba(244, 63, 94, 0.12);
-          border: 1px solid rgba(244, 63, 94, 0.3);
+        .banner-alert.error {
+          background: rgba(244, 63, 94, 0.15);
+          border: 1px solid rgba(244, 63, 94, 0.35);
           color: #fda4af;
         }
 
-        /* SUMMARY GRID */
-        .summary-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-          gap: 12px;
-        }
-        .summary-card {
-          background: #111a28;
+        /* SUMMARY PILL CARD */
+        .summary-pill-card {
+          background: #0f1927;
           border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 14px;
-          padding: 14px 16px;
+          border-radius: 12px;
+          padding: 10px 12px;
           display: flex;
           align-items: center;
-          gap: 12px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+          justify-content: space-between;
+          gap: 6px;
         }
-        .summary-icon {
-          width: 38px;
-          height: 38px;
-          border-radius: 10px;
+        .pill-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+          flex: 1;
+        }
+        .pill-icon {
+          width: 30px;
+          height: 30px;
+          border-radius: 8px;
           display: flex;
           align-items: center;
           justify-content: center;
           flex-shrink: 0;
         }
-        .summary-icon.blue {
-          background: rgba(59, 130, 246, 0.15);
-          color: #60a5fa;
-          border: 1px solid rgba(59, 130, 246, 0.25);
-        }
-        .summary-icon.amber {
-          background: rgba(245, 158, 11, 0.15);
-          color: #fbbf24;
-          border: 1px solid rgba(245, 158, 11, 0.25);
-        }
-        .summary-icon.emerald {
-          background: rgba(16, 185, 129, 0.15);
-          color: #34d399;
-          border: 1px solid rgba(16, 185, 129, 0.25);
-        }
-        .summary-info {
+        .pill-icon.blue { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+        .pill-icon.amber { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+        .pill-icon.emerald { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+        .pill-texts {
           display: flex;
           flex-direction: column;
           min-width: 0;
         }
-        .summary-label {
-          font-size: 10px;
+        .pill-label {
+          font-size: 9px;
           color: #64748b;
           text-transform: uppercase;
           font-weight: 700;
-          letter-spacing: 0.5px;
         }
-        .summary-val {
-          font-size: 13px;
+        .pill-val {
+          font-size: 11px;
           font-weight: 700;
           color: #ffffff;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
         }
-        .summary-sub {
-          font-size: 11px;
-          color: #94a3b8;
+        .pill-divider {
+          width: 1px;
+          height: 24px;
+          background: rgba(255, 255, 255, 0.08);
+          flex-shrink: 0;
         }
 
-        /* SECTION CARDS */
-        .section-card {
-          background: #111a28;
+        /* CARD SECTIONS */
+        .card-section {
+          background: #0f1927;
           border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 16px;
-          padding: 18px;
-          box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+          border-radius: 14px;
+          padding: 14px;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
         }
-        .section-header {
+        .section-top-bar {
           display: flex;
           align-items: center;
           justify-content: space-between;
           padding-bottom: 12px;
           border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-          margin-bottom: 16px;
+          cursor: pointer;
         }
-        .section-title-wrap {
+        .section-top-bar.static {
+          cursor: default;
+        }
+        .toggle-label-wrap {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          cursor: pointer;
+        }
+        .section-heading {
+          font-size: 14px;
+          font-weight: 700;
+          color: #ffffff;
+        }
+        .title-with-icon {
           display: flex;
           align-items: center;
           gap: 8px;
         }
-        .section-title {
-          font-size: 15px;
-          font-weight: 700;
-          color: #ffffff;
-        }
-        .section-badge {
-          font-size: 11px;
-          color: #64748b;
-          font-weight: 600;
-          background: #1a2536;
+        .tag-pill {
+          font-size: 10px;
+          color: #94a3b8;
+          background: #182638;
           padding: 3px 8px;
           border-radius: 6px;
+          font-weight: 600;
         }
-        .section-hint {
-          font-size: 11px;
-          color: #94a3b8;
+        .sub-helper {
+          font-size: 10px;
+          color: #64748b;
+          display: block;
+        }
+        .section-content {
+          padding-top: 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
         }
 
-        /* CHECKBOXES & TOGGLES */
-        .checkbox-toggle {
-          display: flex;
-          align-items: center;
-          gap: 10px;
+        /* CUSTOM CHECKBOX */
+        .custom-checkbox {
+          width: 20px;
+          height: 20px;
+          border-radius: 5px;
+          accent-color: #3b82f6;
           cursor: pointer;
         }
-        .checkbox-toggle input[type="checkbox"] {
+        .custom-checkbox.sub {
           width: 18px;
           height: 18px;
-          accent-color: #3b82f6;
-          cursor: pointer;
-        }
-        .toggle-label {
-          font-size: 15px;
-          font-weight: 700;
-          color: #ffffff;
         }
 
-        /* MATRIX ROWS */
-        .rows-container {
+        /* ITEM CARDS */
+        .cards-list {
           display: flex;
           flex-direction: column;
           gap: 10px;
         }
-        .matrix-row {
+        .item-card {
+          background: #09101b;
+          border: 1px solid rgba(255, 255, 255, 0.07);
+          border-radius: 12px;
+          padding: 10px 12px;
           display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          gap: 10px;
-          background: #0b121d;
-          border: 1px solid rgba(255, 255, 255, 0.06);
-          border-radius: 10px;
-          padding: 10px 14px;
+          flex-direction: column;
+          gap: 8px;
         }
-        .sub-row {
-          background: #0f1826;
-          border-color: rgba(59, 130, 246, 0.15);
-          margin-top: 6px;
+        .item-card.no-prog {
+          border-color: rgba(245, 158, 11, 0.25);
         }
-        .field-group {
+        .item-card-header {
           display: flex;
           align-items: center;
-          gap: 6px;
+          justify-content: space-between;
+          gap: 8px;
         }
-        .field-lbl {
-          font-size: 12px;
-          font-weight: 500;
-          color: #94a3b8;
-        }
-        .input-base {
-          background: #162233;
-          border: 1px solid #2d3f58;
-          color: #ffffff;
-          padding: 6px 10px;
+        .trash-touch-btn {
+          width: 36px;
+          height: 36px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(244, 63, 94, 0.1);
+          color: #f43f5e;
+          border: none;
           border-radius: 8px;
-          font-size: 12px;
-          font-family: inherit;
-          outline: none;
-          transition: border-color 0.2s, box-shadow 0.2s;
+          cursor: pointer;
         }
-        .input-base:focus {
-          border-color: #3b82f6;
-          box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+        .trash-touch-btn:active {
+          background: rgba(244, 63, 94, 0.25);
         }
-        .input-code {
-          width: 110px;
+
+        /* INPUT GROUPS & CELLS */
+        .input-group {
+          display: flex;
+          align-items: center;
+          background: #142032;
+          border: 1px solid #283950;
+          border-radius: 8px;
+          padding: 0 8px;
+          height: 38px;
         }
-        .input-number {
-          width: 80px;
-        }
-        .input-small {
-          width: 65px;
-        }
-        .input-desc {
-          flex: 1;
+        .input-group.full {
           width: 100%;
         }
-        .select-base {
-          background: #162233;
-          border: 1px solid #2d3f58;
-          color: #e2e8f0;
-          padding: 6px 8px;
-          border-radius: 8px;
-          font-size: 12px;
-          font-family: inherit;
-          outline: none;
-          cursor: pointer;
-        }
-        .unit-tag {
+        .group-prefix {
           font-size: 11px;
-          color: #64748b;
+          color: #94a3b8;
+          font-weight: 600;
+          margin-right: 6px;
+          white-space: nowrap;
         }
-        .btn-trash {
+        .input-cell {
           background: transparent;
           border: none;
-          color: #f43f5e;
-          cursor: pointer;
-          padding: 4px;
-          border-radius: 6px;
-          margin-left: auto;
-          display: flex;
-          align-items: center;
-          transition: background 0.2s;
+          color: #ffffff;
+          font-size: 13px;
+          font-family: inherit;
+          outline: none;
+          height: 100%;
+          width: 100%;
         }
-        .btn-trash:hover {
-          background: rgba(244, 63, 94, 0.15);
-        }
-        .btn-add {
-          margin-top: 12px;
-          background: rgba(59, 130, 246, 0.12);
-          border: 1px solid rgba(59, 130, 246, 0.3);
-          color: #60a5fa;
-          padding: 7px 14px;
-          border-radius: 8px;
-          font-size: 12px;
+        .input-cell.id3wl {
           font-weight: 600;
-          cursor: pointer;
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          transition: all 0.2s ease;
+          color: #60a5fa;
         }
-        .btn-add:hover {
-          background: rgba(59, 130, 246, 0.22);
-          border-color: #3b82f6;
-        }
-        .btn-add.amber {
-          background: rgba(245, 158, 11, 0.12);
-          border-color: rgba(245, 158, 11, 0.3);
-          color: #fbbf24;
-          margin-top: 0;
-        }
-        .btn-add.amber:hover {
-          background: rgba(245, 158, 11, 0.22);
-          border-color: #f59e0b;
+        .input-cell.full-desc {
+          background: #142032;
+          border: 1px solid #283950;
+          border-radius: 8px;
+          padding: 8px 10px;
+          height: 38px;
+          font-size: 12px;
+          color: #ffffff;
         }
 
-        /* DISCIPLINES LIST */
-        .disciplines-list {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
+        /* MOBILE 2-COLUMN INPUT GRID */
+        .mobile-grid-inputs {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
         }
-        .discipline-box {
-          background: #0b121d;
-          border: 1px solid rgba(255, 255, 255, 0.06);
-          border-radius: 12px;
-          padding: 12px 16px;
-          transition: border-color 0.2s;
+        @media (max-width: 400px) {
+          .mobile-grid-inputs {
+            grid-template-columns: 1fr;
+          }
         }
-        .discipline-box.active {
-          border-color: rgba(59, 130, 246, 0.35);
-          background: #0c1421;
-        }
-        .discipline-header {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          cursor: pointer;
-        }
-        .checkbox-disc {
-          width: 17px;
-          height: 17px;
-          accent-color: #3b82f6;
-          cursor: pointer;
-        }
-        .discipline-name {
-          font-size: 14px;
-          font-weight: 700;
-          color: #e2e8f0;
-        }
-        .subactivities-container {
-          margin-top: 12px;
-          padding-left: 24px;
-          padding-top: 12px;
-          border-top: 1px solid rgba(255, 255, 255, 0.05);
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-        .subactivity-item {
+        .input-cell-pair {
           display: flex;
           flex-direction: column;
           gap: 4px;
         }
-        .subactivity-header {
+        .cell-label {
+          font-size: 10px;
+          color: #64748b;
+          font-weight: 600;
+          text-transform: uppercase;
+        }
+        .pair-controls {
           display: flex;
           align-items: center;
-          gap: 8px;
-          cursor: pointer;
+          gap: 4px;
+          background: #142032;
+          border: 1px solid #283950;
+          border-radius: 8px;
+          padding: 0 6px;
+          height: 38px;
         }
-        .checkbox-sub {
-          width: 15px;
-          height: 15px;
-          accent-color: #3b82f6;
-          cursor: pointer;
-        }
-        .subactivity-name {
-          font-size: 13px;
-          color: #94a3b8;
-          font-weight: 500;
-        }
-        .subactivity-name.highlight {
+        .input-cell.number-cell {
+          background: transparent;
+          border: none;
           color: #ffffff;
+          font-size: 13px;
+          font-weight: 600;
+          outline: none;
+          width: 100%;
+          min-width: 0;
+        }
+        .select-cell {
+          background: #1c2b42;
+          border: 1px solid #334866;
+          color: #cbd5e1;
+          font-size: 11px;
+          font-weight: 600;
+          border-radius: 6px;
+          padding: 3px 6px;
+          outline: none;
+          cursor: pointer;
+        }
+        .horo-wrapper {
+          display: flex;
+          align-items: center;
+          gap: 2px;
+          width: 100%;
+          min-width: 0;
+        }
+        .unit-suffix {
+          font-size: 10px;
+          color: #64748b;
           font-weight: 600;
         }
 
-        /* NO PROGRAMADAS */
-        .empty-text {
-          font-size: 12px;
-          color: #64748b;
-          font-style: italic;
-          padding: 8px 0;
+        /* BOTONES DE AGREGAR */
+        .mobile-add-btn {
+          width: 100%;
+          min-height: 42px;
+          background: rgba(59, 130, 246, 0.12);
+          border: 1px dashed rgba(59, 130, 246, 0.4);
+          color: #60a5fa;
+          border-radius: 10px;
+          font-size: 13px;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          cursor: pointer;
+          margin-top: 4px;
         }
-        .no-prog-card {
-          background: #0b121d;
-          border: 1px solid rgba(245, 158, 11, 0.2);
+        .mobile-add-btn:active {
+          background: rgba(59, 130, 246, 0.25);
+        }
+        .mobile-add-btn.amber-small {
+          width: auto;
+          min-height: 32px;
+          padding: 4px 10px;
+          font-size: 11px;
+          border-style: solid;
+          background: rgba(245, 158, 11, 0.15);
+          border-color: rgba(245, 158, 11, 0.35);
+          color: #fbbf24;
+          margin-top: 0;
+        }
+
+        /* ACCORDION DISCIPLINAS */
+        .disciplines-accordion {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding-top: 10px;
+        }
+        .accordion-panel {
+          background: #09101b;
+          border: 1px solid rgba(255, 255, 255, 0.06);
           border-radius: 12px;
-          padding: 12px;
+          overflow: hidden;
+          transition: border-color 0.2s;
+        }
+        .accordion-panel.open {
+          border-color: rgba(59, 130, 246, 0.35);
+        }
+        .panel-header {
+          padding: 12px 14px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          cursor: pointer;
+          min-height: 48px;
+        }
+        .panel-toggle {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          cursor: pointer;
+        }
+        .discipline-label {
+          font-size: 13px;
+          font-weight: 700;
+          color: #ffffff;
+        }
+        .panel-meta {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .active-badge {
+          background: rgba(16, 185, 129, 0.2);
+          color: #34d399;
+          border: 1px solid rgba(16, 185, 129, 0.35);
+          font-size: 10px;
+          font-weight: 700;
+          padding: 2px 7px;
+          border-radius: 12px;
+        }
+        .chevron-btn {
+          background: transparent;
+          border: none;
+          color: #94a3b8;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+        }
+        .panel-body {
+          padding: 0 12px 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .sub-item-block {
+          background: #0f1927;
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          border-radius: 10px;
+          padding: 8px 10px;
           display: flex;
           flex-direction: column;
           gap: 8px;
         }
-        .no-prog-top {
+        .sub-item-block.selected {
+          border-color: rgba(59, 130, 246, 0.25);
+          background: #111d2e;
+        }
+        .sub-toggle-row {
           display: flex;
           align-items: center;
           gap: 8px;
+          cursor: pointer;
+          min-height: 32px;
+        }
+        .sub-name {
+          font-size: 12px;
+          color: #94a3b8;
+          font-weight: 500;
+        }
+        .sub-name.active {
+          color: #ffffff;
+          font-weight: 700;
+        }
+        .sub-matrix-inputs {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding-top: 4px;
+        }
+        .empty-message {
+          font-size: 11px;
+          color: #64748b;
+          font-style: italic;
+          padding: 6px 0;
         }
 
-        /* BOTTOM BAR */
-        .bottom-bar {
-          display: flex;
-          justify-content: flex-end;
-          padding-top: 8px;
+        /* STICKY FOOTER FIJO PARA MÓVIL */
+        .sticky-mobile-footer {
+          position: fixed;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          z-index: 50;
+          background: rgba(11, 19, 32, 0.95);
+          backdrop-filter: blur(16px);
+          border-top: 1px solid rgba(255, 255, 255, 0.1);
+          padding: 10px 14px;
+          padding-bottom: max(10px, env(safe-area-inset-bottom));
+          box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
         }
-        .btn-save-bottom {
+        .footer-inner {
+          max-width: 720px;
+          margin: 0 auto;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .footer-count {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .count-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #10b981;
+          box-shadow: 0 0 8px #10b981;
+        }
+        .count-txt {
+          font-size: 12px;
+          font-weight: 600;
+          color: #cbd5e1;
+        }
+        .btn-confirm-sticky {
           background: linear-gradient(135deg, #2563eb, #1d4ed8);
           color: white;
           border: none;
-          padding: 13px 28px;
+          padding: 12px 20px;
           border-radius: 12px;
           font-weight: 700;
           font-size: 14px;
-          cursor: pointer;
           display: flex;
           align-items: center;
-          gap: 10px;
-          box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4);
-          transition: all 0.2s ease;
-          width: 100%;
-          justify-content: center;
+          gap: 8px;
+          cursor: pointer;
+          box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4);
+          min-height: 46px;
         }
-        @media (min-width: 640px) {
-          .btn-save-bottom {
-            width: auto;
-          }
+        .btn-confirm-sticky:active {
+          transform: scale(0.98);
         }
-        .btn-save-bottom:hover:not(:disabled) {
-          background: linear-gradient(135deg, #3b82f6, #2563eb);
-          transform: translateY(-2px);
-          box-shadow: 0 8px 25px rgba(37, 99, 235, 0.5);
-        }
-        .btn-save-bottom:disabled {
+        .btn-confirm-sticky:disabled {
           opacity: 0.6;
-          cursor: not-allowed;
         }
 
         :global(.spinner) {

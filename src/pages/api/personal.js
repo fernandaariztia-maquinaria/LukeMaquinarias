@@ -147,6 +147,12 @@ export default async function handler(req, res) {
     if (updates.hasOwnProperty("especialidad_id") && updates.especialidad_id === "") {
       updates.especialidad_id = null;
     }
+    if (updates.hasOwnProperty("foto_url") && updates.foto_url === "") {
+      updates.foto_url = null;
+    }
+    if (updates.hasOwnProperty("email")) {
+      updates.email = updates.email && typeof updates.email === "string" && updates.email.trim() ? updates.email.trim().toLowerCase() : null;
+    }
     if (updates.hasOwnProperty("rut") && updates.rut) {
       updates.rut = formatRut(updates.rut);
     }

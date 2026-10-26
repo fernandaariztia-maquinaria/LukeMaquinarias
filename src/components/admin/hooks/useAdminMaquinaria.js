@@ -365,10 +365,18 @@ export function useAdminMaquinaria(proyectoActivoId, rolActual = null) {
     }
     setSaving(true);
     try {
+      const payload = {
+        id: editingPersonalId,
+        ...formEditPersonal,
+        email: formEditPersonal.email?.trim() ? formEditPersonal.email.trim().toLowerCase() : null,
+        especialidad_id: formEditPersonal.especialidad_id || null,
+        proyecto_actual_id: formEditPersonal.proyecto_actual_id || null,
+        foto_url: formEditPersonal.foto_url?.trim() || null
+      };
       const r = await fetch("/api/personal", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editingPersonalId, ...formEditPersonal }),
+        body: JSON.stringify(payload),
       });
       const json = await r.json();
       if (json.success) {
