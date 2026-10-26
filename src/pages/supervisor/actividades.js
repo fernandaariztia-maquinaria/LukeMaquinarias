@@ -2,8 +2,6 @@ import React, { useState, useEffect } from "react";
 import Head from "next/head";
 import { useRouter } from "next/router";
 import { 
-  CheckSquare, 
-  Square, 
   Plus, 
   Trash2, 
   Save, 
@@ -74,7 +72,6 @@ export default function ActividadesSupervisorPage() {
   ]);
 
   // Estado para las disciplinas y sus subactividades seleccionadas
-  // Estructura: { [subactividadKey]: { checked: boolean, id_3wl: string, cantidad: string, unidad: string, izajes: string, horometro: string } }
   const [disciplinasCheck, setDisciplinasCheck] = useState({
     OOCC: false,
     Estructura: false,
@@ -103,34 +100,72 @@ export default function ActividadesSupervisorPage() {
         if (supervisor_id) queryParams.set("supervisor_id", supervisor_id);
 
         const res = await fetch(`/api/supervisor/actividades?${queryParams.toString()}`);
-        const data = await res.json();
+        const json = await res.json();
 
-        if (res.ok && data.success) {
-          setBloque(data.bloque);
-          setEquipo(data.equipo || data.bloque?.equipos);
-          setSupervisor(data.supervisor || data.bloque?.supervisor);
-          setTareasEimi(data.tareas_eimiplanner || []);
+        if (res.ok && json.success) {
+          setBloque(json.data.bloque);
+          setEquipo(json.data.equipo);
+          setSupervisor(json.data.supervisor);
+          setTareasEimi(json.data.tareas_eimi || []);
 
-          // Si hay tareas EIMIPLANNER, pre-asignar el primer 3WL a la primera línea
-          if (data.tareas_eimiplanner?.length > 0) {
-            const firstTask = data.tareas_eimiplanner[0];
-            setLineasCargaDescarga([
-              { 
-                id: 1, 
-                id_3wl: firstTask.codigo || firstTask.id, 
-                cantidad: "", 
-                unidad: "Ton", 
-                izajes: "", 
-                horometro: "" 
+          // Si ya existen actividades guardadas, pre-poblarlas
+          if (json.data.actividades_guardadas && json.data.actividades_guardadas.length > 0) {
+            const guardadas = json.data.actividades_guardadas;
+            
+            const lineasCD = guardadas.filter(a => a.categoria_disciplina === "Carga/Descarga");
+            if (lineasCD.length > 0) {
+              setCargaDescargaActiva(true);
+              setLineasCargaDescarga(lineasCD.map((l, idx) => ({
+                id: idx + 1,
+                id_3wl: l.id_3wl || "",
+                cantidad: l.cantidad_ejecutada || "",
+                unidad: l.unidad || "Ton",
+                izajes: l.izajes || "",
+                horometro: l.horometro_horas || ""
+              })));
+            }
+
+            const subMap = {};
+            const discMap = { ...disciplinasCheck };
+            
+            guardadas.forEach(a => {
+              if (a.categoria_disciplina !== "Carga/Descarga" && a.categoria_disciplina !== "No Programada") {
+                const discObj = DISCIPLINAS_ESTANDAR.find(d => d.label === a.categoria_disciplina);
+                if (discObj) {
+                  discMap[discObj.key] = true;
+                }
+                subMap[a.subactividad] = {
+                  checked: true,
+                  id_3wl: a.id_3wl || "",
+                  cantidad: a.cantidad_ejecutada || "",
+                  unidad: a.unidad || "Ton",
+                  izajes: a.izajes || "",
+                  horometro: a.horometro_horas || ""
+                };
               }
-            ]);
+            });
+
+            setDisciplinasCheck(discMap);
+            setSubactividadesData(subMap);
+
+            const noProg = guardadas.filter(a => a.categoria_disciplina === "No Programada");
+            if (noProg.length > 0) {
+              setTareasNoProgramadas(noProg.map((np, idx) => ({
+                id: idx + 1,
+                descripcion: np.descripcion || "",
+                cantidad: np.cantidad_ejecutada || "",
+                unidad: np.unidad || "Ton",
+                izajes: np.izajes || "",
+                horometro: np.horometro_horas || ""
+              })));
+            }
           }
         } else {
-          setErrorMsg(data.error || "Error al cargar tareas de especialidad.");
+          setErrorMsg(json.error || "No se pudo cargar la información del bloque.");
         }
       } catch (err) {
-        console.error(err);
-        setErrorMsg("Error de red al conectar con el servidor.");
+        console.error("Error al cargar actividades supervisor:", err);
+        setErrorMsg("Error de conexión al cargar datos.");
       } finally {
         setLoading(false);
       }
@@ -139,7 +174,7 @@ export default function ActividadesSupervisorPage() {
     fetchData();
   }, [router.isReady, bloque_id, equipo_id, supervisor_id]);
 
-  // Manejo de líneas Carga/Descarga
+  // Manejo de Carga/Descarga
   const handleAddLineaCarga = () => {
     setLineasCargaDescarga(prev => [
       ...prev,
@@ -155,42 +190,35 @@ export default function ActividadesSupervisorPage() {
     setLineasCargaDescarga(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l));
   };
 
-  // Manejo de disciplinas padre
-  const toggleDisciplina = (key) => {
-    setDisciplinasCheck(prev => ({ ...prev, [key]: !prev[key] }));
+  // Manejo de Disciplinas
+  const toggleDisciplina = (discKey) => {
+    setDisciplinasCheck(prev => ({ ...prev, [discKey]: !prev[discKey] }));
   };
 
-  // Manejo de subactividades
-  const toggleSubactividad = (subName, disciplinaKey) => {
+  const toggleSubactividad = (subName, discLabel) => {
     setSubactividadesData(prev => {
-      const current = prev[subName];
-      if (current?.checked) {
-        return {
-          ...prev,
-          [subName]: { ...current, checked: false }
-        };
-      } else {
-        return {
-          ...prev,
-          [subName]: {
-            checked: true,
-            disciplina: disciplinaKey,
-            id_3wl: "",
-            cantidad: "",
-            unidad: "Ton",
-            izajes: "",
-            horometro: ""
-          }
-        };
-      }
+      const current = prev[subName] || { checked: false, id_3wl: "", cantidad: "", unidad: "Ton", izajes: "", horometro: "" };
+      return {
+        ...prev,
+        [subName]: {
+          ...current,
+          checked: !current.checked
+        }
+      };
     });
   };
 
   const updateSubactividad = (subName, field, value) => {
-    setSubactividadesData(prev => ({
-      ...prev,
-      [subName]: { ...prev[subName], [field]: value }
-    }));
+    setSubactividadesData(prev => {
+      const current = prev[subName] || { checked: true, id_3wl: "", cantidad: "", unidad: "Ton", izajes: "", horometro: "" };
+      return {
+        ...prev,
+        [subName]: {
+          ...current,
+          [field]: value
+        }
+      };
+    });
   };
 
   // Manejo de tareas no programadas
@@ -209,40 +237,48 @@ export default function ActividadesSupervisorPage() {
     setTareasNoProgramadas(prev => prev.map(t => t.id === id ? { ...t, [field]: value } : t));
   };
 
-  // Guardar todas las actividades
+  // Guardar actividades
   const handleGuardar = async () => {
     setSaving(true);
-    setErrorMsg("");
     setSuccessMsg("");
+    setErrorMsg("");
 
     const payloadActividades = [];
 
     // 1. Agregar Carga/Descarga si está activa
     if (cargaDescargaActiva) {
-      for (const l of lineasCargaDescarga) {
-        if (l.cantidad || l.horometro || l.id_3wl) {
+      for (const linea of lineasCargaDescarga) {
+        if (linea.id_3wl || linea.cantidad || linea.izajes || linea.horometro) {
           payloadActividades.push({
             categoria_disciplina: "Carga/Descarga",
-            subactividad: "Carga/Descarga",
-            descripcion: `Carga/Descarga 3WL: ${l.id_3wl || "General"}`,
-            id_3wl: l.id_3wl || null,
-            cantidad_ejecutada: l.cantidad || 0,
-            unidad: l.unidad || "Ton",
-            izajes: l.izajes || 0,
-            horometro_horas: l.horometro || 0,
+            subactividad: "Carga/Descarga General",
+            descripcion: `Carga/Descarga ${linea.id_3wl ? `[3WL: ${linea.id_3wl}]` : ""}`,
+            id_3wl: linea.id_3wl || null,
+            cantidad_ejecutada: linea.cantidad || 0,
+            unidad: linea.unidad || "Ton",
+            izajes: linea.izajes || 0,
+            horometro_horas: linea.horometro || 0,
             programada: true,
           });
         }
       }
     }
 
-    // 2. Agregar Subactividades marcadas
+    // 2. Agregar Subactividades de Disciplinas
     for (const [subName, data] of Object.entries(subactividadesData)) {
-      if (data?.checked) {
+      if (data.checked) {
+        let discParentLabel = "General";
+        for (const disc of DISCIPLINAS_ESTANDAR) {
+          if (disc.subactividades.includes(subName)) {
+            discParentLabel = disc.label;
+            break;
+          }
+        }
+
         payloadActividades.push({
-          categoria_disciplina: data.disciplina || "Especialidad",
+          categoria_disciplina: discParentLabel,
           subactividad: subName,
-          descripcion: `${data.disciplina} - ${subName}${data.id_3wl ? ` [3WL: ${data.id_3wl}]` : ""}`,
+          descripcion: `${discParentLabel} - ${subName} ${data.id_3wl ? `[3WL: ${data.id_3wl}]` : ""}`,
           id_3wl: data.id_3wl || null,
           cantidad_ejecutada: data.cantidad || 0,
           unidad: data.unidad || "Ton",
@@ -305,453 +341,953 @@ export default function ActividadesSupervisorPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-4">
-        <Loader2 className="w-10 h-10 animate-spin text-blue-500 mb-4" />
-        <p className="text-slate-300 font-medium">Cargando tareas del EIMIPLANNER 3WL...</p>
+      <div className="loading-container">
+        <Loader2 className="spinner" size={38} />
+        <p>Cargando matriz de actividades 3WL...</p>
+        <style jsx>{`
+          .loading-container {
+            min-height: 100vh;
+            background: #0b1320;
+            color: #94a3b8;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Poppins', sans-serif;
+            gap: 16px;
+          }
+          :global(.spinner) {
+            animation: spin 1s linear infinite;
+            color: #3b82f6;
+          }
+          @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 pb-16 font-sans">
+    <div className="actividades-root">
       <Head>
-        <title>Actividades Supervisor | LukeMaquinarias</title>
+        <title>Asignación de Actividades 3WL | LukeMaquinarias</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
       </Head>
 
       {/* Header Superior */}
-      <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-30 shadow-md">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => router.back()} 
-              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
+      <header className="header-bar">
+        <div className="header-inner">
+          <div className="header-left">
+            <button onClick={() => router.back()} className="btn-back" title="Volver">
+              <ArrowLeft size={18} />
             </button>
             <div>
-              <h1 className="text-base font-bold text-white flex items-center gap-2">
-                <Truck className="w-4 h-4 text-amber-400" />
+              <h1 className="header-title">
+                <Truck size={20} color="#fbbf24" />
                 Asignación de Actividades 3WL
               </h1>
-              <p className="text-xs text-slate-400">
+              <p className="header-subtitle">
                 {equipo ? `${equipo.descripcion_equipo} (${formatEquipoLabel(equipo)})` : "Equipo de Faena"}
               </p>
             </div>
           </div>
 
-          <button
-            onClick={handleGuardar}
-            disabled={saving}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm shadow transition-all disabled:opacity-50"
-          >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            <span>Guardar</span>
+          <button onClick={handleGuardar} disabled={saving} className="btn-save">
+            {saving ? <Loader2 size={16} className="spinner" /> : <Save size={16} />}
+            <span>{saving ? "Guardando..." : "Guardar"}</span>
           </button>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 pt-6 space-y-6">
-
+      <main className="main-content">
         {/* Notificaciones */}
         {successMsg && (
-          <div className="bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 p-4 rounded-xl flex items-center gap-3">
-            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-            <p className="text-sm font-medium">{successMsg}</p>
+          <div className="alert alert-success">
+            <CheckCircle2 size={20} color="#10b981" />
+            <p>{successMsg}</p>
           </div>
         )}
 
         {errorMsg && (
-          <div className="bg-rose-950/80 border border-rose-500/50 text-rose-200 p-4 rounded-xl flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
-            <p className="text-sm font-medium">{errorMsg}</p>
+          <div className="alert alert-error">
+            <AlertCircle size={20} color="#f43f5e" />
+            <p>{errorMsg}</p>
           </div>
         )}
 
-        {/* Tarjeta de Resumen Operacional */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-              <Truck className="w-4 h-4" />
+        {/* Tarjetas de Resumen Operacional */}
+        <div className="summary-grid">
+          <div className="summary-card">
+            <div className="summary-icon blue">
+              <Truck size={18} />
             </div>
-            <div>
-              <p className="text-slate-400 uppercase tracking-wider font-semibold">Equipo</p>
-              <p className="text-white font-bold text-sm truncate">{equipo?.descripcion_equipo || "—"}</p>
-              <p className="text-slate-400">{formatEquipoLabel(equipo)}</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-              <User className="w-4 h-4" />
-            </div>
-            <div>
-              <p className="text-slate-400 uppercase tracking-wider font-semibold">Supervisor</p>
-              <p className="text-white font-bold text-sm">{supervisor?.nombre_completo || "Asignado"}</p>
-              <p className="text-slate-400">{supervisor?.especialidades?.nombre_oficial || "Especialidad"}</p>
+            <div className="summary-info">
+              <span className="summary-label">Equipo</span>
+              <strong className="summary-val">{equipo?.descripcion_equipo || "—"}</strong>
+              <small className="summary-sub">{formatEquipoLabel(equipo)}</small>
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-              <Clock className="w-4 h-4" />
+          <div className="summary-card">
+            <div className="summary-icon amber">
+              <User size={18} />
             </div>
-            <div>
-              <p className="text-slate-400 uppercase tracking-wider font-semibold">Horario Asignado</p>
-              <p className="text-white font-bold text-sm">
+            <div className="summary-info">
+              <span className="summary-label">Supervisor</span>
+              <strong className="summary-val">{supervisor?.nombre_completo || "Asignado"}</strong>
+              <small className="summary-sub">{supervisor?.especialidades?.nombre_oficial || "Especialidad"}</small>
+            </div>
+          </div>
+
+          <div className="summary-card">
+            <div className="summary-icon emerald">
+              <Clock size={18} />
+            </div>
+            <div className="summary-info">
+              <span className="summary-label">Horario Asignado</span>
+              <strong className="summary-val">
                 {bloque ? `${bloque.hora_inicio?.slice(0, 5)} - ${bloque.hora_fin?.slice(0, 5)}` : "Turno Completo"}
-              </p>
-              <p className="text-slate-400">{bloque?.operador?.nombre_completo ? `Op: ${bloque.operador.nombre_completo}` : "Operador asignado"}</p>
+              </strong>
+              <small className="summary-sub">
+                {bloque?.operador?.nombre_completo ? `Op: ${bloque.operador.nombre_completo}` : "Operador asignado"}
+              </small>
             </div>
           </div>
         </div>
 
-        {/* Sección: Carga/Descarga (Fiel a la foto adjunta) */}
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 sm:p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-            <label className="flex items-center gap-2.5 cursor-pointer font-bold text-sm sm:text-base text-white">
+        {/* SECCIÓN 1: Carga / Descarga */}
+        <section className="section-card">
+          <div className="section-header">
+            <label className="checkbox-toggle">
               <input
                 type="checkbox"
                 checked={cargaDescargaActiva}
                 onChange={(e) => setCargaDescargaActiva(e.target.checked)}
-                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 bg-slate-800 border-slate-700"
               />
-              <span>Carga/Descarga</span>
+              <span className="toggle-label">Carga/Descarga</span>
             </label>
-            <span className="text-xs text-slate-400 font-medium">Matriz de Izaje & Horómetro</span>
+            <span className="section-badge">Matriz de Izaje & Horómetro</span>
           </div>
 
           {cargaDescargaActiva && (
-            <div className="space-y-3 pt-1">
-              {lineasCargaDescarga.map((linea, index) => (
-                <div key={linea.id} className="flex flex-wrap items-center gap-2 sm:gap-3 bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
-                  {/* Id 3WL */}
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="text-slate-400 font-medium">Id 3WL:</span>
-                    <input
-                      type="text"
-                      placeholder="Ej: 3WL-102"
-                      value={linea.id_3wl}
-                      onChange={(e) => handleUpdateLineaCarga(linea.id, "id_3wl", e.target.value)}
-                      className="w-24 sm:w-28 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-white text-xs focus:ring-1 focus:ring-blue-500 outline-none"
-                    />
-                  </div>
-
-                  {/* Cantidad */}
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="text-slate-400 font-medium">Cantidad:</span>
-                    <input
-                      type="number"
-                      step="any"
-                      placeholder="0.00"
-                      value={linea.cantidad}
-                      onChange={(e) => handleUpdateLineaCarga(linea.id, "cantidad", e.target.value)}
-                      className="w-16 sm:w-20 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-white text-xs focus:ring-1 focus:ring-blue-500 outline-none"
-                    />
-                  </div>
-
-                  {/* Unidad de Medida */}
-                  <div className="flex items-center gap-1 text-xs">
-                    <select
-                      value={linea.unidad}
-                      onChange={(e) => handleUpdateLineaCarga(linea.id, "unidad", e.target.value)}
-                      className="px-2 py-1 bg-slate-900 border border-slate-700 rounded text-slate-200 text-xs focus:ring-1 focus:ring-blue-500 outline-none"
-                    >
-                      <option value="Ton">Ton</option>
-                      <option value="m3">m3</option>
-                      <option value="m2">m2</option>
-                      <option value="un">un</option>
-                      <option value="kg">kg</option>
-                    </select>
-                  </div>
-
-                  {/* Izajes */}
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="text-slate-400 font-medium">Izajes:</span>
-                    <input
-                      type="number"
-                      placeholder="0"
-                      value={linea.izajes}
-                      onChange={(e) => handleUpdateLineaCarga(linea.id, "izajes", e.target.value)}
-                      className="w-14 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-white text-xs focus:ring-1 focus:ring-blue-500 outline-none"
-                    />
-                  </div>
-
-                  {/* Horómetro */}
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="text-slate-400 font-medium">Horómetro:</span>
-                    <input
-                      type="number"
-                      step="any"
-                      placeholder="0.0"
-                      value={linea.horometro}
-                      onChange={(e) => handleUpdateLineaCarga(linea.id, "horometro", e.target.value)}
-                      className="w-16 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-white text-xs focus:ring-1 focus:ring-blue-500 outline-none"
-                    />
-                    <span className="text-slate-500 text-[11px]">(hrs)</span>
-                  </div>
-
-                  {/* Eliminar línea */}
-                  {lineasCargaDescarga.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveLineaCarga(linea.id)}
-                      className="text-red-400 hover:text-red-300 p-1 transition-colors ml-auto"
-                      title="Eliminar fila"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
-
-              <button
-                type="button"
-                onClick={handleAddLineaCarga}
-                className="mt-2 text-xs font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20 transition-all"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Agregar línea
-              </button>
-            </div>
-          )}
-        </section>
-
-        {/* Sección: Disciplinas y Subactividades (OOCC, Estructura, Piping, Mecánica, Calderería, Eléctrico) */}
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 sm:p-5 shadow-sm space-y-5">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-            <h2 className="font-bold text-sm sm:text-base text-white flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-blue-400" />
-              Disciplinas y Especialidades Operacionales
-            </h2>
-            <span className="text-xs text-slate-400">Selecciona para desplegar labores</span>
-          </div>
-
-          <div className="space-y-4">
-            {DISCIPLINAS_ESTANDAR.map((disc) => {
-              const isOpen = disciplinasCheck[disc.key];
-
-              return (
-                <div key={disc.key} className="border border-slate-800/80 rounded-lg p-3 bg-slate-950/40">
-                  {/* Encabezado disciplina */}
-                  <label className="flex items-center gap-2.5 cursor-pointer font-bold text-sm text-slate-200 hover:text-white transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={isOpen}
-                      onChange={() => toggleDisciplina(disc.key)}
-                      className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 bg-slate-800 border-slate-700"
-                    />
-                    <span>{disc.label}</span>
-                  </label>
-
-                  {/* Subactividades de la disciplina */}
-                  {isOpen && (
-                    <div className="mt-3 pl-6 space-y-3 pt-2 border-t border-slate-800/60">
-                      {disc.subactividades.map((subName) => {
-                        const subData = subactividadesData[subName] || { checked: false };
-                        const isSubChecked = !!subData.checked;
-
-                        return (
-                          <div key={subName} className="space-y-2">
-                            <label className="flex items-center gap-2 cursor-pointer text-xs sm:text-sm text-slate-300 hover:text-white">
-                              <input
-                                type="checkbox"
-                                checked={isSubChecked}
-                                onChange={() => toggleSubactividad(subName, disc.label)}
-                                className="w-3.5 h-3.5 rounded text-blue-600 focus:ring-blue-500 bg-slate-800 border-slate-700"
-                              />
-                              <span className={isSubChecked ? "font-semibold text-white" : ""}>{subName}</span>
-                            </label>
-
-                            {/* Inputs detallados si la subactividad está activa */}
-                            {isSubChecked && (
-                              <div className="ml-5 flex flex-wrap items-center gap-2 sm:gap-3 bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 text-xs">
-                                <div className="flex items-center gap-1">
-                                  <span className="text-slate-400">Id 3WL:</span>
-                                  <input
-                                    type="text"
-                                    placeholder="3WL"
-                                    value={subData.id_3wl || ""}
-                                    onChange={(e) => updateSubactividad(subName, "id_3wl", e.target.value)}
-                                    className="w-20 px-2 py-0.5 bg-slate-950 border border-slate-700 rounded text-white text-xs outline-none focus:ring-1 focus:ring-blue-500"
-                                  />
-                                </div>
-
-                                <div className="flex items-center gap-1">
-                                  <span className="text-slate-400">Cant:</span>
-                                  <input
-                                    type="number"
-                                    step="any"
-                                    placeholder="0"
-                                    value={subData.cantidad || ""}
-                                    onChange={(e) => updateSubactividad(subName, "cantidad", e.target.value)}
-                                    className="w-16 px-2 py-0.5 bg-slate-950 border border-slate-700 rounded text-white text-xs outline-none focus:ring-1 focus:ring-blue-500"
-                                  />
-                                </div>
-
-                                <div className="flex items-center gap-1">
-                                  <select
-                                    value={subData.unidad || "Ton"}
-                                    onChange={(e) => updateSubactividad(subName, "unidad", e.target.value)}
-                                    className="px-1.5 py-0.5 bg-slate-950 border border-slate-700 rounded text-slate-200 text-xs outline-none"
-                                  >
-                                    <option value="Ton">Ton</option>
-                                    <option value="m3">m3</option>
-                                    <option value="m2">m2</option>
-                                    <option value="un">un</option>
-                                    <option value="ml">ml</option>
-                                  </select>
-                                </div>
-
-                                <div className="flex items-center gap-1">
-                                  <span className="text-slate-400">Izajes:</span>
-                                  <input
-                                    type="number"
-                                    placeholder="0"
-                                    value={subData.izajes || ""}
-                                    onChange={(e) => updateSubactividad(subName, "izajes", e.target.value)}
-                                    className="w-14 px-2 py-0.5 bg-slate-950 border border-slate-700 rounded text-white text-xs outline-none focus:ring-1 focus:ring-blue-500"
-                                  />
-                                </div>
-
-                                <div className="flex items-center gap-1">
-                                  <span className="text-slate-400">Horómetro:</span>
-                                  <input
-                                    type="number"
-                                    step="any"
-                                    placeholder="0.0"
-                                    value={subData.horometro || ""}
-                                    onChange={(e) => updateSubactividad(subName, "horometro", e.target.value)}
-                                    className="w-16 px-2 py-0.5 bg-slate-950 border border-slate-700 rounded text-white text-xs outline-none focus:ring-1 focus:ring-blue-500"
-                                  />
-                                  <span className="text-slate-500 text-[11px]">(hrs)</span>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* Sección: Tareas NO Programadas */}
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 sm:p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-            <div>
-              <h2 className="font-bold text-sm sm:text-base text-white">Tareas No Programadas</h2>
-              <p className="text-xs text-slate-400">Labores reactivas ejecutadas fuera del 3WL oficial</p>
-            </div>
-            <button
-              type="button"
-              onClick={handleAddNoProgramada}
-              className="text-xs font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 transition-all"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Agregar no programada
-            </button>
-          </div>
-
-          {tareasNoProgramadas.length === 0 ? (
-            <p className="text-xs text-slate-500 italic py-2">
-              No se han agregado tareas fuera de programa para este turno.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {tareasNoProgramadas.map((t) => (
-                <div key={t.id} className="bg-slate-950/60 p-3 rounded-lg border border-amber-500/20 space-y-2 text-xs">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      placeholder="Describe la labor realizada no programada..."
-                      value={t.descripcion}
-                      onChange={(e) => handleUpdateNoProgramada(t.id, "descripcion", e.target.value)}
-                      className="flex-1 px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded text-white text-xs outline-none focus:ring-1 focus:ring-amber-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveNoProgramada(t.id)}
-                      className="text-red-400 hover:text-red-300 p-1"
-                      title="Eliminar"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="flex items-center gap-1">
-                      <span className="text-slate-400">Cantidad:</span>
+            <div className="section-body">
+              <div className="rows-container">
+                {lineasCargaDescarga.map((linea) => (
+                  <div key={linea.id} className="matrix-row">
+                    <div className="field-group">
+                      <label className="field-lbl">Id 3WL:</label>
                       <input
-                        type="number"
-                        step="any"
-                        placeholder="0"
-                        value={t.cantidad}
-                        onChange={(e) => handleUpdateNoProgramada(t.id, "cantidad", e.target.value)}
-                        className="w-16 px-2 py-0.5 bg-slate-900 border border-slate-700 rounded text-white text-xs outline-none"
+                        type="text"
+                        placeholder="Ej: ELE-01"
+                        value={linea.id_3wl}
+                        onChange={(e) => handleUpdateLineaCarga(linea.id, "id_3wl", e.target.value)}
+                        className="input-base input-code"
                       />
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="field-group">
+                      <label className="field-lbl">Cantidad:</label>
+                      <input
+                        type="number"
+                        step="any"
+                        placeholder="0.00"
+                        value={linea.cantidad}
+                        onChange={(e) => handleUpdateLineaCarga(linea.id, "cantidad", e.target.value)}
+                        className="input-base input-number"
+                      />
+                    </div>
+
+                    <div className="field-group">
                       <select
-                        value={t.unidad}
-                        onChange={(e) => handleUpdateNoProgramada(t.id, "unidad", e.target.value)}
-                        className="px-2 py-0.5 bg-slate-900 border border-slate-700 rounded text-slate-200 text-xs outline-none"
+                        value={linea.unidad}
+                        onChange={(e) => handleUpdateLineaCarga(linea.id, "unidad", e.target.value)}
+                        className="select-base"
                       >
                         <option value="Ton">Ton</option>
                         <option value="m3">m3</option>
                         <option value="m2">m2</option>
                         <option value="un">un</option>
-                        <option value="hrs">hrs</option>
+                        <option value="kg">kg</option>
                       </select>
                     </div>
 
-                    <div className="flex items-center gap-1">
-                      <span className="text-slate-400">Izajes:</span>
+                    <div className="field-group">
+                      <label className="field-lbl">Izajes:</label>
                       <input
                         type="number"
                         placeholder="0"
-                        value={t.izajes}
-                        onChange={(e) => handleUpdateNoProgramada(t.id, "izajes", e.target.value)}
-                        className="w-14 px-2 py-0.5 bg-slate-900 border border-slate-700 rounded text-white text-xs outline-none"
+                        value={linea.izajes}
+                        onChange={(e) => handleUpdateLineaCarga(linea.id, "izajes", e.target.value)}
+                        className="input-base input-small"
                       />
                     </div>
 
-                    <div className="flex items-center gap-1">
-                      <span className="text-slate-400">Horómetro:</span>
+                    <div className="field-group">
+                      <label className="field-lbl">Horómetro:</label>
                       <input
                         type="number"
                         step="any"
                         placeholder="0.0"
-                        value={t.horometro}
-                        onChange={(e) => handleUpdateNoProgramada(t.id, "horometro", e.target.value)}
-                        className="w-16 px-2 py-0.5 bg-slate-900 border border-slate-700 rounded text-white text-xs outline-none"
+                        value={linea.horometro}
+                        onChange={(e) => handleUpdateLineaCarga(linea.id, "horometro", e.target.value)}
+                        className="input-base input-small"
                       />
-                      <span className="text-slate-500 text-[11px]">(hrs)</span>
+                      <span className="unit-tag">(hrs)</span>
                     </div>
+
+                    {lineasCargaDescarga.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveLineaCarga(linea.id)}
+                        className="btn-trash"
+                        title="Eliminar fila"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
+
+              <button type="button" onClick={handleAddLineaCarga} className="btn-add">
+                <Plus size={14} />
+                <span>Agregar línea</span>
+              </button>
             </div>
           )}
         </section>
 
+        {/* SECCIÓN 2: Disciplinas y Especialidades */}
+        <section className="section-card">
+          <div className="section-header">
+            <div className="section-title-wrap">
+              <Building2 size={18} color="#38bdf8" />
+              <h2 className="section-title">Disciplinas y Especialidades Operacionales</h2>
+            </div>
+            <span className="section-hint">Selecciona para desplegar labores</span>
+          </div>
+
+          <div className="section-body">
+            <div className="disciplines-list">
+              {DISCIPLINAS_ESTANDAR.map((disc) => {
+                const isOpen = disciplinasCheck[disc.key];
+
+                return (
+                  <div key={disc.key} className={`discipline-box ${isOpen ? "active" : ""}`}>
+                    <label className="discipline-header">
+                      <input
+                        type="checkbox"
+                        checked={isOpen}
+                        onChange={() => toggleDisciplina(disc.key)}
+                        className="checkbox-disc"
+                      />
+                      <span className="discipline-name">{disc.label}</span>
+                    </label>
+
+                    {isOpen && (
+                      <div className="subactivities-container">
+                        {disc.subactividades.map((subName) => {
+                          const subData = subactividadesData[subName] || { checked: false };
+                          const isSubChecked = !!subData.checked;
+
+                          return (
+                            <div key={subName} className="subactivity-item">
+                              <label className="subactivity-header">
+                                <input
+                                  type="checkbox"
+                                  checked={isSubChecked}
+                                  onChange={() => toggleSubactividad(subName, disc.label)}
+                                  className="checkbox-sub"
+                                />
+                                <span className={`subactivity-name ${isSubChecked ? "highlight" : ""}`}>
+                                  {subName}
+                                </span>
+                              </label>
+
+                              {isSubChecked && (
+                                <div className="matrix-row sub-row">
+                                  <div className="field-group">
+                                    <label className="field-lbl">Id 3WL:</label>
+                                    <input
+                                      type="text"
+                                      placeholder="3WL"
+                                      value={subData.id_3wl || ""}
+                                      onChange={(e) => updateSubactividad(subName, "id_3wl", e.target.value)}
+                                      className="input-base input-code"
+                                    />
+                                  </div>
+
+                                  <div className="field-group">
+                                    <label className="field-lbl">Cant:</label>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      placeholder="0"
+                                      value={subData.cantidad || ""}
+                                      onChange={(e) => updateSubactividad(subName, "cantidad", e.target.value)}
+                                      className="input-base input-number"
+                                    />
+                                  </div>
+
+                                  <div className="field-group">
+                                    <select
+                                      value={subData.unidad || "Ton"}
+                                      onChange={(e) => updateSubactividad(subName, "unidad", e.target.value)}
+                                      className="select-base"
+                                    >
+                                      <option value="Ton">Ton</option>
+                                      <option value="m3">m3</option>
+                                      <option value="m2">m2</option>
+                                      <option value="un">un</option>
+                                      <option value="ml">ml</option>
+                                    </select>
+                                  </div>
+
+                                  <div className="field-group">
+                                    <label className="field-lbl">Izajes:</label>
+                                    <input
+                                      type="number"
+                                      placeholder="0"
+                                      value={subData.izajes || ""}
+                                      onChange={(e) => updateSubactividad(subName, "izajes", e.target.value)}
+                                      className="input-base input-small"
+                                    />
+                                  </div>
+
+                                  <div className="field-group">
+                                    <label className="field-lbl">Horómetro:</label>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      placeholder="0.0"
+                                      value={subData.horometro || ""}
+                                      onChange={(e) => updateSubactividad(subName, "horometro", e.target.value)}
+                                      className="input-base input-small"
+                                    />
+                                    <span className="unit-tag">(hrs)</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        {/* SECCIÓN 3: Tareas No Programadas */}
+        <section className="section-card">
+          <div className="section-header">
+            <div>
+              <h2 className="section-title">Tareas No Programadas</h2>
+              <p className="section-hint">Labores reactivas ejecutadas fuera del 3WL oficial</p>
+            </div>
+            <button type="button" onClick={handleAddNoProgramada} className="btn-add amber">
+              <Plus size={14} />
+              <span>Agregar no programada</span>
+            </button>
+          </div>
+
+          <div className="section-body">
+            {tareasNoProgramadas.length === 0 ? (
+              <p className="empty-text">No se han registrado tareas fuera de programa para este turno.</p>
+            ) : (
+              <div className="rows-container">
+                {tareasNoProgramadas.map((t) => (
+                  <div key={t.id} className="no-prog-card">
+                    <div className="no-prog-top">
+                      <input
+                        type="text"
+                        placeholder="Describe la labor realizada no programada..."
+                        value={t.descripcion}
+                        onChange={(e) => handleUpdateNoProgramada(t.id, "descripcion", e.target.value)}
+                        className="input-base input-desc"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveNoProgramada(t.id)}
+                        className="btn-trash"
+                        title="Eliminar"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+
+                    <div className="matrix-row">
+                      <div className="field-group">
+                        <label className="field-lbl">Cantidad:</label>
+                        <input
+                          type="number"
+                          step="any"
+                          placeholder="0"
+                          value={t.cantidad}
+                          onChange={(e) => handleUpdateNoProgramada(t.id, "cantidad", e.target.value)}
+                          className="input-base input-number"
+                        />
+                      </div>
+
+                      <div className="field-group">
+                        <select
+                          value={t.unidad}
+                          onChange={(e) => handleUpdateNoProgramada(t.id, "unidad", e.target.value)}
+                          className="select-base"
+                        >
+                          <option value="Ton">Ton</option>
+                          <option value="m3">m3</option>
+                          <option value="m2">m2</option>
+                          <option value="un">un</option>
+                          <option value="hrs">hrs</option>
+                        </select>
+                      </div>
+
+                      <div className="field-group">
+                        <label className="field-lbl">Izajes:</label>
+                        <input
+                          type="number"
+                          placeholder="0"
+                          value={t.izajes}
+                          onChange={(e) => handleUpdateNoProgramada(t.id, "izajes", e.target.value)}
+                          className="input-base input-small"
+                        />
+                      </div>
+
+                      <div className="field-group">
+                        <label className="field-lbl">Horómetro:</label>
+                        <input
+                          type="number"
+                          step="any"
+                          placeholder="0.0"
+                          value={t.horometro}
+                          onChange={(e) => handleUpdateNoProgramada(t.id, "horometro", e.target.value)}
+                          className="input-base input-small"
+                        />
+                        <span className="unit-tag">(hrs)</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
         {/* Botón flotante inferior para guardar */}
-        <div className="pt-4 flex justify-end">
-          <button
-            onClick={handleGuardar}
-            disabled={saving}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold px-8 py-3 rounded-xl shadow-lg transition-all disabled:opacity-50 text-sm"
-          >
-            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+        <div className="bottom-bar">
+          <button onClick={handleGuardar} disabled={saving} className="btn-save-bottom">
+            {saving ? <Loader2 size={18} className="spinner" /> : <Save size={18} />}
             <span>Guardar y Confirmar Actividades</span>
           </button>
         </div>
-
       </main>
+
+      <style jsx>{`
+        .actividades-root {
+          min-height: 100vh;
+          background: #090e17;
+          color: #f1f5f9;
+          font-family: 'Poppins', -apple-system, sans-serif;
+          padding-bottom: 80px;
+        }
+
+        /* HEADER */
+        .header-bar {
+          background: rgba(15, 23, 42, 0.95);
+          backdrop-filter: blur(12px);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          position: sticky;
+          top: 0;
+          z-index: 40;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+        }
+        .header-inner {
+          max-width: 960px;
+          margin: 0 auto;
+          padding: 12px 16px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .header-left {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .btn-back {
+          background: #1e293b;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          color: #cbd5e1;
+          border-radius: 10px;
+          padding: 8px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s ease;
+        }
+        .btn-back:hover {
+          background: #334155;
+          color: #ffffff;
+        }
+        .header-title {
+          font-size: 17px;
+          font-weight: 700;
+          color: #ffffff;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          letter-spacing: -0.3px;
+        }
+        .header-subtitle {
+          font-size: 12px;
+          color: #94a3b8;
+          margin-top: 1px;
+        }
+        .btn-save {
+          background: linear-gradient(135deg, #2563eb, #1d4ed8);
+          color: white;
+          border: none;
+          padding: 9px 18px;
+          border-radius: 10px;
+          font-weight: 600;
+          font-size: 13px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          box-shadow: 0 4px 15px rgba(37, 99, 235, 0.35);
+          transition: all 0.2s ease;
+        }
+        .btn-save:hover:not(:disabled) {
+          background: linear-gradient(135deg, #3b82f6, #2563eb);
+          transform: translateY(-1px);
+        }
+        .btn-save:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        /* MAIN */
+        .main-content {
+          max-width: 960px;
+          margin: 0 auto;
+          padding: 20px 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+
+        /* ALERTS */
+        .alert {
+          padding: 12px 16px;
+          border-radius: 12px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          font-size: 13px;
+          font-weight: 500;
+        }
+        .alert-success {
+          background: rgba(16, 185, 129, 0.12);
+          border: 1px solid rgba(16, 185, 129, 0.3);
+          color: #6ee7b7;
+        }
+        .alert-error {
+          background: rgba(244, 63, 94, 0.12);
+          border: 1px solid rgba(244, 63, 94, 0.3);
+          color: #fda4af;
+        }
+
+        /* SUMMARY GRID */
+        .summary-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+          gap: 12px;
+        }
+        .summary-card {
+          background: #111a28;
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 14px;
+          padding: 14px 16px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+        }
+        .summary-icon {
+          width: 38px;
+          height: 38px;
+          border-radius: 10px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+        .summary-icon.blue {
+          background: rgba(59, 130, 246, 0.15);
+          color: #60a5fa;
+          border: 1px solid rgba(59, 130, 246, 0.25);
+        }
+        .summary-icon.amber {
+          background: rgba(245, 158, 11, 0.15);
+          color: #fbbf24;
+          border: 1px solid rgba(245, 158, 11, 0.25);
+        }
+        .summary-icon.emerald {
+          background: rgba(16, 185, 129, 0.15);
+          color: #34d399;
+          border: 1px solid rgba(16, 185, 129, 0.25);
+        }
+        .summary-info {
+          display: flex;
+          flex-direction: column;
+          min-width: 0;
+        }
+        .summary-label {
+          font-size: 10px;
+          color: #64748b;
+          text-transform: uppercase;
+          font-weight: 700;
+          letter-spacing: 0.5px;
+        }
+        .summary-val {
+          font-size: 13px;
+          font-weight: 700;
+          color: #ffffff;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .summary-sub {
+          font-size: 11px;
+          color: #94a3b8;
+        }
+
+        /* SECTION CARDS */
+        .section-card {
+          background: #111a28;
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 16px;
+          padding: 18px;
+          box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+        }
+        .section-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding-bottom: 12px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+          margin-bottom: 16px;
+        }
+        .section-title-wrap {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .section-title {
+          font-size: 15px;
+          font-weight: 700;
+          color: #ffffff;
+        }
+        .section-badge {
+          font-size: 11px;
+          color: #64748b;
+          font-weight: 600;
+          background: #1a2536;
+          padding: 3px 8px;
+          border-radius: 6px;
+        }
+        .section-hint {
+          font-size: 11px;
+          color: #94a3b8;
+        }
+
+        /* CHECKBOXES & TOGGLES */
+        .checkbox-toggle {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          cursor: pointer;
+        }
+        .checkbox-toggle input[type="checkbox"] {
+          width: 18px;
+          height: 18px;
+          accent-color: #3b82f6;
+          cursor: pointer;
+        }
+        .toggle-label {
+          font-size: 15px;
+          font-weight: 700;
+          color: #ffffff;
+        }
+
+        /* MATRIX ROWS */
+        .rows-container {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .matrix-row {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 10px;
+          background: #0b121d;
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 10px;
+          padding: 10px 14px;
+        }
+        .sub-row {
+          background: #0f1826;
+          border-color: rgba(59, 130, 246, 0.15);
+          margin-top: 6px;
+        }
+        .field-group {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .field-lbl {
+          font-size: 12px;
+          font-weight: 500;
+          color: #94a3b8;
+        }
+        .input-base {
+          background: #162233;
+          border: 1px solid #2d3f58;
+          color: #ffffff;
+          padding: 6px 10px;
+          border-radius: 8px;
+          font-size: 12px;
+          font-family: inherit;
+          outline: none;
+          transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .input-base:focus {
+          border-color: #3b82f6;
+          box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+        }
+        .input-code {
+          width: 110px;
+        }
+        .input-number {
+          width: 80px;
+        }
+        .input-small {
+          width: 65px;
+        }
+        .input-desc {
+          flex: 1;
+          width: 100%;
+        }
+        .select-base {
+          background: #162233;
+          border: 1px solid #2d3f58;
+          color: #e2e8f0;
+          padding: 6px 8px;
+          border-radius: 8px;
+          font-size: 12px;
+          font-family: inherit;
+          outline: none;
+          cursor: pointer;
+        }
+        .unit-tag {
+          font-size: 11px;
+          color: #64748b;
+        }
+        .btn-trash {
+          background: transparent;
+          border: none;
+          color: #f43f5e;
+          cursor: pointer;
+          padding: 4px;
+          border-radius: 6px;
+          margin-left: auto;
+          display: flex;
+          align-items: center;
+          transition: background 0.2s;
+        }
+        .btn-trash:hover {
+          background: rgba(244, 63, 94, 0.15);
+        }
+        .btn-add {
+          margin-top: 12px;
+          background: rgba(59, 130, 246, 0.12);
+          border: 1px solid rgba(59, 130, 246, 0.3);
+          color: #60a5fa;
+          padding: 7px 14px;
+          border-radius: 8px;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          transition: all 0.2s ease;
+        }
+        .btn-add:hover {
+          background: rgba(59, 130, 246, 0.22);
+          border-color: #3b82f6;
+        }
+        .btn-add.amber {
+          background: rgba(245, 158, 11, 0.12);
+          border-color: rgba(245, 158, 11, 0.3);
+          color: #fbbf24;
+          margin-top: 0;
+        }
+        .btn-add.amber:hover {
+          background: rgba(245, 158, 11, 0.22);
+          border-color: #f59e0b;
+        }
+
+        /* DISCIPLINES LIST */
+        .disciplines-list {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .discipline-box {
+          background: #0b121d;
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 12px;
+          padding: 12px 16px;
+          transition: border-color 0.2s;
+        }
+        .discipline-box.active {
+          border-color: rgba(59, 130, 246, 0.35);
+          background: #0c1421;
+        }
+        .discipline-header {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          cursor: pointer;
+        }
+        .checkbox-disc {
+          width: 17px;
+          height: 17px;
+          accent-color: #3b82f6;
+          cursor: pointer;
+        }
+        .discipline-name {
+          font-size: 14px;
+          font-weight: 700;
+          color: #e2e8f0;
+        }
+        .subactivities-container {
+          margin-top: 12px;
+          padding-left: 24px;
+          padding-top: 12px;
+          border-top: 1px solid rgba(255, 255, 255, 0.05);
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .subactivity-item {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .subactivity-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          cursor: pointer;
+        }
+        .checkbox-sub {
+          width: 15px;
+          height: 15px;
+          accent-color: #3b82f6;
+          cursor: pointer;
+        }
+        .subactivity-name {
+          font-size: 13px;
+          color: #94a3b8;
+          font-weight: 500;
+        }
+        .subactivity-name.highlight {
+          color: #ffffff;
+          font-weight: 600;
+        }
+
+        /* NO PROGRAMADAS */
+        .empty-text {
+          font-size: 12px;
+          color: #64748b;
+          font-style: italic;
+          padding: 8px 0;
+        }
+        .no-prog-card {
+          background: #0b121d;
+          border: 1px solid rgba(245, 158, 11, 0.2);
+          border-radius: 12px;
+          padding: 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .no-prog-top {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        /* BOTTOM BAR */
+        .bottom-bar {
+          display: flex;
+          justify-content: flex-end;
+          padding-top: 8px;
+        }
+        .btn-save-bottom {
+          background: linear-gradient(135deg, #2563eb, #1d4ed8);
+          color: white;
+          border: none;
+          padding: 13px 28px;
+          border-radius: 12px;
+          font-weight: 700;
+          font-size: 14px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4);
+          transition: all 0.2s ease;
+          width: 100%;
+          justify-content: center;
+        }
+        @media (min-width: 640px) {
+          .btn-save-bottom {
+            width: auto;
+          }
+        }
+        .btn-save-bottom:hover:not(:disabled) {
+          background: linear-gradient(135deg, #3b82f6, #2563eb);
+          transform: translateY(-2px);
+          box-shadow: 0 8px 25px rgba(37, 99, 235, 0.5);
+        }
+        .btn-save-bottom:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        :global(.spinner) {
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }
