@@ -104,15 +104,20 @@ export default function ActividadesSupervisorPage() {
         const json = await res.json();
 
         if (res.ok && json.success) {
-          setBloque(json.data.bloque);
-          setEquipo(json.data.equipo);
-          setSupervisor(json.data.supervisor);
-          setTareasEimi(json.data.tareas_eimi || []);
+          const bData = json.data?.bloque || json.bloque || null;
+          const eqData = json.data?.equipo || json.equipo || null;
+          const supData = json.data?.supervisor || json.supervisor || null;
+          const tareasData = json.data?.tareas_eimi || json.tareas_eimiplanner || [];
+          const guardadas = json.data?.actividades_guardadas || json.actividades_registradas || [];
+
+          setBloque(bData);
+          setEquipo(eqData);
+          setSupervisor(supData);
+          setTareasEimi(tareasData);
+          setErrorMsg("");
 
           // Si ya existen actividades guardadas, pre-poblarlas
-          if (json.data.actividades_guardadas && json.data.actividades_guardadas.length > 0) {
-            const guardadas = json.data.actividades_guardadas;
-            
+          if (guardadas && guardadas.length > 0) {
             const lineasCD = guardadas.filter(a => a.categoria_disciplina === "Carga/Descarga");
             if (lineasCD.length > 0) {
               setCargaDescargaActiva(true);
@@ -507,10 +512,10 @@ export default function ActividadesSupervisorPage() {
                       )}
                     </div>
 
-                    <div className="mobile-grid-inputs">
+                    <div className="metrics-grid">
                       {/* Cantidad y Unidad */}
-                      <div className="input-cell-pair">
-                        <span className="cell-label">Cantidad</span>
+                      <div className="input-cell-pair metric-full">
+                        <span className="cell-label">Cantidad & Medida</span>
                         <div className="pair-controls">
                           <input
                             type="number"
@@ -535,30 +540,35 @@ export default function ActividadesSupervisorPage() {
                         </div>
                       </div>
 
-                      {/* Izajes y Horómetro */}
+                      {/* Izajes (SEPARADO) */}
                       <div className="input-cell-pair">
-                        <span className="cell-label">Izajes / Horómetro</span>
-                        <div className="pair-controls">
+                        <span className="cell-label">Izajes</span>
+                        <div className="single-control">
                           <input
                             type="number"
                             inputMode="numeric"
-                            placeholder="Izajes"
+                            placeholder="0"
                             value={linea.izajes}
                             onChange={(e) => handleUpdateLineaCarga(linea.id, "izajes", e.target.value)}
                             className="input-cell number-cell"
                           />
-                          <div className="horo-wrapper">
-                            <input
-                              type="number"
-                              step="any"
-                              inputMode="decimal"
-                              placeholder="0.0"
-                              value={linea.horometro}
-                              onChange={(e) => handleUpdateLineaCarga(linea.id, "horometro", e.target.value)}
-                              className="input-cell number-cell horo"
-                            />
-                            <span className="unit-suffix">hrs</span>
-                          </div>
+                        </div>
+                      </div>
+
+                      {/* Horómetro (SEPARADO) */}
+                      <div className="input-cell-pair">
+                        <span className="cell-label">Horómetro</span>
+                        <div className="single-control horo-control">
+                          <input
+                            type="number"
+                            step="any"
+                            inputMode="decimal"
+                            placeholder="0.0"
+                            value={linea.horometro}
+                            onChange={(e) => handleUpdateLineaCarga(linea.id, "horometro", e.target.value)}
+                            className="input-cell number-cell horo"
+                          />
+                          <span className="unit-suffix">hrs</span>
                         </div>
                       </div>
                     </div>
@@ -645,8 +655,9 @@ export default function ActividadesSupervisorPage() {
                                   </div>
                                 </div>
 
-                                <div className="mobile-grid-inputs">
-                                  <div className="input-cell-pair">
+                                <div className="metrics-grid">
+                                  {/* Cantidad y Unidad */}
+                                  <div className="input-cell-pair metric-full">
                                     <span className="cell-label">Cantidad & Medida</span>
                                     <div className="pair-controls">
                                       <input
@@ -672,29 +683,35 @@ export default function ActividadesSupervisorPage() {
                                     </div>
                                   </div>
 
+                                  {/* Izajes (SEPARADO) */}
                                   <div className="input-cell-pair">
-                                    <span className="cell-label">Izajes / Horómetro</span>
-                                    <div className="pair-controls">
+                                    <span className="cell-label">Izajes</span>
+                                    <div className="single-control">
                                       <input
                                         type="number"
                                         inputMode="numeric"
-                                        placeholder="Izajes"
+                                        placeholder="0"
                                         value={subData.izajes || ""}
                                         onChange={(e) => updateSubactividad(subName, "izajes", e.target.value)}
                                         className="input-cell number-cell"
                                       />
-                                      <div className="horo-wrapper">
-                                        <input
-                                          type="number"
-                                          step="any"
-                                          inputMode="decimal"
-                                          placeholder="0.0"
-                                          value={subData.horometro || ""}
-                                          onChange={(e) => updateSubactividad(subName, "horometro", e.target.value)}
-                                          className="input-cell number-cell horo"
-                                        />
-                                        <span className="unit-suffix">hrs</span>
-                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Horómetro (SEPARADO) */}
+                                  <div className="input-cell-pair">
+                                    <span className="cell-label">Horómetro</span>
+                                    <div className="single-control horo-control">
+                                      <input
+                                        type="number"
+                                        step="any"
+                                        inputMode="decimal"
+                                        placeholder="0.0"
+                                        value={subData.horometro || ""}
+                                        onChange={(e) => updateSubactividad(subName, "horometro", e.target.value)}
+                                        className="input-cell number-cell horo"
+                                      />
+                                      <span className="unit-suffix">hrs</span>
                                     </div>
                                   </div>
                                 </div>
@@ -749,8 +766,9 @@ export default function ActividadesSupervisorPage() {
                       </button>
                     </div>
 
-                    <div className="mobile-grid-inputs">
-                      <div className="input-cell-pair">
+                    <div className="metrics-grid">
+                      {/* Cantidad & Medida */}
+                      <div className="input-cell-pair metric-full">
                         <span className="cell-label">Cantidad & Medida</span>
                         <div className="pair-controls">
                           <input
@@ -776,29 +794,35 @@ export default function ActividadesSupervisorPage() {
                         </div>
                       </div>
 
+                      {/* Izajes (SEPARADO) */}
                       <div className="input-cell-pair">
-                        <span className="cell-label">Izajes / Horómetro</span>
-                        <div className="pair-controls">
+                        <span className="cell-label">Izajes</span>
+                        <div className="single-control">
                           <input
                             type="number"
                             inputMode="numeric"
-                            placeholder="Izajes"
+                            placeholder="0"
                             value={t.izajes}
                             onChange={(e) => handleUpdateNoProgramada(t.id, "izajes", e.target.value)}
                             className="input-cell number-cell"
                           />
-                          <div className="horo-wrapper">
-                            <input
-                              type="number"
-                              step="any"
-                              inputMode="decimal"
-                              placeholder="0.0"
-                              value={t.horometro}
-                              onChange={(e) => handleUpdateNoProgramada(t.id, "horometro", e.target.value)}
-                              className="input-cell number-cell horo"
-                            />
-                            <span className="unit-suffix">hrs</span>
-                          </div>
+                        </div>
+                      </div>
+
+                      {/* Horómetro (SEPARADO) */}
+                      <div className="input-cell-pair">
+                        <span className="cell-label">Horómetro</span>
+                        <div className="single-control horo-control">
+                          <input
+                            type="number"
+                            step="any"
+                            inputMode="decimal"
+                            placeholder="0.0"
+                            value={t.horometro}
+                            onChange={(e) => handleUpdateNoProgramada(t.id, "horometro", e.target.value)}
+                            className="input-cell number-cell horo"
+                          />
+                          <span className="unit-suffix">hrs</span>
                         </div>
                       </div>
                     </div>
@@ -1165,15 +1189,21 @@ export default function ActividadesSupervisorPage() {
           color: #ffffff;
         }
 
-        /* MOBILE 2-COLUMN INPUT GRID */
-        .mobile-grid-inputs {
+        /* SEPARATED METRICS GRID (CANTIDAD / IZAJES / HORÓMETRO) */
+        .metrics-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 8px;
         }
-        @media (max-width: 400px) {
-          .mobile-grid-inputs {
-            grid-template-columns: 1fr;
+        .metric-full {
+          grid-column: 1 / -1;
+        }
+        @media (min-width: 540px) {
+          .metrics-grid {
+            grid-template-columns: 1.4fr 1fr 1.1fr;
+          }
+          .metric-full {
+            grid-column: auto;
           }
         }
         .input-cell-pair {
@@ -1183,9 +1213,10 @@ export default function ActividadesSupervisorPage() {
         }
         .cell-label {
           font-size: 10px;
-          color: #64748b;
-          font-weight: 600;
+          color: #94a3b8;
+          font-weight: 700;
           text-transform: uppercase;
+          letter-spacing: 0.3px;
         }
         .pair-controls {
           display: flex;
@@ -1196,6 +1227,24 @@ export default function ActividadesSupervisorPage() {
           border-radius: 8px;
           padding: 0 6px;
           height: 38px;
+        }
+        .single-control {
+          display: flex;
+          align-items: center;
+          background: #142032;
+          border: 1px solid #283950;
+          border-radius: 8px;
+          padding: 0 10px;
+          height: 38px;
+          transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .single-control:focus-within,
+        .pair-controls:focus-within {
+          border-color: #3b82f6;
+          box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+        .single-control.horo-control {
+          gap: 6px;
         }
         .input-cell.number-cell {
           background: transparent;
@@ -1217,13 +1266,6 @@ export default function ActividadesSupervisorPage() {
           padding: 3px 6px;
           outline: none;
           cursor: pointer;
-        }
-        .horo-wrapper {
-          display: flex;
-          align-items: center;
-          gap: 2px;
-          width: 100%;
-          min-width: 0;
         }
         .unit-suffix {
           font-size: 10px;

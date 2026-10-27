@@ -108,14 +108,21 @@ export default async function handler(req, res) {
         actividadesRegistradas = actData || [];
       }
 
-      return res.status(200).json({
-        success: true,
+      const responseData = {
         bloque,
         equipo,
         supervisor,
         especialidad_id: targetEspecialidadId,
+        tareas_eimi: tareas || [],
         tareas_eimiplanner: tareas || [],
+        actividades_guardadas: actividadesRegistradas,
         actividades_registradas: actividadesRegistradas,
+      };
+
+      return res.status(200).json({
+        success: true,
+        data: responseData,
+        ...responseData
       });
     } catch (err) {
       console.error("[api/supervisor/actividades] Error GET:", err);
