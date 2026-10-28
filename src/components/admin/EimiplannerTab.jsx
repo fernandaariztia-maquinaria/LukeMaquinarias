@@ -440,6 +440,56 @@ export default function EimiplannerTab({ currentUser }) {
             </div>
           </div>
 
+          {/* Tarjeta Requisitos Vencidos */}
+          <div
+            onClick={() => {
+              setSubTab("restricciones");
+              setFiltroVencimientoRestr(filtroVencimientoRestr === "ATRASADAS" ? "TODOS" : "ATRASADAS");
+            }}
+            style={{
+              background: filtroVencimientoRestr === "ATRASADAS" && subTab === "restricciones"
+                ? "rgba(239, 68, 68, 0.16)"
+                : "rgba(239, 68, 68, 0.07)",
+              border: filtroVencimientoRestr === "ATRASADAS" && subTab === "restricciones"
+                ? "2px solid #ef4444"
+                : "1px solid rgba(239, 68, 68, 0.28)",
+              borderRadius: "12px",
+              padding: "16px",
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+              boxShadow: filtroVencimientoRestr === "ATRASADAS" && subTab === "restricciones"
+                ? "0 4px 15px rgba(239, 68, 68, 0.2)"
+                : "none",
+            }}
+            title="Haz clic para filtrar los requisitos vencidos en el Log de Restricciones"
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#ef4444", fontSize: "12px", fontWeight: 700 }}>
+                <Clock size={14} color="#ef4444" /> Requisitos Vencidos
+              </div>
+              <span
+                style={{
+                  fontSize: "9px",
+                  background: "rgba(239, 68, 68, 0.16)",
+                  color: "#dc2626",
+                  fontWeight: 800,
+                  padding: "2px 7px",
+                  borderRadius: "10px",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.4px",
+                }}
+              >
+                Urgente
+              </span>
+            </div>
+            <div style={{ fontSize: "26px", fontWeight: 900, color: "#dc2626", marginTop: "8px" }}>
+              {conteosVencimiento.atrasadas}
+            </div>
+            <div style={{ fontSize: "11px", color: "#b91c1c", marginTop: "4px", fontWeight: 600 }}>
+              Fecha compromiso expirada · Filtrar →
+            </div>
+          </div>
+
           <div
             style={{
               background: "rgba(239, 68, 68, 0.06)",
@@ -1474,6 +1524,49 @@ export default function EimiplannerTab({ currentUser }) {
           <h3 style={{ margin: "0 0 8px", fontSize: "16px", fontWeight: 800 }}>
             Matriz de Requisitos y Liberaciones por Tarea ({data?.requisitos?.length || 0} tareas)
           </h3>
+          {conteosVencimiento.atrasadas > 0 && (
+            <div
+              onClick={() => {
+                setSubTab("restricciones");
+                setFiltroVencimientoRestr("ATRASADAS");
+              }}
+              style={{
+                background: "rgba(239, 68, 68, 0.08)",
+                border: "1px solid rgba(239, 68, 68, 0.28)",
+                borderRadius: "10px",
+                padding: "12px 16px",
+                marginBottom: "16px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "rgba(239, 68, 68, 0.12)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "rgba(239, 68, 68, 0.08)";
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <Clock size={20} color="#dc2626" />
+                <div>
+                  <strong style={{ color: "#dc2626", fontSize: "13px" }}>
+                    Atención: Existen {conteosVencimiento.atrasadas} requisitos vencidos con fecha compromiso superada
+                  </strong>
+                  <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "2px" }}>
+                    Impactan directamente las partidas activas. Toca para ver el detalle y responsables en el Log de Restricciones.
+                  </div>
+                </div>
+              </div>
+              <span style={{ fontSize: "12px", color: "#ef4444", fontWeight: 700, whiteSpace: "nowrap" }}>
+                Ver {conteosVencimiento.atrasadas} Vencidos →
+              </span>
+            </div>
+          )}
+
           <p style={{ margin: "0 0 16px", color: "var(--color-text-muted)", fontSize: "12px" }}>
             Simbología: <strong style={{ color: "#10b981" }}>✓ Liberado (1)</strong> · <strong style={{ color: "#6b7280" }}>— Neutro (0)</strong> · <strong style={{ color: "#ef4444" }}>✗ Bloqueado (-1)</strong>
           </p>
