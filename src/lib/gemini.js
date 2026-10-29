@@ -49,6 +49,8 @@ REGLAS ESTRICTAS DE INTERACCIÓN Y RESPUESTA:
 5. Reglas de Mapeo Semántico:
    - "cañoneros", "viejos de las líneas", "tuberías", "cañerías", "líneas" → especialidad 'Piping'
    - "fierreros", "montadores", "estructuras", "vigas" → especialidad 'Estructuras'
+   - "aisladores", "aislación", "aislamiento", "lana", "calorífugos" → especialidad 'Aislación'
+   - "andamieros", "andamios", "andamio", "cuerpos de andamio" → especialidad 'Andamios'
    - Mapeo de Estados de Faena y Operacionales:
      * "operativo", "máquina lista", "trabajando normal" → 'Equipo Operativo' o 'Trabajando'
      * "panne", "pana", "avería", "roto", "fuera de servicio", "falla" → 'Equipo Fuera de Servicio (Panne)' o 'Detenido por Falla'
@@ -239,6 +241,8 @@ Reglas de Mapeo Semántico ESTRICTAS:
 - Tono formal y neutral de género. NUNCA uses "compadre".
 - "cañoneros", "líneas", "tuberías" → 'Piping'
 - "fierreros", "montadores", "estructuras" → 'Estructuras'
+- "aislación", "aisladores", "lana", "aislamiento" → 'Aislación'
+- "andamios", "andamio", "andamieros" → 'Andamios'
 - "colación" → 'En Colacion' | "disponible/esperando" → 'Disponible' | "falla" → 'Detenido por Falla' (solo por pana o avería física, no por decir 'sin carga de combustible') | "cierre/fin" → 'CIERRE'
 - Mapeo de Estados de Faena y Operacionales:
   * "operativo", "trabajando normal" → 'Equipo Operativo' o 'Trabajando'
@@ -759,6 +763,8 @@ Mapeo de especialidades habituales:
 - "cañerías", "tuberías", "líneas", "piping" -> Piping
 - "fierros", "estructuras", "vigas", "perfiles" -> Estructuras
 - "hormigón", "concreto", "obras civiles" -> Obras Civiles
+- "lana", "aislación", "aislamiento", "recubrimiento térmico" -> Aislación
+- "andamios", "cuerpos de andamio", "bandejas", "rosetas" -> Andamios
 
 Responde ÚNICAMENTE con un JSON válido que contenga:
 {

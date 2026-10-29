@@ -258,6 +258,11 @@ export async function syncEimiplannerActivities(supabase, projectId = "418") {
     "mov. de tierra": "movimiento de tierras",
     "movimiento de tierras": "movimiento de tierras",
     mecanica: "estructuras",
+    aislacion: "aislacion",
+    aislación: "aislacion",
+    aislamiento: "aislacion",
+    andamios: "andamios",
+    andamio: "andamios",
   };
 
   // 2. Traer tareas del Lookahead desde la API de EIMIPLANNER

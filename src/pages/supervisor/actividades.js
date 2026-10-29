@@ -49,6 +49,16 @@ const DISCIPLINAS_ESTANDAR = [
     key: "Electrico",
     label: "Eléctrico",
     subactividades: ["Equipos Eléctricos"]
+  },
+  {
+    key: "Aislacion",
+    label: "Aislación",
+    subactividades: ["Aislación Térmica", "Aislación Acústica", "Recubrimientos / Lana"]
+  },
+  {
+    key: "Andamios",
+    label: "Andamios",
+    subactividades: ["Montaje Andamio", "Desarme Andamio", "Modificación Andamio"]
   }
 ];
 
@@ -80,6 +90,8 @@ export default function ActividadesSupervisorPage() {
     Mecanica: false,
     Caldereria: false,
     Electrico: false,
+    Aislacion: false,
+    Andamios: false,
   });
 
   const [subactividadesData, setSubactividadesData] = useState({});

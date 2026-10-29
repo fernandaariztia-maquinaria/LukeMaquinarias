@@ -25,6 +25,11 @@ const equivalenciasEsp = {
   mecánica: "estructuras",
   izaje: "izaje especial",
   mantenimiento: "mantenimiento",
+  aislacion: "aislacion",
+  aislación: "aislacion",
+  aislamiento: "aislacion",
+  andamios: "andamios",
+  andamio: "andamios",
 };
 
 const norm = (str) =>
