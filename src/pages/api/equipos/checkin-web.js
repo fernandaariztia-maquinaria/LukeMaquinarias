@@ -173,8 +173,39 @@ export default async function handler(req, res) {
       eqUpdate.ultimo_horometro = valorLectura;
     }
 
+    const mapEstadoEquipoDB = {
+      "Equipo Operativo": "Equipo Operativo",
+      "Disponible": "Disponible",
+      "En Colacion": "En Colacion",
+      "Detenido por Falla": "Detenido por Falla",
+      "Equipo Fuera de Servicio (Panne)": "Detenido por Falla",
+      "Equipo Disponible sin Operador": "Disponible",
+      "Equipo traslado": "Equipo Operativo",
+      "Equipo en Mantención Programada": "Detenido por Falla",
+      "Equipo Desvinculado pero en Obra": "Disponible",
+      "Equipo Desvinculado": "Disponible",
+      "Equipo en Proceso de Acreditación": "Disponible",
+      "Equipo en Proceso de Armado": "Disponible",
+    };
+
+    const mapEstadoHitoDB = {
+      "Equipo Operativo": "Trabajando",
+      "Trabajando": "Trabajando",
+      "Disponible": "Disponible",
+      "En Colacion": "En Colacion",
+      "Detenido por Falla": "Detenido por Falla",
+      "Equipo Fuera de Servicio (Panne)": "Detenido por Falla",
+      "Equipo Disponible sin Operador": "Disponible",
+      "Equipo traslado": "Trabajando",
+      "Equipo en Mantención Programada": "Detenido por Falla",
+      "Equipo Desvinculado pero en Obra": "Disponible",
+      "Equipo Desvinculado": "Disponible",
+      "Equipo en Proceso de Acreditación": "Disponible",
+      "Equipo en Proceso de Armado": "Disponible",
+    };
+
     if (estadoEquipo) {
-      eqUpdate.estado_actual = estadoEquipo;
+      eqUpdate.estado_actual = mapEstadoEquipoDB[estadoEquipo] || "Equipo Operativo";
     }
 
     const { error: errEqUpdate } = await supabase
@@ -200,7 +231,8 @@ export default async function handler(req, res) {
     const notaUbicacion = latitud && longitud 
       ? `Lat ${latitud.toFixed(5)}, Lng ${longitud.toFixed(5)}` 
       : "Sin GPS";
-    const hitoInicial = estadoEquipo || "Disponible";
+    const labelEstado = estadoEquipo || "Equipo Operativo";
+    const hitoInicial = mapEstadoHitoDB[labelEstado] || "Trabajando";
 
     const { data: eventoCreado, error: errHito } = await supabase
       .from("eventos_jornada")
@@ -208,12 +240,20 @@ export default async function handler(req, res) {
         reporte_id: reporteId,
         estado_hito: hitoInicial,
         hora_evento: new Date().toISOString(),
-        nota_transcripcion: `📍 Check-in Web [${hitoInicial}]: ${esVehiculo ? "Odómetro" : "Horómetro"} inicial de ${valorLectura.toLocaleString("es-CL")} ${esVehiculo ? "km" : "hrs"} registrado. Ubicación: ${notaUbicacion}.`
+        nota_transcripcion: `📍 Check-in Web [${labelEstado}]: ${esVehiculo ? "Odómetro" : "Horómetro"} inicial de ${valorLectura.toLocaleString("es-CL")} ${esVehiculo ? "km" : "hrs"} registrado. Ubicación: ${notaUbicacion}.`
       })
       .select()
       .single();
 
     if (errHito) throw errHito;
+
+    // Re-asegurar estado_actual después del trigger de eventos_jornada
+    if (estadoEquipo) {
+      await supabase
+        .from("equipos")
+        .update({ estado_actual: mapEstadoEquipoDB[estadoEquipo] || "Equipo Operativo" })
+        .eq("id", equipoId);
+    }
 
     // 7. Alerta proactiva al supervisor si el equipo fue planificado en la Sala POD hoy
     try {

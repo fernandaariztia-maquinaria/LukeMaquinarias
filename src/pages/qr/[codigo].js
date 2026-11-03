@@ -14,9 +14,19 @@ import {
   Download, 
   RefreshCw, 
   Cpu,
-  Zap
+  Zap,
+  Wifi,
+  WifiOff,
+  CloudUpload
 } from "lucide-react";
 import { formatEquipoLabel } from "../../lib/equipoLabel";
+import {
+  encolarCheckinOperador,
+  obtenerPendientesOperador,
+  sincronizarCheckinOperador,
+  guardarCacheLocal,
+  obtenerCacheLocal
+} from "../../lib/offlineSync";
 
 // Función para formatear el RUT chileno dinámicamente (ej: 12.345.678-K)
 function formatRut(value) {
@@ -86,6 +96,55 @@ export default function QrLanding() {
   const [confirmandoPod, setConfirmandoPod] = useState(false);
   const [podConfirmadoLocal, setPodConfirmadoLocal] = useState(false);
 
+  // Estados de conectividad y cola offline del operador
+  const [isOnline, setIsOnline] = useState(true);
+  const [pendientesOffline, setPendientesOffline] = useState(0);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [offlineNotice, setOfflineNotice] = useState("");
+
+  // Escuchadores de conectividad y auto-sync
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setIsOnline(navigator.onLine);
+    setPendientesOffline(obtenerPendientesOperador().length);
+
+    const handleOnline = async () => {
+      setIsOnline(true);
+      await triggerOperadorSync();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    if (navigator.onLine) {
+      triggerOperadorSync();
+    }
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  const triggerOperadorSync = async () => {
+    if (sincronizando) return;
+    setSincronizando(true);
+    try {
+      const { procesados, restantes } = await sincronizarCheckinOperador();
+      setPendientesOffline(restantes);
+      if (procesados > 0) {
+        setOfflineNotice(`✅ ¡${procesados} check-in${procesados > 1 ? "s" : ""} sincronizado${procesados > 1 ? "s" : ""} con el servidor exitosamente!`);
+      }
+    } catch (e) {
+      console.warn("Fallo sync operador:", e);
+    } finally {
+      setSincronizando(false);
+    }
+  };
+
   // Consultar datos iniciales del equipo y bot al montar
   useEffect(() => {
     if (!router.isReady || !codigo) return;
@@ -126,43 +185,60 @@ export default function QrLanding() {
   const fetchLandingData = async (userId) => {
     setLoadingData(true);
     setErrorMsg("");
+    const cacheKey = `qr_landing_${codigo}_${userId || "anon"}`;
+
+    const applyLandingData = (data) => {
+      if (data.equipo) setEquipo(data.equipo);
+      if (data.botPhone) setBotPhone(data.botPhone);
+      if (data.equipo && data.equipo.combustible_nivel_porcentaje != null) {
+        setCombustibleNivel(data.equipo.combustible_nivel_porcentaje);
+      }
+      if (data.podBloque) {
+        setPodBloque(data.podBloque);
+        setPodConfirmadoLocal(!!data.podBloque.confirmado_at);
+      } else {
+        setPodBloque(null);
+        setPodConfirmadoLocal(false);
+      }
+      if (data.operador) {
+        setOperador(data.operador);
+        setReportes(data.reportes || []);
+        setIsIdentified(true);
+        if (userId) localStorage.setItem("luke_operador_identificador", userId);
+      }
+    };
+
     try {
       const res = await fetch(`/api/qr-landing-data?codigo=${codigo}&identificador=${userId}`);
       const data = await res.json();
 
       if (res.ok && data.success) {
-        setEquipo(data.equipo);
-        setBotPhone(data.botPhone);
-         if (data.equipo && data.equipo.combustible_nivel_porcentaje != null) {
-          setCombustibleNivel(data.equipo.combustible_nivel_porcentaje);
-        }
-        
-        // Cargar bloque POD si existe
-        if (data.podBloque) {
-          setPodBloque(data.podBloque);
-          setPodConfirmadoLocal(!!data.podBloque.confirmado_at);
-        } else {
-          setPodBloque(null);
-          setPodConfirmadoLocal(false);
-        }
-        
-        if (data.operador) {
-          setOperador(data.operador);
-          setReportes(data.reportes || []);
-          setIsIdentified(true);
-          localStorage.setItem("luke_operador_identificador", userId);
-        } else {
-          // El operador no fue encontrado
+        applyLandingData(data);
+        guardarCacheLocal(cacheKey, data);
+        if (!data.operador) {
           setAuthError("Operador no registrado o inactivo en la base de datos.");
           setIsIdentified(false);
           localStorage.removeItem("luke_operador_identificador");
         }
       } else {
-        setErrorMsg(data.message || "Error al obtener datos del equipo");
+        const cached = obtenerCacheLocal(cacheKey);
+        if (cached) {
+          applyLandingData(cached);
+          setOfflineNotice("Modo sin conexión: datos del operador recuperados de la memoria local.");
+        } else {
+          setErrorMsg(data.message || "Error al obtener datos del equipo");
+        }
       }
     } catch (err) {
-      console.error(err);
-      setErrorMsg("Error de red al conectar con el servidor.");
+      console.warn("Error de red conectando al servidor, buscando en caché:", err);
+      const cached = obtenerCacheLocal(cacheKey);
+      if (cached) {
+        applyLandingData(cached);
+        setIsOnline(false);
+        setOfflineNotice("Modo sin conexión: operando con copia local de tu equipo y perfil.");
+      } else {
+        setErrorMsg("Sin conexión a internet y sin copia previa de este equipo en tu teléfono.");
+      }
     } finally {
       setLoadingData(false);
     }
@@ -289,38 +365,61 @@ export default function QrLanding() {
     setUbicacionCargando(true);
     setErrorMessageLocal("");
 
+    const checkinPayload = {
+      equipoId: equipo.id,
+      operadorId: operador.id,
+      valorLectura: valorLecturaNum,
+      latitud: lat,
+      longitud: lng,
+      pautaConfirmada: equipo.pauta_preventiva_activa ? true : false,
+      destinoRuta: esVehiculo ? destinoRuta : null,
+      combustibleNivel: combustibleNivel,
+      capacidadEstanque: equipo.capacidad_estanque_litros ? parseInt(equipo.capacidad_estanque_litros) : (capacidadEstanque ? parseInt(capacidadEstanque) : null),
+      estadoEquipo: estadoEquipo,
+      fecha_local: new Date().toISOString()
+    };
+
+    // Si no hay red, guardar en cola offline de inmediato
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      encolarCheckinOperador(checkinPayload);
+      const restantes = obtenerPendientesOperador().length;
+      setPendientesOffline(restantes);
+      setCheckinSuccess(true);
+      setUbicacionOk(true);
+      setOfflineNotice(`💾 Check-in guardado de forma segura en tu teléfono (sin conexión). Se sincronizará automáticamente apenas recuperes señal (${restantes} pendiente${restantes > 1 ? "s" : ""}).`);
+      setUbicacionCargando(false);
+      return;
+    }
+
     try {
       const res = await fetch("/api/equipos/checkin-web", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          equipoId: equipo.id,
-          operadorId: operador.id,
-          valorLectura: valorLecturaNum,
-          latitud: lat,
-          longitud: lng,
-          pautaConfirmada: equipo.pauta_preventiva_activa ? true : false,
-          destinoRuta: esVehiculo ? destinoRuta : null,
-          combustibleNivel: combustibleNivel,
-          capacidadEstanque: equipo.capacidad_estanque_litros ? parseInt(equipo.capacidad_estanque_litros) : (capacidadEstanque ? parseInt(capacidadEstanque) : null),
-          estadoEquipo: estadoEquipo
-        })
+        body: JSON.stringify(checkinPayload)
       });
 
       const json = await res.json();
       if (json.success) {
         setCheckinSuccess(true);
         setUbicacionOk(true);
-        // Redirigir a WhatsApp
-        const messageText = `REPORTE:${equipo.codigo_interno}`;
-        const cleanPhone = botPhone.replace(/[^0-9]/g, "");
-        window.location.href = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(messageText)}`;
+        // Redirigir a WhatsApp si hay teléfono
+        if (botPhone) {
+          const messageText = `REPORTE:${equipo.codigo_interno}`;
+          const cleanPhone = botPhone.replace(/[^0-9]/g, "");
+          window.location.href = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(messageText)}`;
+        }
       } else {
         setErrorMessageLocal(json.message || "Error al procesar el check-in en el servidor.");
       }
     } catch (err) {
-      console.error(err);
-      setErrorMessageLocal("Error de red al conectar con el servidor.");
+      console.warn("Falla de red en check-in. Almacenando en cola offline:", err);
+      encolarCheckinOperador(checkinPayload);
+      const restantes = obtenerPendientesOperador().length;
+      setPendientesOffline(restantes);
+      setIsOnline(false);
+      setCheckinSuccess(true);
+      setUbicacionOk(true);
+      setOfflineNotice(`💾 Sin internet en faena: Check-in almacenado en tu teléfono de forma segura. Se enviará automáticamente cuando recuperes cobertura (${restantes} pendiente${restantes > 1 ? "s" : ""}).`);
     } finally {
       setUbicacionCargando(false);
     }
@@ -472,12 +571,83 @@ export default function QrLanding() {
               <Cpu size={14} color="#ff303e" />
               <span>LukeEquipos</span>
             </div>
-            {isIdentified && operador && (
-              <button className="logout-btn" onClick={handleLogout}>
-                Cerrar Sesión
+
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              {/* Indicador de red y sincronización operador */}
+              <button
+                type="button"
+                onClick={triggerOperadorSync}
+                title={isOnline ? "Conexión activa. Toca para sincronizar." : "Sin internet. Los check-in se guardan en el teléfono."}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  padding: "3px 8px",
+                  borderRadius: "20px",
+                  border: "none",
+                  cursor: isOnline && pendientesOffline > 0 ? "pointer" : "default",
+                  background: !isOnline
+                    ? "rgba(239, 68, 68, 0.2)"
+                    : pendientesOffline > 0
+                    ? "rgba(245, 158, 11, 0.2)"
+                    : "rgba(16, 185, 129, 0.15)",
+                  color: !isOnline
+                    ? "#fca5a5"
+                    : pendientesOffline > 0
+                    ? "#fcd34d"
+                    : "#6ee7b7",
+                }}
+              >
+                {!isOnline ? (
+                  <>
+                    <WifiOff size={11} color="#f87171" />
+                    <span>Sin red {pendientesOffline > 0 ? `(${pendientesOffline})` : ""}</span>
+                  </>
+                ) : sincronizando ? (
+                  <>
+                    <CloudUpload size={11} className="spinner" />
+                    <span>Sync...</span>
+                  </>
+                ) : pendientesOffline > 0 ? (
+                  <>
+                    <CloudUpload size={11} color="#fbbf24" />
+                    <span>{pendientesOffline} pend.</span>
+                  </>
+                ) : (
+                  <>
+                    <Wifi size={11} color="#34d399" />
+                    <span>Online</span>
+                  </>
+                )}
               </button>
-            )}
+
+              {isIdentified && operador && (
+                <button className="logout-btn" onClick={handleLogout}>
+                  Cerrar Sesión
+                </button>
+              )}
+            </div>
           </header>
+
+          {offlineNotice && (
+            <div style={{
+              background: "rgba(245, 158, 11, 0.12)",
+              border: "1px solid rgba(245, 158, 11, 0.3)",
+              color: "#fcd34d",
+              padding: "10px 14px",
+              borderRadius: "10px",
+              marginBottom: "14px",
+              fontSize: "12px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px"
+            }}>
+              <AlertCircle size={16} color="#fbbf24" />
+              <span>{offlineNotice}</span>
+            </div>
+          )}
 
           {/* ========================================================== */}
           {/* PASO A: IDENTIFICACIÓN DEL OPERADOR */}

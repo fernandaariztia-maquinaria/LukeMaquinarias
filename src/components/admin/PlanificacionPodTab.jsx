@@ -48,13 +48,19 @@ function dateOffsetStr(base, offset) {
   return d.toLocaleDateString("sv-SE");
 }
 
+function formatFechaDMY(dateStr) {
+  if (!dateStr) return "";
+  const [y, m, d] = dateStr.split("-");
+  if (!y || !m || !d) return dateStr;
+  return `${d} / ${m} / ${y}`;
+}
+
 function formatFecha(dateStr) {
   if (!dateStr) return "";
   const [y, m, d] = dateStr.split("-");
   const dias = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
-  const meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
   const date = new Date(Number(y), Number(m) - 1, Number(d));
-  return `${dias[date.getDay()]} ${d} ${meses[Number(m) - 1]} ${y}`;
+  return `${dias[date.getDay()]} ${d} / ${m} / ${y}`;
 }
 
 function getColor(especialidades, espId, idx = 0) {
@@ -612,6 +618,7 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
   const [tareasModal, setTareasModal] = useState([]);
   const [loadingTareas, setLoadingTareas] = useState(false);
   const [filtroActividadModal, setFiltroActividadModal] = useState("");
+  const [filtroSemanaModal, setFiltroSemanaModal] = useState("TODAS");
 
   // Cargar actividades desde /api/pod/actividades según especialidad
   useEffect(() => {
@@ -622,6 +629,7 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
     }
     setLoadingTareas(true);
     setSelectedTaskObj(null);
+    setFiltroSemanaModal("TODAS");
     fetch(`/api/pod/actividades?especialidad_id=${form.especialidad_id}`)
       .then(r => r.json())
       .then(j => {
@@ -632,7 +640,19 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
       .finally(() => setLoadingTareas(false));
   }, [form.especialidad_id]);
 
+  const semanasDisponiblesModal = Array.from(
+    new Map(
+      (tareasModal || []).map(t => [
+        t.semana_key || "SIN_SEMANA",
+        { key: t.semana_key || "SIN_SEMANA", label: t.semana_label || "Sin fecha programada" }
+      ])
+    ).values()
+  ).sort((a, b) => a.key.localeCompare(b.key));
+
   const tareasFiltradasModal = (tareasModal || []).filter(t => {
+    if (filtroSemanaModal !== "TODAS" && (t.semana_key || "SIN_SEMANA") !== filtroSemanaModal) {
+      return false;
+    }
     if (!filtroActividadModal.trim()) return true;
     const q = filtroActividadModal.toLowerCase();
     return (
@@ -645,6 +665,13 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
       (t.descripcion_partida && t.descripcion_partida.toLowerCase().includes(q))
     );
   });
+
+  const tareasAgrupadasPorSemana = semanasDisponiblesModal
+    .map(sem => ({
+      ...sem,
+      items: tareasFiltradasModal.filter(t => (t.semana_key || "SIN_SEMANA") === sem.key)
+    }))
+    .filter(g => g.items.length > 0);
 
   const horasOpciones = Array.from({ length: (HORA_FIN - HORA_INI) * 2 + 1 }, (_, i) => {
     const min = HORA_INI * 60 + i * 30;
@@ -858,7 +885,7 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
         <div style={{ flex: 1, overflowY: "auto", minHeight: "160px", maxHeight: "250px", marginBottom: "14px", paddingRight: "4px" }}>
           {tabModo === "eimiplanner" ? (
             <div>
-              <div style={{ marginBottom: "8px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "8px", marginBottom: "8px" }}>
                 <input
                   type="text"
                   value={filtroActividadModal}
@@ -870,6 +897,25 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
                     padding: "8px 12px", fontSize: "12px", boxSizing: "border-box", outline: "none",
                   }}
                 />
+                <select
+                  value={filtroSemanaModal}
+                  onChange={e => setFiltroSemanaModal(e.target.value)}
+                  style={{
+                    width: "100%", background: "var(--bg-input,#f8fafc)",
+                    border: "1px solid var(--border-input,#e2e8f0)", borderRadius: "8px",
+                    padding: "8px 10px", fontSize: "12px", fontWeight: 600, cursor: "pointer", outline: "none",
+                  }}
+                >
+                  <option value="TODAS">📅 Todas las semanas ({tareasModal.length})</option>
+                  {semanasDisponiblesModal.map(sem => {
+                    const count = tareasModal.filter(t => (t.semana_key || "SIN_SEMANA") === sem.key).length;
+                    return (
+                      <option key={sem.key} value={sem.key}>
+                        {sem.label} ({count})
+                      </option>
+                    );
+                  })}
+                </select>
               </div>
 
               {loadingTareas ? (
@@ -884,85 +930,100 @@ function ModalAsignacion({ data, especialidades, equiposList, onConfirm, onClose
                     : "No se encontraron actividades con ese filtro."}
                 </div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                  {tareasFiltradasModal.map((t) => {
-                    const isSelected = selectedTaskObj?.idtask === t.idtask;
-                    return (
-                      <div
-                        key={t.idtask}
-                        onClick={() => {
-                          setSelectedTaskObj(t);
-                          setForm(f => ({
-                            ...f,
-                            tarea_programada_id: t.idtask,
-                            descripcion: t.nombre,
-                            unidad: t.unid || f.unidad,
-                          }));
-                        }}
-                        style={{
-                          padding: "10px 12px",
-                          borderRadius: "10px",
-                          border: isSelected ? "2px solid #10b981" : "1px solid var(--border-container, #e2e8f0)",
-                          background: isSelected ? "rgba(16, 185, 129, 0.08)" : "var(--bg-input, #f8fafc)",
-                          cursor: "pointer",
-                          transition: "all 0.15s",
-                        }}
-                      >
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--color-text)" }}>
-                              {t.nombre}
-                            </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  {tareasAgrupadasPorSemana.map((grupo) => (
+                    <div key={grupo.key} style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                      <div style={{
+                        position: "sticky", top: 0, zIndex: 1,
+                        background: "var(--bg-sidebar, #f1f5f9)",
+                        border: "1px solid var(--border-container, #e2e8f0)",
+                        borderRadius: "6px", padding: "5px 10px",
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        fontSize: "11px", fontWeight: 800, color: "#059669",
+                      }}>
+                        <span>📅 {grupo.label}</span>
+                        <span style={{ color: "var(--color-text-muted)", fontWeight: 700 }}>{grupo.items.length} act.</span>
+                      </div>
+                      {grupo.items.map((t) => {
+                        const isSelected = selectedTaskObj?.idtask === t.idtask;
+                        return (
+                          <div
+                            key={t.idtask}
+                            onClick={() => {
+                              setSelectedTaskObj(t);
+                              setForm(f => ({
+                                ...f,
+                                tarea_programada_id: t.idtask,
+                                descripcion: t.nombre,
+                                unidad: t.unid || f.unidad,
+                              }));
+                            }}
+                            style={{
+                              padding: "10px 12px",
+                              borderRadius: "10px",
+                              border: isSelected ? "2px solid #10b981" : "1px solid var(--border-container, #e2e8f0)",
+                              background: isSelected ? "rgba(16, 185, 129, 0.08)" : "var(--bg-input, #f8fafc)",
+                              cursor: "pointer",
+                              transition: "all 0.15s",
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--color-text)" }}>
+                                  {t.nombre}
+                                </div>
 
-                            {/* Área / Ubicación */}
-                            {t.area && (
-                              <div style={{ fontSize: "11px", color: "#059669", fontWeight: 600, marginTop: "2px", display: "flex", alignItems: "center", gap: "4px" }}>
-                                <span>📍</span>
-                                <span>{t.area}</span>
-                                {t.subarea && t.subarea !== t.area && (
-                                  <span style={{ color: "var(--color-text-muted)", fontWeight: 400 }}>· {t.subarea}</span>
+                                {/* Área / Ubicación */}
+                                {t.area && (
+                                  <div style={{ fontSize: "11px", color: "#059669", fontWeight: 600, marginTop: "2px", display: "flex", alignItems: "center", gap: "4px" }}>
+                                    <span>📍</span>
+                                    <span>{t.area}</span>
+                                    {t.subarea && t.subarea !== t.area && (
+                                      <span style={{ color: "var(--color-text-muted)", fontWeight: 400 }}>· {t.subarea}</span>
+                                    )}
+                                  </div>
                                 )}
+
+                                {/* Partida / Itemizado */}
+                                {(t.descripcion_partida || t.item_itemizado) && (
+                                  <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "2px", display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap" }}>
+                                    {t.item_itemizado && (
+                                      <span style={{ background: "rgba(59, 130, 246, 0.12)", color: "#2563eb", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, fontSize: "10px" }}>
+                                        {t.item_itemizado}
+                                      </span>
+                                    )}
+                                    {t.descripcion_partida && (
+                                      <span style={{ fontStyle: "italic" }}>
+                                        {t.descripcion_partida}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* WBS y Task ID */}
+                                <div style={{ fontSize: "10px", color: "var(--color-text-muted)", marginTop: "4px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                                  {t.codigo && <span>WBS: <strong>{t.codigo}</strong></span>}
+                                  <span>ID: <strong>#{t.idtask}</strong></span>
+                                  {t.fechas && <span>Fechas: {t.fechas}</span>}
+                                  {t.unid && <span>Unidad: {t.unid}</span>}
+                                </div>
                               </div>
-                            )}
 
-                            {/* Partida / Itemizado */}
-                            {(t.descripcion_partida || t.item_itemizado) && (
-                              <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "2px", display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap" }}>
-                                {t.item_itemizado && (
-                                  <span style={{ background: "rgba(59, 130, 246, 0.12)", color: "#2563eb", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, fontSize: "10px" }}>
-                                    {t.item_itemizado}
-                                  </span>
-                                )}
-                                {t.descripcion_partida && (
-                                  <span style={{ fontStyle: "italic" }}>
-                                    {t.descripcion_partida}
-                                  </span>
-                                )}
-                              </div>
-                            )}
-
-                            {/* WBS y Task ID */}
-                            <div style={{ fontSize: "10px", color: "var(--color-text-muted)", marginTop: "4px", display: "flex", gap: "8px" }}>
-                              {t.codigo && <span>WBS: <strong>{t.codigo}</strong></span>}
-                              <span>ID: <strong>#{t.idtask}</strong></span>
-                              {t.fechas && <span>Fechas: {t.fechas}</span>}
-                              {t.unid && <span>Unidad: {t.unid}</span>}
+                              {isSelected && (
+                                <div style={{
+                                  background: "#10b981", color: "white", borderRadius: "50%",
+                                  width: "20px", height: "20px", display: "flex", alignItems: "center", justifyContent: "center",
+                                  flexShrink: 0,
+                                }}>
+                                  <Check size={12} />
+                                </div>
+                              )}
                             </div>
                           </div>
-
-                          {isSelected && (
-                            <div style={{
-                              background: "#10b981", color: "white", borderRadius: "50%",
-                              width: "20px", height: "20px", display: "flex", alignItems: "center", justifyContent: "center",
-                              flexShrink: 0,
-                            }}>
-                              <Check size={12} />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+                        );
+                      })}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -1085,6 +1146,7 @@ export default function PlanificacionPodTab({ hookProps, currentUser, setCurrent
   const [showQRModal, setShowQRModal] = useState(false);
 
   const pollRef = useRef(null);
+  const dateInputRef = useRef(null);
 
   // ── Contexto del proyecto ──
   const proyectoActivoId = currentUser?.proyecto_actual_id || null;
@@ -1375,12 +1437,23 @@ export default function PlanificacionPodTab({ hookProps, currentUser, setCurrent
             <button onClick={() => setFechaPOD(dateOffsetStr(fechaPOD, -1))} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-text-muted)", display: "flex", alignItems: "center" }}>
               <ChevronLeft size={15} />
             </button>
-            <Calendar size={13} style={{ color: "#10b981" }} />
-            <input
-              type="date" value={fechaPOD}
-              onChange={e => setFechaPOD(e.target.value)}
-              style={{ background: "none", border: "none", outline: "none", fontSize: "13px", fontWeight: 700, color: "var(--color-text)", cursor: "pointer", fontFamily: "inherit" }}
-            />
+            <div
+              onClick={() => dateInputRef.current?.showPicker?.()}
+              style={{ position: "relative", display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", padding: "2px 4px" }}
+              title="Cambiar fecha (Día / Mes / Año)"
+            >
+              <Calendar size={13} style={{ color: "#10b981" }} />
+              <span style={{ fontSize: "13px", fontWeight: 700, color: "var(--color-text)", userSelect: "none", fontVariantNumeric: "tabular-nums" }}>
+                {formatFechaDMY(fechaPOD)}
+              </span>
+              <input
+                ref={dateInputRef}
+                type="date"
+                value={fechaPOD}
+                onChange={e => e.target.value && setFechaPOD(e.target.value)}
+                style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%", height: "100%" }}
+              />
+            </div>
             <button onClick={() => setFechaPOD(dateOffsetStr(fechaPOD, 1))} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-text-muted)", display: "flex", alignItems: "center" }}>
               <ChevronRight size={15} />
             </button>

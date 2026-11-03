@@ -95,10 +95,8 @@ export default function PodJoin() {
     if (!str) return "";
     const [y, m, d] = str.split("-");
     const dias = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
-    const meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-      "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
     const date = new Date(Number(y), Number(m) - 1, Number(d));
-    return `${dias[date.getDay()]} ${d} de ${meses[Number(m) - 1]} ${y}`;
+    return `${dias[date.getDay()]} ${d} / ${m} / ${y}`;
   };
 
   const filtrados = personal.filter(p =>

@@ -14,9 +14,19 @@ import {
   AlertCircle,
   Loader2,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Wifi,
+  WifiOff,
+  CloudUpload
 } from "lucide-react";
 import { formatEquipoLabel } from "../../lib/equipoLabel";
+import {
+  encolarActividadesSupervisor,
+  obtenerPendientesSupervisor,
+  sincronizarActividadesSupervisor,
+  guardarCacheLocal,
+  obtenerCacheLocal
+} from "../../lib/offlineSync";
 
 // Catálogo de disciplinas y subactividades según especificación de faena (Imagen adjunta)
 const DISCIPLINAS_ESTANDAR = [
@@ -99,9 +109,123 @@ export default function ActividadesSupervisorPage() {
   // Tareas no programadas adicionales
   const [tareasNoProgramadas, setTareasNoProgramadas] = useState([]);
 
-  // Cargar datos iniciales
+  // Estados de conectividad y cola offline
+  const [isOnline, setIsOnline] = useState(true);
+  const [pendientesOffline, setPendientesOffline] = useState(0);
+  const [sincronizando, setSincronizando] = useState(false);
+
+  // Escuchar estado de red y sincronizar pendientes
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setIsOnline(navigator.onLine);
+    setPendientesOffline(obtenerPendientesSupervisor().length);
+
+    const handleOnline = async () => {
+      setIsOnline(true);
+      await triggerSync();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    // Intentar sync inicial si hay red
+    if (navigator.onLine) {
+      triggerSync();
+    }
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  const triggerSync = async () => {
+    if (sincronizando) return;
+    setSincronizando(true);
+    try {
+      const { procesados, restantes } = await sincronizarActividadesSupervisor();
+      setPendientesOffline(restantes);
+      if (procesados > 0) {
+        setSuccessMsg(`✅ ¡${procesados} reporte${procesados > 1 ? "s" : ""} sincronizado${procesados > 1 ? "s" : ""} con éxito al recuperar señal!`);
+      }
+    } catch (e) {
+      console.warn("Fallo sincronización:", e);
+    } finally {
+      setSincronizando(false);
+    }
+  };
+
+  // Cargar datos iniciales (con fallback a caché local)
   useEffect(() => {
     if (!router.isReady) return;
+
+    const cacheKey = `act_sup_${bloque_id || "nobloq"}_${equipo_id || "noeq"}`;
+
+    const applyData = (data) => {
+      const bData = data?.bloque || null;
+      const eqData = data?.equipo || null;
+      const supData = data?.supervisor || null;
+      const tareasData = data?.tareas_eimi || data?.tareas_eimiplanner || [];
+      const guardadas = data?.actividades_guardadas || data?.actividades_registradas || [];
+
+      setBloque(bData);
+      setEquipo(eqData);
+      setSupervisor(supData);
+      setTareasEimi(tareasData);
+
+      if (guardadas && guardadas.length > 0) {
+        const lineasCD = guardadas.filter(a => a.categoria_disciplina === "Carga/Descarga");
+        if (lineasCD.length > 0) {
+          setCargaDescargaActiva(true);
+          setLineasCargaDescarga(lineasCD.map((l, idx) => ({
+            id: idx + 1,
+            id_3wl: l.id_3wl || "",
+            cantidad: l.cantidad_ejecutada || "",
+            unidad: l.unidad || "Ton",
+            izajes: l.izajes || "",
+            horometro: l.horometro_horas || ""
+          })));
+        }
+
+        const subMap = {};
+        const discMap = { ...disciplinasCheck };
+        
+        guardadas.forEach(a => {
+          if (a.categoria_disciplina !== "Carga/Descarga" && a.categoria_disciplina !== "No Programada") {
+            const discObj = DISCIPLINAS_ESTANDAR.find(d => d.label === a.categoria_disciplina);
+            if (discObj) {
+              discMap[discObj.key] = true;
+            }
+            subMap[a.subactividad] = {
+              checked: true,
+              id_3wl: a.id_3wl || "",
+              cantidad: a.cantidad_ejecutada || "",
+              unidad: a.unidad || "Ton",
+              izajes: a.izajes || "",
+              horometro: a.horometro_horas || ""
+            };
+          }
+        });
+
+        setDisciplinasCheck(discMap);
+        setSubactividadesData(subMap);
+
+        const noProg = guardadas.filter(a => a.categoria_disciplina === "No Programada");
+        if (noProg.length > 0) {
+          setTareasNoProgramadas(noProg.map((np, idx) => ({
+            id: idx + 1,
+            descripcion: np.descripcion || "",
+            cantidad: np.cantidad_ejecutada || "",
+            unidad: np.unidad || "Ton",
+            izajes: np.izajes || "",
+            horometro: np.horometro_horas || ""
+          })));
+        }
+      }
+    };
 
     const fetchData = async () => {
       setLoading(true);
@@ -116,74 +240,30 @@ export default function ActividadesSupervisorPage() {
         const json = await res.json();
 
         if (res.ok && json.success) {
-          const bData = json.data?.bloque || json.bloque || null;
-          const eqData = json.data?.equipo || json.equipo || null;
-          const supData = json.data?.supervisor || json.supervisor || null;
-          const tareasData = json.data?.tareas_eimi || json.tareas_eimiplanner || [];
-          const guardadas = json.data?.actividades_guardadas || json.actividades_registradas || [];
-
-          setBloque(bData);
-          setEquipo(eqData);
-          setSupervisor(supData);
-          setTareasEimi(tareasData);
+          const payloadData = json.data || json;
+          applyData(payloadData);
+          guardarCacheLocal(cacheKey, payloadData);
           setErrorMsg("");
-
-          // Si ya existen actividades guardadas, pre-poblarlas
-          if (guardadas && guardadas.length > 0) {
-            const lineasCD = guardadas.filter(a => a.categoria_disciplina === "Carga/Descarga");
-            if (lineasCD.length > 0) {
-              setCargaDescargaActiva(true);
-              setLineasCargaDescarga(lineasCD.map((l, idx) => ({
-                id: idx + 1,
-                id_3wl: l.id_3wl || "",
-                cantidad: l.cantidad_ejecutada || "",
-                unidad: l.unidad || "Ton",
-                izajes: l.izajes || "",
-                horometro: l.horometro_horas || ""
-              })));
-            }
-
-            const subMap = {};
-            const discMap = { ...disciplinasCheck };
-            
-            guardadas.forEach(a => {
-              if (a.categoria_disciplina !== "Carga/Descarga" && a.categoria_disciplina !== "No Programada") {
-                const discObj = DISCIPLINAS_ESTANDAR.find(d => d.label === a.categoria_disciplina);
-                if (discObj) {
-                  discMap[discObj.key] = true;
-                }
-                subMap[a.subactividad] = {
-                  checked: true,
-                  id_3wl: a.id_3wl || "",
-                  cantidad: a.cantidad_ejecutada || "",
-                  unidad: a.unidad || "Ton",
-                  izajes: a.izajes || "",
-                  horometro: a.horometro_horas || ""
-                };
-              }
-            });
-
-            setDisciplinasCheck(discMap);
-            setSubactividadesData(subMap);
-
-            const noProg = guardadas.filter(a => a.categoria_disciplina === "No Programada");
-            if (noProg.length > 0) {
-              setTareasNoProgramadas(noProg.map((np, idx) => ({
-                id: idx + 1,
-                descripcion: np.descripcion || "",
-                cantidad: np.cantidad_ejecutada || "",
-                unidad: np.unidad || "Ton",
-                izajes: np.izajes || "",
-                horometro: np.horometro_horas || ""
-              })));
-            }
-          }
         } else {
-          setErrorMsg(json.error || "No se pudo cargar la información del bloque.");
+          // Intentar rescatar de caché si falla el servidor
+          const cached = obtenerCacheLocal(cacheKey);
+          if (cached) {
+            applyData(cached);
+            setSuccessMsg("Modo sin conexión: datos recuperados del almacenamiento local.");
+          } else {
+            setErrorMsg(json.error || "No se pudo cargar la información del bloque.");
+          }
         }
       } catch (err) {
-        console.error("Error al cargar actividades supervisor:", err);
-        setErrorMsg("Error de conexión al cargar datos.");
+        console.warn("Falla de red al cargar actividades, buscando en caché:", err);
+        const cached = obtenerCacheLocal(cacheKey);
+        if (cached) {
+          applyData(cached);
+          setIsOnline(false);
+          setSuccessMsg("Modo sin conexión: datos cargados de la memoria del teléfono.");
+        } else {
+          setErrorMsg("Sin conexión a internet y sin copia local disponible.");
+        }
       } finally {
         setLoading(false);
       }
@@ -335,16 +415,29 @@ export default function ActividadesSupervisorPage() {
       return;
     }
 
+    const requestPayload = {
+      bloque_id: bloque?.id || bloque_id || null,
+      equipo_id: equipo?.id || equipo_id || null,
+      supervisor_id: supervisor?.id || supervisor_id || null,
+      actividades: payloadActividades,
+    };
+
+    // Si sabemos que estamos offline, guardar directamente en la bandeja local
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      encolarActividadesSupervisor(requestPayload);
+      const restantes = obtenerPendientesSupervisor().length;
+      setPendientesOffline(restantes);
+      setSuccessMsg(`💾 Guardado localmente en tu teléfono (sin conexión). Se sincronizará automáticamente cuando recuperes señal. (${restantes} pendiente${restantes > 1 ? "s" : ""})`);
+      setSaving(false);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
     try {
       const res = await fetch("/api/supervisor/actividades", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bloque_id: bloque?.id || bloque_id || null,
-          equipo_id: equipo?.id || equipo_id || null,
-          supervisor_id: supervisor?.id || supervisor_id || null,
-          actividades: payloadActividades,
-        })
+        body: JSON.stringify(requestPayload)
       });
 
       const json = await res.json();
@@ -355,8 +448,13 @@ export default function ActividadesSupervisorPage() {
         setErrorMsg(json.error || "Ocurrió un error al guardar.");
       }
     } catch (err) {
-      console.error(err);
-      setErrorMsg("Error de red al guardar.");
+      console.warn("Falla de red al enviar actividades. Almacenando en cola offline:", err);
+      encolarActividadesSupervisor(requestPayload);
+      const restantes = obtenerPendientesSupervisor().length;
+      setPendientesOffline(restantes);
+      setIsOnline(false);
+      setSuccessMsg(`💾 Red inestable: Guardado en tu teléfono de forma segura. Se sincronizará en cuanto vuelva la señal (${restantes} pendiente${restantes > 1 ? "s" : ""}).`);
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } finally {
       setSaving(false);
     }
@@ -411,15 +509,67 @@ export default function ActividadesSupervisorPage() {
           
           <div className="header-titles">
             <h1 className="header-main-title">Actividades 3WL</h1>
-            <span className="header-equipo-badge">
-              <Truck size={12} />
-              {equipo ? `${formatEquipoLabel(equipo)}` : "Equipo de Faena"}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+              <span className="header-equipo-badge">
+                <Truck size={12} />
+                {equipo ? `${formatEquipoLabel(equipo)}` : "Equipo de Faena"}
+              </span>
+
+              {/* Indicador de Conexión y Cola Offline */}
+              <button
+                type="button"
+                onClick={triggerSync}
+                title={isOnline ? "Conectado. Toca para sincronizar ahora." : "Sin internet. Los reportes se guardan en el teléfono."}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  padding: "3px 8px",
+                  borderRadius: "20px",
+                  border: "none",
+                  cursor: isOnline && pendientesOffline > 0 ? "pointer" : "default",
+                  background: !isOnline
+                    ? "rgba(239, 68, 68, 0.2)"
+                    : pendientesOffline > 0
+                    ? "rgba(245, 158, 11, 0.2)"
+                    : "rgba(16, 185, 129, 0.15)",
+                  color: !isOnline
+                    ? "#fca5a5"
+                    : pendientesOffline > 0
+                    ? "#fcd34d"
+                    : "#6ee7b7",
+                }}
+              >
+                {!isOnline ? (
+                  <>
+                    <WifiOff size={11} color="#f87171" />
+                    <span>Sin red {pendientesOffline > 0 ? `(${pendientesOffline})` : ""}</span>
+                  </>
+                ) : sincronizando ? (
+                  <>
+                    <CloudUpload size={11} className="spinner" />
+                    <span>Sincronizando...</span>
+                  </>
+                ) : pendientesOffline > 0 ? (
+                  <>
+                    <CloudUpload size={11} color="#fbbf24" />
+                    <span>{pendientesOffline} pend. (Toca)</span>
+                  </>
+                ) : (
+                  <>
+                    <Wifi size={11} color="#34d399" />
+                    <span>Online</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           <button onClick={handleGuardar} disabled={saving} className="header-save-btn">
             {saving ? <Loader2 size={16} className="spinner" /> : <Save size={16} />}
-            <span className="save-btn-txt">{saving ? "..." : "Guardar"}</span>
+            <span className="save-btn-txt">{saving ? "..." : (!isOnline ? "Guardar local" : "Guardar")}</span>
           </button>
         </div>
       </header>

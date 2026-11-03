@@ -32,6 +32,41 @@ const equivalenciasEsp = {
   andamio: "andamios",
 };
 
+const fmtDMY = (iso) => {
+  if (!iso || typeof iso !== "string") return iso;
+  const parts = iso.slice(0, 10).split("-");
+  return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : iso;
+};
+
+function getSemanaFromDateStr(str) {
+  if (!str) return { key: "SIN_SEMANA", label: "Sin fecha programada" };
+  const parts = String(str).trim().split(/[-\/]/);
+  let dObj = null;
+  if (parts.length === 3) {
+    if (parts[2].length === 4) dObj = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+    else if (parts[0].length === 4) dObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  }
+  if (!dObj || isNaN(dObj.getTime())) {
+    return { key: "SIN_SEMANA", label: "Sin fecha programada" };
+  }
+  const day = dObj.getDay();
+  const diffToMon = day === 0 ? -6 : 1 - day;
+  const monday = new Date(dObj.getFullYear(), dObj.getMonth(), dObj.getDate() + diffToMon);
+  const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+
+  const tmp = new Date(Date.UTC(dObj.getFullYear(), dObj.getMonth(), dObj.getDate()));
+  const dayNum = tmp.getUTCDay() || 7;
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
+  const isoYear = tmp.getUTCFullYear();
+
+  const fmt = (dt) => `${String(dt.getDate()).padStart(2, "0")}/${String(dt.getMonth() + 1).padStart(2, "0")}/${dt.getFullYear()}`;
+  const key = `${isoYear}-W${String(weekNo).padStart(2, "0")}`;
+  const label = `Semana ${weekNo} (${fmt(monday)} al ${fmt(sunday)})`;
+  return { key, label };
+}
+
 const norm = (str) =>
   (str || "")
     .toLowerCase()
@@ -95,6 +130,8 @@ export default async function handler(req, res) {
         const mappedNameNorm = equivalenciasEsp[rawNorm] || rawNorm;
         const matchedEsp = espMapByNormName.get(mappedNameNorm) || null;
 
+        const semInfo = getSemanaFromDateStr(t["3wl_start"] || t.date_start_ini);
+
         return {
           id: String(t.idtask),
           idtask: String(t.idtask),
@@ -113,7 +150,9 @@ export default async function handler(req, res) {
           },
           tipo: t.type_task || "A",
           unid: t.unid || null,
-          fechas: t["3wl_start"] && t["3wl_finish"] ? `${t["3wl_start"]} → ${t["3wl_finish"]}` : null,
+          fechas: t["3wl_start"] && t["3wl_finish"] ? `${fmtDMY(t["3wl_start"])} → ${fmtDMY(t["3wl_finish"])}` : null,
+          semana_key: semInfo.key,
+          semana_label: semInfo.label,
           duracion: t.duracion || null,
           hh: t.hh_pom || null,
         };

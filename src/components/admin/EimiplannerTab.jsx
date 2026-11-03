@@ -33,6 +33,30 @@ export function parseFechaEimi(str) {
   return null;
 }
 
+export function getSemanaLookahead(str) {
+  const dObj = parseFechaEimi(str);
+  if (!dObj || isNaN(dObj.getTime())) {
+    return { key: "SIN_SEMANA", label: "Sin fecha programada", shortLabel: "Sin semana" };
+  }
+  const day = dObj.getDay();
+  const diffToMon = day === 0 ? -6 : 1 - day;
+  const monday = new Date(dObj.getFullYear(), dObj.getMonth(), dObj.getDate() + diffToMon);
+  const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+
+  const tmp = new Date(Date.UTC(dObj.getFullYear(), dObj.getMonth(), dObj.getDate()));
+  const dayNum = tmp.getUTCDay() || 7;
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
+  const isoYear = tmp.getUTCFullYear();
+
+  const fmt = (dt) => `${String(dt.getDate()).padStart(2, "0")}/${String(dt.getMonth() + 1).padStart(2, "0")}/${dt.getFullYear()}`;
+  const key = `${isoYear}-W${String(weekNo).padStart(2, "0")}`;
+  const label = `Semana ${weekNo} (${fmt(monday)} al ${fmt(sunday)})`;
+  const shortLabel = `Sem ${weekNo}`;
+  return { key, label, shortLabel };
+}
+
 export function getVencimientoInfo(r, hoy = new Date()) {
   const estado = (r.estado || "").toUpperCase();
   if (estado === "CERRADA" || estado === "RESUELTA") {
@@ -142,6 +166,7 @@ export default function EimiplannerTab({ currentUser }) {
   const [searchLookahead, setSearchLookahead] = useState("");
   const [filtroTipoLookahead, setFiltroTipoLookahead] = useState("TODOS");
   const [filtroEspecialidadLookahead, setFiltroEspecialidadLookahead] = useState("TODAS");
+  const [filtroSemanaLookahead, setFiltroSemanaLookahead] = useState("TODAS");
   const [pageLookahead, setPageLookahead] = useState(1);
   const PAGE_SIZE_LOOKAHEAD = 25;
 
@@ -252,6 +277,20 @@ export default function EimiplannerTab({ currentUser }) {
     return ["TODAS", ...Array.from(set).sort()];
   }, [data]);
 
+  // Semanas únicas en Lookahead
+  const semanasLookahead = useMemo(() => {
+    const list = data?.lookaheadSample || [];
+    const map = new Map();
+    list.forEach((t) => {
+      const sem = getSemanaLookahead(t["3wl_start"] || t.date_start_ini);
+      if (!map.has(sem.key)) {
+        map.set(sem.key, { ...sem, count: 0 });
+      }
+      map.get(sem.key).count++;
+    });
+    return Array.from(map.values()).sort((a, b) => a.key.localeCompare(b.key));
+  }, [data]);
+
   // --- FILTRADO Y PAGINACIÓN DE LOOKAHEAD ---
   const lookaheadFiltrado = useMemo(() => {
     const list = data?.lookaheadSample || [];
@@ -273,9 +312,14 @@ export default function EimiplannerTab({ currentUser }) {
         filtroEspecialidadLookahead === "TODAS" ||
         (t.especialidad && t.especialidad.trim().toLowerCase() === filtroEspecialidadLookahead.trim().toLowerCase());
 
-      return matchSearch && matchTipo && matchEsp;
+      const sem = getSemanaLookahead(t["3wl_start"] || t.date_start_ini);
+      const matchSemana =
+        filtroSemanaLookahead === "TODAS" ||
+        sem.key === filtroSemanaLookahead;
+
+      return matchSearch && matchTipo && matchEsp && matchSemana;
     });
-  }, [data, searchLookahead, filtroTipoLookahead, filtroEspecialidadLookahead]);
+  }, [data, searchLookahead, filtroTipoLookahead, filtroEspecialidadLookahead, filtroSemanaLookahead]);
 
   const totalPagesLookahead = Math.ceil(lookaheadFiltrado.length / PAGE_SIZE_LOOKAHEAD) || 1;
   const lookaheadPaginado = useMemo(() => {
@@ -1078,6 +1122,33 @@ export default function EimiplannerTab({ currentUser }) {
 
             <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
               <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <span style={{ fontSize: "12px", color: "var(--color-text-muted)", fontWeight: 600 }}>Semana:</span>
+                <select
+                  value={filtroSemanaLookahead}
+                  onChange={(e) => {
+                    setFiltroSemanaLookahead(e.target.value);
+                    setPageLookahead(1);
+                  }}
+                  style={{
+                    background: "var(--bg-input)",
+                    border: "1px solid var(--border-input)",
+                    color: "var(--color-text)",
+                    borderRadius: "8px",
+                    padding: "6px 10px",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                  }}
+                >
+                  <option value="TODAS">Todas las semanas</option>
+                  {semanasLookahead.map((sem) => (
+                    <option key={sem.key} value={sem.key}>
+                      {sem.label} ({sem.count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                 <span style={{ fontSize: "12px", color: "var(--color-text-muted)", fontWeight: 600 }}>Especialidad:</span>
                 <select
                   value={filtroEspecialidadLookahead}
@@ -1228,7 +1299,19 @@ export default function EimiplannerTab({ currentUser }) {
                             {t.group || "—"}
                           </td>
                           <td style={{ padding: "12px 16px", fontSize: "11px", whiteSpace: "nowrap" }}>
-                            {t["3wl_start"] || t.date_start_ini || "—"} → {t["3wl_finish"] || t.date_finish_ini || "—"}
+                            {(() => {
+                              const sem = getSemanaLookahead(t["3wl_start"] || t.date_start_ini);
+                              return (
+                                <div>
+                                  {sem.key !== "SIN_SEMANA" && (
+                                    <div style={{ fontWeight: 700, color: "#059669", marginBottom: "2px" }}>
+                                      📅 {sem.shortLabel}
+                                    </div>
+                                  )}
+                                  <div>{t["3wl_start"] || t.date_start_ini || "—"} → {t["3wl_finish"] || t.date_finish_ini || "—"}</div>
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td style={{ padding: "12px 16px", fontSize: "12px", color: "var(--color-text-muted)" }}>
                             {t.duracion ? `${t.duracion} d` : "—"}
