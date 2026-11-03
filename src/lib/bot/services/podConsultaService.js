@@ -1,6 +1,6 @@
 import { enviarMensajeWhatsApp } from "./messageService";
 import { formatEquipoLabel } from "../../equipoLabel";
-import { resolverActividadesSupervisor, extraerMetricasActividadSupervisor } from "../../gemini";
+import { resolverActividadesSupervisor, extraerMetricasActividadSupervisor, convertirPalabrasANumeros } from "../../gemini";
 
 const ANCLAS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
 const NUMEROS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"];
@@ -181,7 +181,7 @@ async function aplicarActividadInicial(supabase, consultaPendiente, { actividadF
 }
 
 function parseMetricasFallback(texto) {
-  const clean = (texto || "").replace(/,/g, ".");
+  const clean = convertirPalabrasANumeros(texto || "").replace(/,/g, ".");
   const mHor = clean.match(/(\d+(?:\.\d+)?)\s*(?:hrs?|horas?|hor[oó]metro)/i) || clean.match(/hor[oó]metro\s*(?:de|:)?\s*(\d+(?:\.\d+)?)/i);
   const mIz = clean.match(/(\d+)\s*(?:izajes?|maniobras?|movimientos?|movs?)/i) || clean.match(/(?:izajes?|movimientos?)\s*(?:de|:)?\s*(\d+)/i);
   const mCant = clean.match(/(\d+(?:\.\d+)?)\s*(m3|m2|ml|metros?|m|toneladas?|ton|t|kg|unidades?|un|spools?|pulgadas?)/i);
@@ -283,9 +283,9 @@ async function aplicarMetricasFinales(supabase, consultaPendiente, respuestaText
 }
 
 function extraerNumeroOpcion(texto) {
-  const clean = (texto || "").trim();
+  const clean = convertirPalabrasANumeros(texto || "").trim();
   if (/^\d+$/.test(clean)) return parseInt(clean, 10);
-  const m = clean.match(/^(?:opci[oó]n|tarea|la|el|n[uú]mero|#)?\s*(\d+)\s*[.️⃣)]?$/i);
+  const m = clean.match(/(?:^|\b)(?:opci[oó]n|tarea|la|el|n[uú]mero|#)?\s*(\d+)\s*[.️⃣)]?$/i);
   if (m) return parseInt(m[1], 10);
   return NaN;
 }

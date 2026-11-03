@@ -17,9 +17,103 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 // ================================================================
 // FALLBACK DETERMINÍSTICO: Parser local cuando Gemini no está disponible
 // ================================================================
+export function convertirPalabrasANumeros(textoInput = "") {
+  if (!textoInput) return "";
+  const str = String(textoInput);
+
+  const unidades = {
+    cero: 0, un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5,
+    seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12,
+    trece: 13, catorce: 14, quince: 15, dieciseis: 16, diecisiete: 17,
+    dieciocho: 18, diecinueve: 19, veinte: 20, veintiun: 21, veintiuno: 21,
+    veintidos: 22, veintitres: 23, veinticuatro: 24, veinticinco: 25,
+    veintiseis: 26, veintisiete: 27, veintiocho: 28, veintinueve: 29,
+  };
+  const decenas = {
+    treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60,
+    setenta: 70, ochenta: 80, noventa: 90,
+  };
+  const centenas = {
+    cien: 100, ciento: 100, doscientos: 200, doscientas: 200,
+    trescientos: 300, trescientas: 300, cuatrocientos: 400, cuatrocientas: 400,
+    quinientos: 500, quinientas: 500, seiscientos: 600, seiscientas: 600,
+    setecientos: 700, setecientas: 700, ochocientos: 800, ochocientas: 800,
+    novecientos: 900, novecientas: 900,
+  };
+
+  const normWord = (w) => w.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const esPalabraNumero = (w) => {
+    const nw = normWord(w);
+    return nw in unidades || nw in decenas || nw in centenas || nw === "mil";
+  };
+
+  const tokens = str.split(/(\s+|[.,;])/);
+  const out = [];
+  let i = 0;
+
+  while (i < tokens.length) {
+    const tok = tokens[i];
+    if (esPalabraNumero(tok)) {
+      let total = 0;
+      let actual = 0;
+      let consumidos = 0;
+      let j = i;
+
+      while (j < tokens.length) {
+        const t = tokens[j];
+        if (/^\s+$/.test(t)) {
+          j++;
+          continue;
+        }
+        const nw = normWord(t);
+        if (nw === "y") {
+          const nextIdx = j + 2 < tokens.length && /^\s+$/.test(tokens[j + 1]) ? j + 2 : j + 1;
+          const nextNw = nextIdx < tokens.length ? normWord(tokens[nextIdx]) : "";
+          if (nextNw in unidades) {
+            j++;
+            continue;
+          }
+          break;
+        }
+        if (nw in unidades) {
+          actual += unidades[nw];
+          consumidos = j - i + 1;
+          j++;
+        } else if (nw in decenas) {
+          actual += decenas[nw];
+          consumidos = j - i + 1;
+          j++;
+        } else if (nw in centenas) {
+          actual += centenas[nw];
+          consumidos = j - i + 1;
+          j++;
+        } else if (nw === "mil") {
+          total += (actual === 0 ? 1 : actual) * 1000;
+          actual = 0;
+          consumidos = j - i + 1;
+          j++;
+        } else {
+          break;
+        }
+      }
+
+      if (consumidos > 0) {
+        out.push(String(total + actual));
+        i += consumidos;
+        continue;
+      }
+    }
+    out.push(tok);
+    i++;
+  }
+
+  return out.join("");
+}
+
 export function parsearMensajeOperadorFallback(textoRaw = "", listaEspecialidades = [], contexto = {}) {
   const texto = String(textoRaw || "").trim();
-  const lower = texto.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const textoConNumeros = convertirPalabrasANumeros(texto);
+  const lower = textoConNumeros.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
   // 1. Detectar Especialidad
   let especialidad_id = null;
@@ -146,7 +240,8 @@ export function parsearMensajeOperadorFallback(textoRaw = "", listaEspecialidade
 
 export function parsearTextoVehiculoFallback(textoRaw = "", contexto = {}) {
   const texto = String(textoRaw || "").trim();
-  const lower = texto.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const textoConNumeros = convertirPalabrasANumeros(texto);
+  const lower = textoConNumeros.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const esCierre = /\b(cierre|cerrando|termine|terminamos|fin|devolvi|odometro final|kilometraje final)\b/.test(lower);
   const esColacion = /\b(colacion|almuerzo)\b/.test(lower);
   const esFalla = /\b(falla|pana|panne|averia|accidente)\b/.test(lower);
@@ -515,31 +610,44 @@ Esquema de retorno:
     },
   };
 
-  const res = await fetch(
-    `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }
-  );
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`[Gemini] Error procesando audio: ${res.status} - ${err}`);
-  }
-
-  const data = await res.json();
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-
-  if (!rawText) throw new Error("[Gemini] Respuesta vacía");
-
   try {
-    return JSON.parse(rawText);
-  } catch {
-    const match = rawText.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-    throw new Error(`[Gemini] JSON inválido: ${rawText.slice(0, 200)}`);
+    const res = await fetch(
+      `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`[Gemini] Error procesando audio: ${res.status} - ${err}`);
+    }
+
+    const data = await res.json();
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+    if (!rawText) throw new Error("[Gemini] Respuesta vacía");
+
+    try {
+      return JSON.parse(rawText);
+    } catch {
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (match) return JSON.parse(match[0]);
+      return parsearMensajeOperadorFallback(rawText, especialidades, contexto);
+    }
+  } catch (errAudio) {
+    console.warn("[Gemini] ⚠️ Falló procesarAudioOperador directo, intentando transcripción + fallback:", errAudio.message);
+    try {
+      const textoTranscrito = await transcribirAudioSupervisor(audioBase64, mimeType);
+      if (textoTranscrito) {
+        return parsearMensajeOperadorFallback(textoTranscrito, especialidades, contexto);
+      }
+    } catch (errTrans) {
+      console.warn("[Gemini] ⚠️ Falló también transcribirAudioSupervisor:", errTrans.message);
+    }
+    throw errAudio;
   }
 }
 
@@ -626,26 +734,39 @@ Respuesta ÚNICAMENTE en JSON válido:
     },
   };
 
-  const res = await fetch(
-    `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
-  );
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`[Gemini] Error procesando audio vehículo: ${res.status} - ${err}`);
-  }
-
-  const data = await res.json();
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-  if (!rawText) throw new Error("[Gemini] Respuesta vacía en procesarAudioVehiculo");
-
   try {
-    return JSON.parse(rawText);
-  } catch {
-    const match = rawText.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-    throw new Error(`[Gemini] JSON inválido vehículo: ${rawText.slice(0, 200)}`);
+    const res = await fetch(
+      `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
+    );
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`[Gemini] Error procesando audio vehículo: ${res.status} - ${err}`);
+    }
+
+    const data = await res.json();
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!rawText) throw new Error("[Gemini] Respuesta vacía en procesarAudioVehiculo");
+
+    try {
+      return JSON.parse(rawText);
+    } catch {
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (match) return JSON.parse(match[0]);
+      return parsearTextoVehiculoFallback(rawText, contexto);
+    }
+  } catch (errAudioVeh) {
+    console.warn("[Gemini] ⚠️ Falló procesarAudioVehiculo directo, intentando transcripción + fallback:", errAudioVeh.message);
+    try {
+      const textoTranscrito = await transcribirAudioSupervisor(audioBase64, mimeType);
+      if (textoTranscrito) {
+        return parsearTextoVehiculoFallback(textoTranscrito, contexto);
+      }
+    } catch (errTrans) {
+      console.warn("[Gemini] ⚠️ Falló también transcribirAudioSupervisor en vehículo:", errTrans.message);
+    }
+    throw errAudioVeh;
   }
 }
 

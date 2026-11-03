@@ -1468,7 +1468,7 @@ export default function PlanificacionPodTab({ hookProps, currentUser, setCurrent
           </button>
 
           <a
-            href={`/pod-publico?fecha=${fechaPOD}${proyectoActualId ? `&proyecto_id=${proyectoActualId}` : ""}`}
+            href={`/pod-publico?fecha=${fechaPOD}${proyectoActivoId ? `&proyecto_id=${proyectoActivoId}` : ""}`}
             target="_blank"
             rel="noopener noreferrer"
             style={{
