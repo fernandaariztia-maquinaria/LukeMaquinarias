@@ -242,6 +242,6 @@ export default async function handler(req, res) {
     } catch (sendErr) {
       console.error("[whatsapp-incoming] Error al enviar mensaje de fallback en catch:", sendErr.message);
     }
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(200).json({ success: false, handledError: true, error: err.message });
   }
 }

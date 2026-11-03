@@ -26,19 +26,32 @@ export default function Home() {
         <p style={{ fontSize: "1.2rem", textAlign: "center", maxWidth: "600px" }}>
           .
         </p>
-        <Link href="/admin-maquinaria" passHref>
-          <a style={{
-            marginTop: "2rem",
-            padding: "0.75rem 1.5rem",
-            background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
-            color: "white",
-            borderRadius: "8px",
-            textDecoration: "none",
-            fontWeight: 600,
-          }}>
-            Ir al Área de Gestión
-          </a>
-        </Link>
+        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", justifyContent: "center", marginTop: "2rem" }}>
+          <Link href="/admin-maquinaria" passHref>
+            <a style={{
+              padding: "0.75rem 1.5rem",
+              background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
+              color: "white",
+              borderRadius: "8px",
+              textDecoration: "none",
+              fontWeight: 600,
+            }}>
+              Ir al Área de Gestión
+            </a>
+          </Link>
+          <Link href="/pod-publico" passHref>
+            <a style={{
+              padding: "0.75rem 1.5rem",
+              background: "linear-gradient(135deg, #10b981, #059669)",
+              color: "white",
+              borderRadius: "8px",
+              textDecoration: "none",
+              fontWeight: 600,
+            }}>
+              📅 Ver Disponibilidad y Plan del Día (Público)
+            </a>
+          </Link>
+        </div>
       </div>
     </>
   );

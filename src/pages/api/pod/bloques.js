@@ -90,10 +90,10 @@ export default async function handler(req, res) {
     let query = supabase
       .from("planificacion_bloques_pod")
       .select(`
-        id, fecha, hora_inicio, hora_fin, actividad_especifica,
-        actividades ( id, tarea_programada_id, descripcion, programada, cantidad_planificada, unidad ),
-        equipos ( id, codigo_interno, descripcion_equipo, plataforma_estado, plataforma_detalle, plataforma_especialidad_id, proyecto_actual_id ),
-        especialidades ( id, nombre_oficial ),
+        id, fecha, hora_inicio, hora_fin, actividad_especifica, confirmado_at,
+        actividades ( id, tarea_programada_id, descripcion, programada, cantidad_planificada, cantidad_ejecutada, unidad ),
+        equipos ( id, codigo_interno, descripcion_equipo, patente, estado_actual, plataforma_estado, plataforma_detalle, plataforma_especialidad_id, proyecto_actual_id, proyectos ( id, codigo_cc, nombre_proyecto ) ),
+        especialidades ( id, nombre_oficial, color ),
         supervisor:personal!planificacion_bloques_pod_supervisor_id_fkey ( id, nombre_completo, whatsapp )
       `)
       .eq("fecha", hoy)

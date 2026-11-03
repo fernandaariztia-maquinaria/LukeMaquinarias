@@ -1467,6 +1467,22 @@ export default function PlanificacionPodTab({ hookProps, currentUser, setCurrent
             <RefreshCw size={14} />
           </button>
 
+          <a
+            href={`/pod-publico?fecha=${fechaPOD}${proyectoActualId ? `&proyecto_id=${proyectoActualId}` : ""}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              background: "var(--bg-sidebar)", border: "1px solid rgba(59,130,246,0.45)",
+              borderRadius: "8px", padding: "7px 12px", cursor: "pointer",
+              color: "#3b82f6", fontSize: "12px", fontWeight: 700,
+              display: "flex", alignItems: "center", gap: "6px", textDecoration: "none",
+            }}
+            title="Abrir vista pública de disponibilidad y POD (sin login)"
+          >
+            <Link2 size={13} />
+            Vista Pública
+          </a>
+
           <button
             onClick={handleInicializarPOD}
             disabled={enviandoPOD}

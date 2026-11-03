@@ -197,15 +197,6 @@ export async function handleCheckinFlow(ctx, res) {
     updateCheckinStandard.combustible_inicio_porcentaje = resultado.combustible_nivel_porcentaje;
     updateCheckinStandard.combustible_nivel_porcentaje = resultado.combustible_nivel_porcentaje;
   }
-  if (resultado.combustible_inicio_valor !== null && resultado.combustible_inicio_valor !== undefined) {
-    updateCheckinStandard.combustible_inicio_valor = resultado.combustible_inicio_valor;
-  }
-  if (resultado.combustible_inicio_unidad) {
-    updateCheckinStandard.combustible_inicio_unidad = resultado.combustible_inicio_unidad;
-  }
-  if (resultado.labores_descripcion) {
-    updateCheckinStandard.labores_resumen = resultado.labores_descripcion;
-  }
   await supabase.from("reportes_diarios")
     .update(updateCheckinStandard)
     .eq("id", sesion.reporte_activo_id);
@@ -247,8 +238,14 @@ export async function handleCheckinFlow(ctx, res) {
     .update(updateCheckinStandard)
     .eq("id", sesion.reporte_activo_id);
 
+  const mapEstadoHitoCheckin = (est) => {
+    if (est === "En Colacion") return "En Colacion";
+    if (["Detenido por Falla", "Equipo Fuera de Servicio (Panne)", "Equipo en Mantención Programada"].includes(est)) return "Detenido por Falla";
+    if (["Trabajando", "Equipo Operativo"].includes(est)) return "Trabajando";
+    return "Disponible";
+  };
   const estadoInicialDinamico = (resultado.tipo_evento && resultado.tipo_evento !== "CHECKIN")
-    ? resultado.tipo_evento : "Disponible";
+    ? mapEstadoHitoCheckin(resultado.tipo_evento) : "Disponible";
 
   await supabase.from("eventos_jornada").insert({
     reporte_id: sesion.reporte_activo_id,

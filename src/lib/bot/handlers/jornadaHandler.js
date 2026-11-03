@@ -618,7 +618,21 @@ export async function handleJornadaFlow(ctx, res) {
   }
 
   // === HITO INTERMEDIO ===
-  const estadoHito = resultado.tipo_evento === "CHECKIN" ? "Disponible" : resultado.tipo_evento || "Trabajando";
+  const mapEstadoHitoDB = (est) => {
+    if (est === "En Colacion") return "En Colacion";
+    if (["Detenido por Falla", "Equipo Fuera de Servicio (Panne)", "Equipo en Mantención Programada"].includes(est)) return "Detenido por Falla";
+    if (["Disponible", "CHECKIN", "Ralenti", "Esperando", "Equipo Disponible sin Operador"].includes(est)) return "Disponible";
+    return "Trabajando";
+  };
+  const mapEstadoEquipoDB = (est) => {
+    if (est === "En Colacion") return "En Colacion";
+    if (["Detenido por Falla", "Equipo Fuera de Servicio (Panne)", "Equipo en Mantención Programada"].includes(est)) return "Detenido por Falla";
+    if (["Disponible", "CHECKIN", "Ralenti", "Esperando", "Equipo Disponible sin Operador"].includes(est)) return "Disponible";
+    return "Equipo Operativo";
+  };
+
+  const estadoHitoRaw = resultado.tipo_evento === "CHECKIN" ? "Disponible" : resultado.tipo_evento || "Trabajando";
+  const estadoHito = mapEstadoHitoDB(estadoHitoRaw);
 
   let hitoInsertado = false;
 
@@ -703,15 +717,12 @@ export async function handleJornadaFlow(ctx, res) {
     });
   }
 
-  // Actualizar combustible y labores si se mencionó
+  // Actualizar combustible si se mencionó
   const updatesReporte = {};
   if (resultado.petroleo_litros) updatesReporte.petroleo_litros = resultado.petroleo_litros;
   if (resultado.horometro_carga_combustible) updatesReporte.horometro_carga_combustible = resultado.horometro_carga_combustible;
   if (resultado.combustible_nivel_porcentaje !== null && resultado.combustible_nivel_porcentaje !== undefined) {
     updatesReporte.combustible_nivel_porcentaje = resultado.combustible_nivel_porcentaje;
-  }
-  if (resultado.labores_descripcion) {
-    updatesReporte.labores_resumen = resultado.labores_descripcion;
   }
 
   if (Object.keys(updatesReporte).length > 0) {
@@ -719,22 +730,22 @@ export async function handleJornadaFlow(ctx, res) {
       .from("reportes_diarios")
       .update(updatesReporte)
       .eq("id", sesion.reporte_activo_id);
+  }
 
-    const eqUpdateHito = {};
-    if (resultado.horometro_carga_combustible) {
-      eqUpdateHito.ultimo_horometro = resultado.horometro_carga_combustible;
-    }
-    if (resultado.combustible_nivel_porcentaje !== null && resultado.combustible_nivel_porcentaje !== undefined) {
-      eqUpdateHito.combustible_nivel_porcentaje = resultado.combustible_nivel_porcentaje;
-    }
-    if (estadoHito && estadoHito !== "CIERRE") {
-      eqUpdateHito.estado_actual = estadoHito;
-    }
-    if (Object.keys(eqUpdateHito).length > 0) {
-      await supabase.from("equipos")
-        .update(eqUpdateHito)
-        .eq("id", reporteActual.equipo_id);
-    }
+  const eqUpdateHito = {};
+  if (resultado.horometro_carga_combustible) {
+    eqUpdateHito.ultimo_horometro = resultado.horometro_carga_combustible;
+  }
+  if (resultado.combustible_nivel_porcentaje !== null && resultado.combustible_nivel_porcentaje !== undefined) {
+    eqUpdateHito.combustible_nivel_porcentaje = resultado.combustible_nivel_porcentaje;
+  }
+  if (estadoHito && estadoHito !== "CIERRE") {
+    eqUpdateHito.estado_actual = mapEstadoEquipoDB(estadoHitoRaw);
+  }
+  if (Object.keys(eqUpdateHito).length > 0 && reporteActual?.equipo_id) {
+    await supabase.from("equipos")
+      .update(eqUpdateHito)
+      .eq("id", reporteActual.equipo_id);
   }
 
   // Lógica de alertas de combustible crítico por autonomía

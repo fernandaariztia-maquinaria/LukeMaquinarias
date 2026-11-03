@@ -15,6 +15,172 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 // ================================================================
+// FALLBACK DETERMINÍSTICO: Parser local cuando Gemini no está disponible
+// ================================================================
+export function parsearMensajeOperadorFallback(textoRaw = "", listaEspecialidades = [], contexto = {}) {
+  const texto = String(textoRaw || "").trim();
+  const lower = texto.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // 1. Detectar Especialidad
+  let especialidad_id = null;
+  let especialidad_detectada = null;
+
+  if (contexto.seguimiento_completo !== false && Array.isArray(listaEspecialidades)) {
+    const sinonimosEspecialidad = [
+      { keywords: ["piping", "canonero", "tuberia", "caneria", "linea", "spool", "hdpe"], matchName: "piping" },
+      { keywords: ["estructura", "fierrero", "montador", "viga", "acero", "parrilla"], matchName: "estructura" },
+      { keywords: ["civil", "oocc", "hormigon", "excavacion", "fundacion", "zanja"], matchName: "obras civiles" },
+      { keywords: ["electric", "cable", "bandeja", "tablero"], matchName: "electricidad" },
+      { keywords: ["instrument", "fibra", "sensor", "control"], matchName: "instrumentacion" },
+      { keywords: ["mecanica", "mecanico", "bomba", "chancador", "molino", "equipo"], matchName: "mecanica" },
+      { keywords: ["andamio", "andamiero", "cuerpo de andamio"], matchName: "andamios" },
+      { keywords: ["aislacion", "aislador", "aislamiento", "lana", "calorifugo"], matchName: "aislacion" },
+      { keywords: ["pintura", "revestimiento", "arenado"], matchName: "pintura" },
+      { keywords: ["mantenimiento", "mantencion", "taller"], matchName: "mantenimiento" },
+    ];
+
+    for (const esp of listaEspecialidades) {
+      const nomNorm = String(esp.nombre_oficial || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (nomNorm && lower.includes(nomNorm)) {
+        especialidad_id = esp.id;
+        especialidad_detectada = esp.nombre_oficial;
+        break;
+      }
+    }
+
+    if (!especialidad_id) {
+      for (const grupo of sinonimosEspecialidad) {
+        if (grupo.keywords.some((k) => lower.includes(k))) {
+          const found = listaEspecialidades.find((e) =>
+            String(e.nombre_oficial || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(grupo.matchName)
+          );
+          if (found) {
+            especialidad_id = found.id;
+            especialidad_detectada = found.nombre_oficial;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Detectar Tipo de Evento / Estado
+  const tieneSinCombustible = lower.includes("sin combustible") || lower.includes("sin petroleo") || lower.includes("sin carga") || lower.includes("no cargue");
+  const esCierre = /\b(cierre|cerrando|termine|terminamos|fin de jornada|fin de turno|horometro final|checkout)\b/.test(lower);
+  const esColacion = /\b(colacion|almuerzo|almorzando)\b/.test(lower);
+  const esFalla = !tieneSinCombustible && /\b(falla|pana|panne|averia|roto|fuera de servicio|desperfecto|fuga)\b/.test(lower);
+  const esDisponible = /\b(disponible|esperando|en espera|ralenti|marcha lenta|standby)\b/.test(lower);
+
+  let tipo_evento = "Trabajando";
+  if (esCierre) {
+    tipo_evento = "CIERRE";
+  } else if (esColacion) {
+    tipo_evento = "En Colacion";
+  } else if (esFalla) {
+    tipo_evento = "Detenido por Falla";
+  } else if (esDisponible) {
+    tipo_evento = "Disponible";
+  } else if (contexto.estado_sesion === "CHECKIN" && !especialidad_id) {
+    tipo_evento = "CHECKIN";
+  }
+
+  // 3. Extraer lecturas numéricas (horómetro y combustible)
+  let horometro_inicial = null;
+  let horometro_final = null;
+  let petroleo_litros = tieneSinCombustible ? 0 : null;
+  let combustible_nivel_porcentaje = null;
+
+  const matchLitros = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:litros|lts|l\b)/);
+  if (matchLitros) {
+    petroleo_litros = parseFloat(matchLitros[1].replace(",", "."));
+  }
+
+  if (lower.includes("lleno") || lower.includes("a full") || lower.includes("100%")) {
+    combustible_nivel_porcentaje = 100;
+  } else if (lower.includes("tres cuartos") || lower.includes("3/4") || lower.includes("75%")) {
+    combustible_nivel_porcentaje = 75;
+  } else if (lower.includes("medio estanque") || lower.includes("1/2") || lower.includes("50%")) {
+    combustible_nivel_porcentaje = 50;
+  } else if (lower.includes("un cuarto") || lower.includes("1/4") || lower.includes("25%")) {
+    combustible_nivel_porcentaje = 25;
+  }
+
+  const matchHorometro = lower.match(/(?:horometro(?:\s+final|\s+inicial)?|lectura|final|inicio)\s*(?:de\s*|en\s*|:)?\s*(\d[\d.,]*)/)
+    || ((esCierre || contexto.estado_sesion === "CHECKIN" || contexto.estado_sesion === "CIERRE") ? lower.match(/\b(\d{1,7}(?:[.,]\d+)?)\b/) : null);
+
+  if (matchHorometro) {
+    const rawNum = matchHorometro[1].replace(/\.(?=\d{3}\b)/g, "").replace(",", ".");
+    const numVal = parseFloat(rawNum);
+    if (!Number.isNaN(numVal)) {
+      if (esCierre || contexto.estado_sesion === "CIERRE") {
+        horometro_final = numVal;
+      } else {
+        horometro_inicial = numVal;
+      }
+    }
+  }
+
+  return {
+    tipo_evento,
+    especialidad_id,
+    especialidad_detectada,
+    horometro_inicial,
+    horometro_final,
+    combustible_nivel_porcentaje,
+    combustible_inicio_valor: null,
+    combustible_inicio_unidad: null,
+    capacidad_estanque_litros: null,
+    petroleo_litros,
+    horometro_carga_combustible: null,
+    labores_descripcion: especialidad_detectada ? `Trabajos con especialidad ${especialidad_detectada}: ${texto}` : null,
+    es_falla_critica: esFalla,
+    detalles_texto: texto || "Hito registrado en terreno",
+    pauta_confirmada: true,
+    mensaje_conversacional_bot: null,
+  };
+}
+
+export function parsearTextoVehiculoFallback(textoRaw = "", contexto = {}) {
+  const texto = String(textoRaw || "").trim();
+  const lower = texto.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const esCierre = /\b(cierre|cerrando|termine|terminamos|fin|devolvi|odometro final|kilometraje final)\b/.test(lower);
+  const esColacion = /\b(colacion|almuerzo)\b/.test(lower);
+  const esFalla = /\b(falla|pana|panne|averia|accidente)\b/.test(lower);
+  const esDisponible = /\b(disponible|esperando)\b/.test(lower);
+
+  let tipo_evento = "En Ruta";
+  if (esCierre) tipo_evento = "CIERRE";
+  else if (esColacion) tipo_evento = "En Colacion";
+  else if (esFalla) tipo_evento = "Detenido por Falla";
+  else if (esDisponible) tipo_evento = "Disponible";
+  else if (contexto.estado_sesion === "CHECKIN") tipo_evento = "CHECKIN";
+
+  let km_inicial = null;
+  let km_final = null;
+  const matchKm = lower.match(/\b(\d{1,7}(?:[.,]\d+)?)\b/);
+  if (matchKm) {
+    const val = parseFloat(matchKm[1].replace(/\.(?=\d{3}\b)/g, "").replace(",", "."));
+    if (!Number.isNaN(val)) {
+      if (esCierre || contexto.estado_sesion === "CIERRE") km_final = val;
+      else km_inicial = val;
+    }
+  }
+
+  return {
+    tipo_evento,
+    km_inicial,
+    km_final,
+    destino_ruta: texto || null,
+    combustible_nivel_porcentaje: null,
+    capacidad_estanque_litros: null,
+    es_falla_critica: esFalla,
+    detalles_texto: texto || "Registro vehicular",
+    pauta_confirmada: true,
+    mensaje_conversacional_bot: null,
+  };
+}
+
+// ================================================================
 // FUNCIÓN: Chat con memoria conversacional completa
 // Recibe historial ordenado cronológicamente y lo pasa a la API nativa
 // ================================================================
@@ -117,37 +283,52 @@ Responde ÚNICAMENTE con un JSON válido. Esquema:
     },
   };
 
-  const res = await fetch(
-    `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }
-  );
+  const ultimoTurno = Array.isArray(historialConversacion) && historialConversacion.length > 0
+    ? historialConversacion[historialConversacion.length - 1]
+    : null;
+  const ultimoTexto = ultimoTurno?.parts?.find((p) => typeof p.text === "string")?.text || "";
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`[Gemini] Error procesando mensaje: ${res.status} - ${err}`);
+  if (!geminiKey) {
+    console.warn("[Gemini] GEMINI_API_KEY no configurada, usando parser local de respaldo.");
+    return parsearMensajeOperadorFallback(ultimoTexto, listaEspecialidades, contexto);
   }
 
-  const data = await res.json();
-  console.log("[Gemini Debug] Objeto data completo:", JSON.stringify(data, null, 2));
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "{}";
-
   try {
-    return JSON.parse(rawText);
-  } catch (parseErr) {
-    console.error("[Gemini Debug] Error parseando JSON. Texto crudo recibido:", rawText);
-    const match = rawText.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        return JSON.parse(match[0]);
-      } catch (innerErr) {
-        console.error("[Gemini Debug] Falló también el parseo del match regex. Match:", match[0]);
+    const res = await fetch(
+      `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       }
+    );
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`[Gemini] Error procesando mensaje: ${res.status} - ${err}`);
     }
-    throw new Error(`[Gemini] JSON inválido en procesarMensajeConContexto: ${rawText.slice(0, 200)} | Error: ${parseErr.message}`);
+
+    const data = await res.json();
+    console.log("[Gemini Debug] Objeto data completo:", JSON.stringify(data, null, 2));
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "{}";
+
+    try {
+      return JSON.parse(rawText);
+    } catch (parseErr) {
+      console.error("[Gemini Debug] Error parseando JSON. Texto crudo recibido:", rawText);
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (match) {
+        try {
+          return JSON.parse(match[0]);
+        } catch (innerErr) {
+          console.error("[Gemini Debug] Falló también el parseo del match regex. Match:", match[0]);
+        }
+      }
+      throw new Error(`[Gemini] JSON inválido en procesarMensajeConContexto: ${rawText.slice(0, 200)} | Error: ${parseErr.message}`);
+    }
+  } catch (err) {
+    console.warn("[Gemini] ⚠️ Falló llamada a Gemini en procesarMensajeConContexto, activando fallback determinístico:", err.message);
+    return parsearMensajeOperadorFallback(ultimoTexto, listaEspecialidades, contexto);
   }
 }
 
@@ -549,26 +730,31 @@ Respuesta ÚNICAMENTE en JSON válido:
     },
   };
 
-  const res = await fetch(
-    `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
-  );
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`[Gemini] Error procesando texto vehículo: ${res.status} - ${err}`);
-  }
-
-  const data = await res.json();
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-  if (!rawText) throw new Error("[Gemini] Respuesta vacía en procesarTextoVehiculo");
-
   try {
-    return JSON.parse(rawText);
-  } catch {
-    const match = rawText.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-    throw new Error(`[Gemini] JSON inválido vehículo: ${rawText.slice(0, 200)}`);
+    const res = await fetch(
+      `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
+    );
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`[Gemini] Error procesando texto vehículo: ${res.status} - ${err}`);
+    }
+
+    const data = await res.json();
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!rawText) throw new Error("[Gemini] Respuesta vacía en procesarTextoVehiculo");
+
+    try {
+      return JSON.parse(rawText);
+    } catch {
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (match) return JSON.parse(match[0]);
+      throw new Error(`[Gemini] JSON inválido vehículo: ${rawText.slice(0, 200)}`);
+    }
+  } catch (err) {
+    console.warn("[Gemini] ⚠️ Falló procesarTextoVehiculo, activando fallback local:", err.message);
+    return parsearTextoVehiculoFallback(texto, contexto);
   }
 }
 
