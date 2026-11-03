@@ -37,50 +37,61 @@ async function downloadStorageImage(storagePath) {
   }
 }
 
-// Filtro de limpieza para sanitizar strings y remover retazos de markdown o LaTeX
+// Filtro de limpieza para sanitizar strings y remover retazos de markdown, LaTeX o emojis no soportados por Helvetica WinAnsi
 function sanitizarTexto(texto) {
   if (!texto) return "";
-  return texto
+  return String(texto)
     // Eliminar fórmulas matemáticas estilo LaTeX como $B=\overline{UI}$ o $\emptyset=UI$ o similares
     .replace(/\$[^\$]+\$/g, "")
+    // Eliminar emojis y pictogramas Unicode que causan mojibake (ej: Ø=ÜÍ) en fuentes estándar PDFKit
+    .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}]/gu, "")
+    // Reemplazar tabulaciones por espacio
+    .replace(/\t+/g, " ")
     // Eliminar markdown como asteriscos, guiones bajos excesivos, etc.
     .replace(/\*\*+/g, "")
     .replace(/__+/g, "")
     .replace(/`/g, "")
+    .replace(/\s{2,}/g, " ")
     .trim();
 }
 
-// Calcula la duración real entre el CHECKIN y el CIERRE
-function calcularDuracionEfectiva(eventos, horasGuardadas) {
-  if (!eventos || eventos.length === 0) {
-    return horasGuardadas ? `${horasGuardadas} hrs` : "—";
-  }
-  
-  // Buscar hito de check-in y cierre
-  const checkinEvent = eventos.find(e => e.estado_hito === "CHECKIN");
-  const checkoutEvent = eventos.find(e => e.estado_hito === "CIERRE");
-  
-  if (checkinEvent && checkoutEvent) {
-    const inicio = new Date(checkinEvent.hora_evento);
-    const fin = new Date(checkoutEvent.hora_evento);
-    const difMs = fin - inicio;
-    
-    if (difMs > 0) {
-      const totalMinutos = Math.floor(difMs / 60000);
-      const horas = Math.floor(totalMinutos / 60);
-      const minutos = totalMinutos % 60;
-      
-      if (horas === 0) {
-        return `${minutos} min`;
-      } else if (minutos === 0) {
-        return `${horas} hrs`;
-      } else {
-        return `${horas}h ${minutos}m`;
-      }
+// Calcula las horas trabajadas priorizando diferencia de horómetro (Hr. Final - Hr. Inicio)
+function calcularDuracionEfectiva(eventos, horasGuardadas, horometroInicio, horometroFinal) {
+  if (horometroFinal !== null && horometroFinal !== undefined && horometroInicio !== null && horometroInicio !== undefined) {
+    const diff = Number(horometroFinal) - Number(horometroInicio);
+    if (!Number.isNaN(diff) && diff >= 0) {
+      const redondeado = Number.isInteger(diff) ? diff : Number(diff.toFixed(1));
+      return `${redondeado.toLocaleString("es-CL")} hrs`;
     }
   }
-  
-  return horasGuardadas ? `${horasGuardadas} hrs` : "—";
+
+  if (horasGuardadas !== null && horasGuardadas !== undefined) {
+    return `${Number(horasGuardadas).toLocaleString("es-CL")} hrs`;
+  }
+
+  if (!eventos || eventos.length === 0) {
+    return "—";
+  }
+
+  const inicio = new Date(eventos[0].hora_evento);
+  const fin = new Date(eventos[eventos.length - 1].hora_evento);
+  const difMs = fin - inicio;
+
+  if (difMs > 0) {
+    const totalMinutos = Math.floor(difMs / 60000);
+    const horas = Math.floor(totalMinutos / 60);
+    const minutos = totalMinutos % 60;
+
+    if (horas === 0) {
+      return `${minutos} min`;
+    } else if (minutos === 0) {
+      return `${horas} hrs`;
+    } else {
+      return `${horas}h ${minutos}m`;
+    }
+  }
+
+  return "—";
 }
 
 /**
@@ -201,19 +212,19 @@ export async function generarReportePDF({
       doc.fontSize(10).font("Helvetica-Bold").fillColor("white").text("INFORMACIÓN DEL TURNO", 60, y + 6);
       y += 32;
 
-      const filaInfo = (label, value, x = 50, yPos = y) => {
-        doc.fontSize(9).font("Helvetica-Bold").fillColor("#64748b").text(label.toUpperCase(), x, yPos);
-        doc.fontSize(11).font("Helvetica").fillColor(AZUL_OSCURO).text(value || "—", x, yPos + 13);
+      const filaInfo = (label, value, x = 50, yPos = y, maxWidth = 140) => {
+        doc.fontSize(9).font("Helvetica-Bold").fillColor("#64748b").text(label.toUpperCase(), x, yPos, { width: maxWidth });
+        doc.fontSize(10.5).font("Helvetica").fillColor(AZUL_OSCURO).text(sanitizarTexto(value) || "—", x, yPos + 13, { width: maxWidth });
       };
 
-      filaInfo("Equipo", equipo.descripcion_equipo, 50, y);
-      filaInfo("Código", formatEquipoLabel(equipo), 280, y);
-      filaInfo("Proveedor", equipo.proveedor, 430, y);
+      filaInfo("Equipo", equipo.descripcion_equipo, 50, y, 220);
+      filaInfo("Código", formatEquipoLabel(equipo), 280, y, 140);
+      filaInfo("Proveedor", equipo.proveedor, 430, y, 115);
       y += 45;
 
-      filaInfo("Operador", operador.nombre_completo, 50, y);
-      filaInfo("Supervisor", supervisor?.nombre_completo || "N/A", 280, y);
-      filaInfo("Fecha", reporte.fecha, 430, y);
+      filaInfo("Operador", operador.nombre_completo, 50, y, 220);
+      filaInfo("Supervisor", supervisor?.nombre_completo || "N/A", 280, y, 140);
+      filaInfo("Fecha", reporte.fecha, 430, y, 115);
       y += 45;
 
       // ============================================================
@@ -223,8 +234,13 @@ export async function generarReportePDF({
       doc.fontSize(10).font("Helvetica-Bold").fillColor("white").text("HORÓMETROS Y COMBUSTIBLE", 60, y + 6);
       y += 32;
 
-      // Calcular duración efectiva real
-      const horasEfectivasStr = calcularDuracionEfectiva(eventos, reporte.horas_trabajadas);
+      // Calcular duración efectiva real (priorizando diferencia de horómetro)
+      const horasEfectivasStr = calcularDuracionEfectiva(
+        eventos,
+        reporte.horas_trabajadas,
+        reporte.horometro_inicio,
+        reporte.horometro_final
+      );
 
       // Caja de métricas
       const boxW = (W - 18) / 4; 

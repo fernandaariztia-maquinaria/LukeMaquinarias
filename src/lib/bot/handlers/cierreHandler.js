@@ -82,11 +82,11 @@ export async function handleCierreFlow(ctx, res) {
   // 2b/2c. Solo se validan en la primera lectura del cierre — no en cada continuación del sub-flujo de plataforma
   const esPrimeraLecturaDelCierre = sesion.estado_espera !== "ESPERANDO_CHECKOUT_PLATAFORMA" && sesion.estado_espera !== "ESPERANDO_CHECKOUT_PLATAFORMA_DETALLE";
 
-  // 2b. Validar que la lectura no implique un avance físicamente imposible dado el tiempo real transcurrido
+  // 2b. Validar que la lectura no implique un avance físicamente imposible (permitiendo hasta un turno completo de 15 hrs o 600 km en pruebas cortas)
   const horasReales = reporteActual?.created_at ? horasTranscurridas(reporteActual.created_at) : null;
   if (esPrimeraLecturaDelCierre && horasReales !== null) {
     const delta = lecturaFinal - lecturaInicio;
-    const maxPlausible = esVehiculo ? (horasReales * 100 + 20) : (horasReales + 1.5);
+    const maxPlausible = esVehiculo ? Math.max(600, horasReales * 100 + 50) : Math.max(15, horasReales + 2);
 
     if (delta > maxPlausible) {
       await supabase
@@ -95,7 +95,7 @@ export async function handleCierreFlow(ctx, res) {
         .eq("id", sesion.id);
 
       const horasTexto = horasReales < 1 ? `${Math.round(horasReales * 60)} minutos` : `${horasReales.toFixed(1)} horas`;
-      const msgError = `⚠️ *Lectura no coincide con el tiempo transcurrido*\n\nIndicaste *${delta.toLocaleString("es-CL")} ${unidadLectura}* de avance en un turno de solo *${horasTexto}* desde tu check-in. Revisa el valor y reenvíalo por audio o texto.`;
+      const msgError = `⚠️ *Lectura no coincide con el turno*\n\nIndicaste *${delta.toLocaleString("es-CL")} ${unidadLectura}* de avance en un turno de *${horasTexto}*. Revisa el valor del tablero y reenvíalo por audio o texto.`;
 
       await guardarMensajeChat(supabase, phoneClean, "model", msgError, "texto", sesion.reporte_activo_id);
       await enviarMensajeWhatsApp(jid, phoneClean, msgError, !!audio, geminiKey);
@@ -115,34 +115,6 @@ export async function handleCierreFlow(ctx, res) {
       await enviarMensajeWhatsApp(jid, phoneClean, msgError, !!audio, geminiKey);
       return res.status(200).json({ success: true, action: "TURNO_DEMASIADO_LARGO_ESPERANDO_CONFIRMACION" });
     }
-  }
-
-  // 3. Flujo de Control de Plataforma (Cargada/Limpia) — se omite si el equipo tiene usa_plataforma = false
-  if (usaPlataforma && sesion.estado_espera !== "ESPERANDO_CHECKOUT_PLATAFORMA" && sesion.estado_espera !== "ESPERANDO_CHECKOUT_PLATAFORMA_DETALLE") {
-    // Guardar lecturas validadas en el reporte de forma temporal para no perderlas
-    const updateTemp = {};
-    if (horometroFinal) updateTemp.horometro_final = horometroFinal;
-    if (kmFinal) updateTemp.km_final = kmFinal;
-    if (resultado.petroleo_litros) updateTemp.petroleo_litros = resultado.petroleo_litros;
-    if (resultado.horometro_carga_combustible) updateTemp.horometro_carga_combustible = resultado.horometro_carga_combustible;
-    if (resultado.combustible_nivel_porcentaje !== null && resultado.combustible_nivel_porcentaje !== undefined) {
-      updateTemp.combustible_final_porcentaje = resultado.combustible_nivel_porcentaje;
-      updateTemp.combustible_nivel_porcentaje = resultado.combustible_nivel_porcentaje;
-    }
-    if (Object.keys(updateTemp).length > 0) {
-      await supabase.from("reportes_diarios").update(updateTemp).eq("id", sesion.reporte_activo_id);
-    }
-
-    // Cambiar a estado de espera de plataforma
-    await supabase
-      .from("sesiones_whatsapp")
-      .update({ estado_espera: "ESPERANDO_CHECKOUT_PLATAFORMA", updated_at: new Date().toISOString() })
-      .eq("id", sesion.id);
-
-    const msgPlat = `📋 *Control de Cierre de Plataforma*:\n\n¿La plataforma del equipo queda **Cargada** o **Limpia**?\n\nPor favor, responde indicando una de las opciones.`;
-    await guardarMensajeChat(supabase, phoneClean, "model", msgPlat, "texto", sesion.reporte_activo_id);
-    await enviarMensajeWhatsApp(jid, phoneClean, msgPlat, !!audio, geminiKey);
-    return res.status(200).json({ success: true, action: "ESPERANDO_PLATAFORMA" });
   }
 
   let platEstado = 'Limpia';
@@ -192,9 +164,21 @@ export async function handleCierreFlow(ctx, res) {
 
   // Actualizar reporte con datos de cierre finales
   const updateData = { estado_final: esFalla ? "Detenido por Falla" : "Disponible" };
-  if (horometroFinal) updateData.horometro_final = horometroFinal;
-  if (kmFinal) updateData.km_final = kmFinal;
-  if (petroleoLitros) updateData.petroleo_litros = petroleoLitros;
+  if (horometroFinal !== null && horometroFinal !== undefined) {
+    updateData.horometro_final = horometroFinal;
+    const diffHoras = Number(horometroFinal) - Number(lecturaInicio || 0);
+    if (!Number.isNaN(diffHoras) && diffHoras >= 0) {
+      updateData.horas_trabajadas = Number(diffHoras.toFixed(1));
+    }
+  }
+  if (kmFinal !== null && kmFinal !== undefined) {
+    updateData.km_final = kmFinal;
+    const diffKm = Number(kmFinal) - Number(lecturaInicio || 0);
+    if (!Number.isNaN(diffKm) && diffKm >= 0) {
+      updateData.km_dia = Number(diffKm.toFixed(1));
+    }
+  }
+  if (petroleoLitros !== null && petroleoLitros !== undefined) updateData.petroleo_litros = petroleoLitros;
   if (horometroCargaCombustible) updateData.horometro_carga_combustible = horometroCargaCombustible;
   if (combustibleNivelPorcentaje !== null && combustibleNivelPorcentaje !== undefined) {
     updateData.combustible_final_porcentaje = combustibleNivelPorcentaje;
@@ -247,7 +231,11 @@ export async function handleCierreFlow(ctx, res) {
   });
 
   await enviarMensajeWhatsApp(jid, phoneClean,
-    `⏳ *Consolidando tu reporte diario...*\nGenerando PDF con todos los hitos del día.`,
+    `✅ *Indicación de Cierre Registrada*\n` +
+    `📝 *Registro:* _"${observacionCierre}"_\n` +
+    `⏱ *${esVehiculo ? "Odómetro Final" : "Horómetro Final"}:* ${lecturaFinal.toLocaleString("es-CL")} ${unidadLectura}\n` +
+    `⛽ *Combustible:* ${petroleoLitros ? `${petroleoLitros} L` : "Sin carga"}\n\n` +
+    `⏳ *Consolidando tu Reporte Diario de Jornada y generando PDF...*`,
     !!audio,
     geminiKey
   );
@@ -270,9 +258,24 @@ export async function handleCierreFlow(ctx, res) {
         .eq("id", reporteCompleto.equipo_id)
         .single();
 
-      const supervisor = reporteCompleto.supervisor_id
+      let supervisor = reporteCompleto.supervisor_id
         ? (await supabase.from("personal").select("nombre_completo").eq("id", reporteCompleto.supervisor_id).maybeSingle()).data
         : null;
+
+      if (!supervisor && reporteCompleto.equipo_id && reporteCompleto.fecha) {
+        const { data: bloqueSup } = await supabase
+          .from("planificacion_bloques_pod")
+          .select("supervisor_id, supervisor:supervisor_id(nombre_completo)")
+          .eq("equipo_id", reporteCompleto.equipo_id)
+          .eq("fecha", reporteCompleto.fecha)
+          .not("supervisor_id", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (bloqueSup?.supervisor) {
+          supervisor = bloqueSup.supervisor;
+        }
+      }
 
       const { data: eventosRaw } = await supabase
         .from("eventos_jornada")

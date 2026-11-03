@@ -591,13 +591,15 @@ export async function handleJornadaFlow(ctx, res) {
         .update({ estado_espera: "ESPERANDO_CHECKOUT_AUDIO", updated_at: new Date().toISOString() })
         .eq("id", sesion.id);
 
+      const textoIndicacionCierre = (resultado.detalles_texto || message || "Término de jornada").trim();
       const ejemploCierre = esVehiculo
         ? `_"Kilometraje final 84.500, sin carga de combustible, observaciones: vehículo sin novedades"_`
         : `_"Horómetro final 2.310, cargué 80 litros de combustible, observaciones: equipo operativo sin novedades"_`;
 
       const msgPedirLectura =
+        `✅ *Indicación Registrada:* _"${textoIndicacionCierre}"_\n` +
         `🏁 *Término de jornada iniciado.*\n\n` +
-        `Para consolidar y cerrar tu reporte diario, por favor indícanos por *texto o audio*:\n` +
+        `Para consolidar tu jornada y generar el *Reporte Diario en PDF*, por favor indícanos por *texto o audio*:\n` +
         `1️⃣ *${esVehiculo ? 'Odómetro (kilometraje) final' : 'Horómetro final'}*\n` +
         `2️⃣ *Carga de combustible* _(litros cargados o "sin carga de combustible")_\n` +
         `3️⃣ *Observaciones* _(novedades del equipo o de la jornada)_\n\n` +
@@ -637,6 +639,7 @@ export async function handleJornadaFlow(ctx, res) {
   const estadoHitoRaw = resultado.tipo_evento === "CHECKIN" ? "Disponible" : resultado.tipo_evento || "Trabajando";
   const estadoHito = mapEstadoHitoDB(estadoHitoRaw);
 
+  const indicacionTexto = (resultado.detalles_texto || message || "Hito registrado").trim();
   let hitoInsertado = false;
 
   if (estadoHito === "Trabajando" && resultado.especialidad_id) {
@@ -655,6 +658,9 @@ export async function handleJornadaFlow(ctx, res) {
       .maybeSingle();
 
     if (bloque) {
+      if (bloque.supervisor_id && !reporteActual?.supervisor_id) {
+        await supabase.from("reportes_diarios").update({ supervisor_id: bloque.supervisor_id }).eq("id", sesion.reporte_activo_id);
+      }
       if (bloque.actividad_id) {
         // Escenario 1: Actividad ya asignada en planificación (bloque.actividad_id)
         await supabase.from("eventos_jornada").insert({
@@ -663,13 +669,17 @@ export async function handleJornadaFlow(ctx, res) {
           especialidad_id: resultado.especialidad_id,
           actividad_id: bloque.actividad_id,
           hora_evento: new Date().toISOString(),
-          nota_transcripcion: `Actividad planificada: ${bloque.actividad_especifica}`,
+          nota_transcripcion: `${indicacionTexto} (Actividad planificada: ${bloque.actividad_especifica})`,
           ...(resultado.combustible_nivel_porcentaje !== null && resultado.combustible_nivel_porcentaje !== undefined && {
             combustible_nivel_momento: resultado.combustible_nivel_porcentaje
           })
         });
 
-        resultado.mensaje_conversacional_bot = `🟢 *Estado Registrado: Trabajando en ${resultado.especialidad_detectada || "montaje"}*\n\n📋 *Actividad Planificada:* ${bloque.actividad_especifica}`;
+        resultado.mensaje_conversacional_bot =
+          `✅ *Indicación Registrada*\n` +
+          `🟢 *Estado:* Trabajando en *${resultado.especialidad_detectada || "montaje"}*\n` +
+          `📝 *Registro:* _"${indicacionTexto}"_\n` +
+          `📋 *Actividad Planificada:* ${bloque.actividad_especifica}`;
         hitoInsertado = true;
       } else if (bloque.supervisor?.whatsapp) {
         // Escenario 2: Actividad vacía → preguntar al supervisor con lista de tareas programadas
@@ -680,7 +690,7 @@ export async function handleJornadaFlow(ctx, res) {
             estado_hito: estadoHito,
             especialidad_id: resultado.especialidad_id,
             hora_evento: new Date().toISOString(),
-            nota_transcripcion: "Esperando confirmación de actividad por supervisor...",
+            nota_transcripcion: indicacionTexto,
             ...(resultado.combustible_nivel_porcentaje !== null && resultado.combustible_nivel_porcentaje !== undefined && {
               combustible_nivel_momento: resultado.combustible_nivel_porcentaje
             })
@@ -698,7 +708,9 @@ export async function handleJornadaFlow(ctx, res) {
           });
 
           resultado.mensaje_conversacional_bot =
-            `🟢 *Estado Registrado: Trabajando en ${resultado.especialidad_detectada || "montaje"}*\n\n` +
+            `✅ *Indicación Registrada*\n` +
+            `🟢 *Estado:* Trabajando en *${resultado.especialidad_detectada || "montaje"}*\n` +
+            `📝 *Registro:* _"${indicacionTexto}"_\n\n` +
             `💬 Solicitando confirmación de actividad a tu supervisor *${bloque.supervisor.nombre_completo}*` +
             (tareasEnviadas.length > 0 ? ` con ${tareasEnviadas.length} opciones de tarea.` : ".");
           hitoInsertado = true;
@@ -713,7 +725,7 @@ export async function handleJornadaFlow(ctx, res) {
       estado_hito: estadoHito,
       especialidad_id: resultado.especialidad_id || null,
       hora_evento: new Date().toISOString(),
-      nota_transcripcion: resultado.detalles_texto || "",
+      nota_transcripcion: indicacionTexto,
       ...(resultado.combustible_nivel_porcentaje !== null && resultado.combustible_nivel_porcentaje !== undefined && {
         combustible_nivel_momento: resultado.combustible_nivel_porcentaje
       })
@@ -785,7 +797,7 @@ export async function handleJornadaFlow(ctx, res) {
 
   const tagEspecialidad = resultado.especialidad_detectada ? ` — *${resultado.especialidad_detectada}*` : "";
   const baseConfirmacion = resultado.mensaje_conversacional_bot
-    || `${iconosEstado[estadoHito] || "⚪"} *Estado Actualizado: ${labelEstadoMostrar}*${tagEspecialidad}\n\n📝 _"${resultado.detalles_texto || "Hito registrado con éxito."}"_`;
+    || `✅ *Indicación Registrada*\n${iconosEstado[estadoHito] || "⚪"} *Estado:* ${labelEstadoMostrar}${tagEspecialidad}\n📝 *Registro:* _"${indicacionTexto}"_`;
 
   const confirmacion = baseConfirmacion.includes("Recuerda informar")
     ? baseConfirmacion
