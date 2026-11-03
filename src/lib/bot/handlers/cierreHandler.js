@@ -49,10 +49,16 @@ export async function handleCierreFlow(ctx, res) {
       .eq("id", sesion.id);
 
     const ejemploCierre = esVehiculo
-      ? `_"Cierre, kilometraje final 84.500, sin carga de combustible"_`
-      : `_"Cierre, horómetro final 11.005, sin combustible"_`;
+      ? `_"Kilometraje final 84.500, sin carga de combustible, observaciones: vehículo sin novedades"_`
+      : `_"Horómetro final 11.005, sin carga de combustible, observaciones: equipo operativo sin novedades"_`;
 
-    const msgError = `⚠️ *Lectura final obligatoria*\n\nHola ${personal.nombre_completo}, para cerrar tu jornada es **estrictamente necesario** que nos indiques el **${nombreLectura}** del equipo.\n\nPor favor, envíalo por audio o texto.\n\n_Ejemplo: ${ejemploCierre}_`;
+    const msgError =
+      `⚠️ *Datos de término de jornada requeridos*\n\n` +
+      `Hola *${personal.nombre_completo}*, para cerrar tu jornada por favor envíanos por *texto o audio*:\n` +
+      `1️⃣ *${nombreLectura}*\n` +
+      `2️⃣ *Carga de combustible* _(litros cargados o "sin carga")_\n` +
+      `3️⃣ *Observaciones* _(novedades del equipo o de la jornada)_\n\n` +
+      `💡 _Ejemplo: ${ejemploCierre}_`;
 
     await guardarMensajeChat(supabase, phoneClean, "model", msgError, "texto", sesion.reporte_activo_id);
     await enviarMensajeWhatsApp(jid, phoneClean, msgError, !!audio, geminiKey);
@@ -213,12 +219,31 @@ export async function handleCierreFlow(ctx, res) {
   }
   await supabase.from("equipos").update(eqUpdate).eq("id", reporteActual.equipo_id);
 
+  // Obtener observación de cierre del operador (si pasó por sub-flujo de plataforma, recuperar el mensaje previo de cierre)
+  let observacionCierre = resultado.detalles_texto || ctx.message || "Cierre de jornada";
+  if (sesion.estado_espera === "ESPERANDO_CHECKOUT_PLATAFORMA" || sesion.estado_espera === "ESPERANDO_CHECKOUT_PLATAFORMA_DETALLE") {
+    const { data: ultimosMsgsUser } = await supabase
+      .from("mensajes_chat")
+      .select("contenido")
+      .eq("reporte_id", sesion.reporte_activo_id)
+      .eq("rol", "user")
+      .order("created_at", { ascending: false })
+      .limit(4);
+    const msgConLectura = (ultimosMsgsUser || []).find((m) => {
+      const c = String(m.contenido || "").toLowerCase();
+      return c && !["limpia", "limpio", "cargada", "cargado"].includes(c.trim()) && /\d/.test(c);
+    });
+    if (msgConLectura?.contenido) {
+      observacionCierre = msgConLectura.contenido;
+    }
+  }
+
   // Evento de cierre
   await supabase.from("eventos_jornada").insert({
     reporte_id: sesion.reporte_activo_id,
     estado_hito: estadoFinalCierre,
     hora_evento: new Date().toISOString(),
-    nota_transcripcion: `CHECK-OUT: ${resultado.detalles_texto || "Cierre de jornada"}${kmFinal ? ` | Odómetro: ${kmFinal}` : ""}${horometroFinal ? ` | Horómetro: ${horometroFinal}` : ""}${usaPlataforma ? (platEstado === 'Cargada' ? ` | Plataforma Cargada (${platDetalle || 'sin detalle'})` : ' | Plataforma Limpia') : ''}`,
+    nota_transcripcion: `CHECK-OUT: ${observacionCierre}${kmFinal ? ` | Odómetro: ${kmFinal}` : ""}${horometroFinal ? ` | Horómetro: ${horometroFinal}` : ""}${petroleoLitros ? ` | Combustible: ${petroleoLitros} L` : " | Sin carga combustible"}${usaPlataforma ? (platEstado === 'Cargada' ? ` | Plataforma Cargada (${platDetalle || 'sin detalle'})` : ' | Plataforma Limpia') : ''}`,
   });
 
   await enviarMensajeWhatsApp(jid, phoneClean,

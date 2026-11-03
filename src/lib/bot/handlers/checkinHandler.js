@@ -229,7 +229,7 @@ export async function handleCheckinFlow(ctx, res) {
   }
 
   let msgFinalEst = resultado.mensaje_conversacional_bot
-    || `✅ *Check-in registrado.*\n⏱ Horómetro inicial: *${horometroInicio.toLocaleString("es-CL")} hrs*\n\nDurante la jornada envía audios o mensajes cuando cambies de actividad.\nAl cerrar di: *"Cierre de jornada, horómetro final XXXX"*`;
+    || `✅ *Check-in registrado.*\n⏱ Horómetro inicial: *${horometroInicio.toLocaleString("es-CL")} hrs*\n\n📌 *Recuerda informar cada cambio de estado durante tu jornada:*\n• 🟢 *Trabajando con [Especialidad]* _(ej: "Trabajando con Piping")_\n• 🟡 *En colación*\n• 🔵 *Ralentí / Disponible*\n• 🔴 *Panne / Detenido por falla*\n• 🏁 *Término de jornada* _(se te pedirá horómetro final, carga de combustible y observaciones)_`;
 
   await guardarMensajeChat(supabase, phoneClean, "model", msgFinalEst, "texto", sesion.reporte_activo_id);
 

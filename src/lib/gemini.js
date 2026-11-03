@@ -66,18 +66,21 @@ export function parsearMensajeOperadorFallback(textoRaw = "", listaEspecialidade
 
   // 2. Detectar Tipo de Evento / Estado
   const tieneSinCombustible = lower.includes("sin combustible") || lower.includes("sin petroleo") || lower.includes("sin carga") || lower.includes("no cargue");
-  const esCierre = /\b(cierre|cerrando|termine|terminamos|fin de jornada|fin de turno|horometro final|checkout)\b/.test(lower);
+  const esCierre = /\b(cierre|cerrando|cerrar|termine|terminamos|termino de jornada|termino jornada|termino de turno|fin de jornada|fin de turno|finalizar jornada|horometro final|checkout)\b/.test(lower);
   const esColacion = /\b(colacion|almuerzo|almorzando)\b/.test(lower);
   const esFalla = !tieneSinCombustible && /\b(falla|pana|panne|averia|roto|fuera de servicio|desperfecto|fuga)\b/.test(lower);
-  const esDisponible = /\b(disponible|esperando|en espera|ralenti|marcha lenta|standby)\b/.test(lower);
+  const esRalenti = /\b(ralenti|marcha lenta)\b/.test(lower);
+  const esDisponible = /\b(disponible|esperando|en espera|standby)\b/.test(lower);
 
   let tipo_evento = "Trabajando";
-  if (esCierre) {
+  if (esCierre || contexto.estado_sesion === "CIERRE") {
     tipo_evento = "CIERRE";
   } else if (esColacion) {
     tipo_evento = "En Colacion";
   } else if (esFalla) {
     tipo_evento = "Detenido por Falla";
+  } else if (esRalenti) {
+    tipo_evento = "Ralenti";
   } else if (esDisponible) {
     tipo_evento = "Disponible";
   } else if (contexto.estado_sesion === "CHECKIN" && !especialidad_id) {
@@ -90,7 +93,8 @@ export function parsearMensajeOperadorFallback(textoRaw = "", listaEspecialidade
   let petroleo_litros = tieneSinCombustible ? 0 : null;
   let combustible_nivel_porcentaje = null;
 
-  const matchLitros = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:litros|lts|l\b)/);
+  const matchLitros = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:litros|lts|l\b)/)
+    || (!tieneSinCombustible ? lower.match(/(?:carga(?:mos|do)?(?:\s+de)?\s+combustible|combustible|petroleo)\s*(?:de\s*|:)?\s*(\d+(?:[.,]\d+)?)(?!\s*%)/) : null);
   if (matchLitros) {
     petroleo_litros = parseFloat(matchLitros[1].replace(",", "."));
   }

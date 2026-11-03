@@ -12,6 +12,14 @@ import {
 import { formatEquipoLabel } from "../../equipoLabel";
 import { crearConsultaPendiente } from "../services/podConsultaService";
 
+const RECORDATORIO_ESTADOS_OPERADOR =
+  `\n\n📌 *Recuerda informar cada cambio de estado durante tu jornada:*\n` +
+  `• 🟢 *Trabajando con [Especialidad]* _(ej: "Trabajando con Piping", "Trabajando con Estructuras")_\n` +
+  `• 🟡 *En colación* _(ej: "En colación")_\n` +
+  `• 🔵 *Ralentí / Disponible* _(ej: "En ralentí", "Disponible esperando frente")_\n` +
+  `• 🔴 *Panne / Detenido por falla* _(ej: "En panne", "Detenido por falla")_\n` +
+  `• 🏁 *Término de jornada* _(envía "Término de jornada" al finalizar para registrar horómetro final, carga de combustible y observaciones)_`;
+
 export async function handleJornadaFlow(ctx, res) {
   const { supabase, personal, phoneClean, jid, message, audio, image, location, geminiKey } = ctx;
   const sesion = ctx.sesion;
@@ -269,7 +277,7 @@ export async function handleJornadaFlow(ctx, res) {
       if (lecturaReg > 0) {
         const sufijoMedida = equipo.tipo_seguimiento === 'vehiculo' ? 'km' : 'hrs';
         await enviarMensajeWhatsApp(jid, phoneClean,
-          `👷‍♂️ *¡Jornada Activa!* 🚜\n\nHola *${personal.nombre_completo}*, confirmamos el inicio de tu jornada en *${equipo.descripcion_equipo}* (${formatEquipoLabel(equipo)}) con un valor inicial de *${lecturaReg.toLocaleString("es-CL")} ${sufijoMedida}*.\n\nDurante el día, puedes registrar tus hitos (ej. "En colación", "Trabajando", "Detenido por falla") enviando audios de voz o textos.`,
+          `👷‍♂️ *¡Jornada Activa!* 🚜\n\nHola *${personal.nombre_completo}*, confirmamos el inicio de tu jornada en *${equipo.descripcion_equipo}* (${formatEquipoLabel(equipo)}) con un valor inicial de *${lecturaReg.toLocaleString("es-CL")} ${sufijoMedida}*.${RECORDATORIO_ESTADOS_OPERADOR}`,
           !!audio,
           geminiKey
         );
@@ -362,7 +370,7 @@ export async function handleJornadaFlow(ctx, res) {
 
     if (esMismoEquipo) {
       await enviarMensajeWhatsApp(jid, phoneClean,
-        `👷‍♂️ *¡Jornada Activa!* 🚜\n\nHola *${personal.nombre_completo}*, confirmamos que tu jornada para *${equipoActivo.descripcion_equipo}* (${formatEquipoLabel(equipoActivo)}) se encuentra activa y registrada con éxito.\n\nDurante el día, puedes registrar tus hitos (ej. "En colación", "Trabajando", "Detenido por falla") enviando audios de voz o textos.`,
+        `👷‍♂️ *¡Jornada Activa!* 🚜\n\nHola *${personal.nombre_completo}*, confirmamos que tu jornada para *${equipoActivo.descripcion_equipo}* (${formatEquipoLabel(equipoActivo)}) se encuentra activa y registrada con éxito.${RECORDATORIO_ESTADOS_OPERADOR}`,
         !!audio,
         geminiKey
       );
@@ -584,21 +592,16 @@ export async function handleJornadaFlow(ctx, res) {
         .eq("id", sesion.id);
 
       const ejemploCierre = esVehiculo
-        ? `_"Cierre, kilometraje final ochenta y cuatro mil quinientos, sin carga de combustible"_`
-        : `_"Cierre, horómetro final dos mil trescientos diez, sin combustible"_`;
+        ? `_"Kilometraje final 84.500, sin carga de combustible, observaciones: vehículo sin novedades"_`
+        : `_"Horómetro final 2.310, cargué 80 litros de combustible, observaciones: equipo operativo sin novedades"_`;
 
-      let msgPedirLectura = `🏁 *Entendido, cierre de jornada solicitado.*\n\nPara consolidar tu reporte, por favor indica por *audio o texto* el **${esVehiculo ? 'odómetro (kilometraje) final' : 'horómetro final'}** y si realizaste carga de combustible.\n\n_Ejemplo: ${ejemploCierre}_`;
-
-      if (resultado.mensaje_conversacional_bot && (
-        resultado.mensaje_conversacional_bot.toLowerCase().includes("horómetro") ||
-        resultado.mensaje_conversacional_bot.toLowerCase().includes("horometro") ||
-        resultado.mensaje_conversacional_bot.toLowerCase().includes("odómetro") ||
-        resultado.mensaje_conversacional_bot.toLowerCase().includes("odometro") ||
-        resultado.mensaje_conversacional_bot.toLowerCase().includes("kilometraje") ||
-        resultado.mensaje_conversacional_bot.toLowerCase().includes("combustible")
-      )) {
-        msgPedirLectura = resultado.mensaje_conversacional_bot;
-      }
+      const msgPedirLectura =
+        `🏁 *Término de jornada iniciado.*\n\n` +
+        `Para consolidar y cerrar tu reporte diario, por favor indícanos por *texto o audio*:\n` +
+        `1️⃣ *${esVehiculo ? 'Odómetro (kilometraje) final' : 'Horómetro final'}*\n` +
+        `2️⃣ *Carga de combustible* _(litros cargados o "sin carga de combustible")_\n` +
+        `3️⃣ *Observaciones* _(novedades del equipo o de la jornada)_\n\n` +
+        `💡 _Ejemplo: ${ejemploCierre}_`;
 
       await guardarMensajeChat(supabase, phoneClean, "model", msgPedirLectura, "texto", sesion.reporte_activo_id);
       await enviarMensajeWhatsApp(jid, phoneClean, msgPedirLectura, !!audio, geminiKey);
@@ -775,9 +778,18 @@ export async function handleJornadaFlow(ctx, res) {
     "Detenido por Falla": "🔴",
   };
 
+  const labelEstadoMostrar =
+    estadoHitoRaw === "Ralenti" ? "En Ralentí" :
+    estadoHitoRaw === "Equipo Fuera de Servicio (Panne)" ? "En Panne / Detenido por Falla" :
+    estadoHito;
+
   const tagEspecialidad = resultado.especialidad_detectada ? ` — *${resultado.especialidad_detectada}*` : "";
-  const confirmacion = resultado.mensaje_conversacional_bot
-    || `${iconosEstado[estadoHito] || "⚪"} *Estado Actualizado: ${estadoHito}*${tagEspecialidad}\n\n📝 _"${resultado.detalles_texto || "Hito registrado con éxito."}"_`;
+  const baseConfirmacion = resultado.mensaje_conversacional_bot
+    || `${iconosEstado[estadoHito] || "⚪"} *Estado Actualizado: ${labelEstadoMostrar}*${tagEspecialidad}\n\n📝 _"${resultado.detalles_texto || "Hito registrado con éxito."}"_`;
+
+  const confirmacion = baseConfirmacion.includes("Recuerda informar")
+    ? baseConfirmacion
+    : `${baseConfirmacion}${RECORDATORIO_ESTADOS_OPERADOR}`;
 
   await guardarMensajeChat(supabase, phoneClean, "model", confirmacion, "texto", sesion.reporte_activo_id);
   await enviarMensajeWhatsApp(jid, phoneClean, confirmacion, !!audio, geminiKey);
