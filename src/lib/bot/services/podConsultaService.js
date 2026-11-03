@@ -1,6 +1,6 @@
 import { enviarMensajeWhatsApp } from "./messageService";
 import { formatEquipoLabel } from "../../equipoLabel";
-import { resolverActividadesSupervisor } from "../../gemini";
+import { resolverActividadesSupervisor, extraerMetricasActividadSupervisor } from "../../gemini";
 
 const ANCLAS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
 const NUMEROS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"];
@@ -110,7 +110,7 @@ export async function crearConsultaPendiente(supabase, { telefonoSupervisor, pla
   return { tareasEnviadas };
 }
 
-async function aplicarResolucion(supabase, consultaPendiente, { actividadFinal, tareaProgramadaId }, geminiKey) {
+async function aplicarActividadInicial(supabase, consultaPendiente, { actividadFinal, tareaProgramadaId }, geminiKey) {
   const { data: bloqueInfo } = await supabase
     .from("planificacion_bloques_pod")
     .select("fecha, especialidad_id, equipos(proyecto_actual_id)")
@@ -124,7 +124,7 @@ async function aplicarResolucion(supabase, consultaPendiente, { actividadFinal, 
       proyecto_id: bloqueInfo?.equipos?.proyecto_actual_id || null,
       especialidad_id: bloqueInfo?.especialidad_id || null,
       tarea_programada_id: tareaProgramadaId,
-      descripcion: tareaProgramadaId ? null : actividadFinal,
+      descripcion: actividadFinal,
       programada: !!tareaProgramadaId,
     })
     .select("id")
@@ -164,8 +164,130 @@ async function aplicarResolucion(supabase, consultaPendiente, { actividadFinal, 
 
   await supabase
     .from("estados_consulta_bot")
-    .update({ estado_pregunta: "Procesado", esperando_confirmacion: false, respuesta_interpretada: null, updated_at: new Date().toISOString() })
+    .update({
+      esperando_libre: false,
+      esperando_confirmacion: false,
+      respuesta_interpretada: {
+        etapa: "ESPERANDO_METRICAS",
+        actividad_final: actividadFinal,
+        tarea_id: tareaProgramadaId || null,
+        actividad_id: actividadId,
+      },
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", consultaPendiente.id);
+
+  return actividadId;
+}
+
+function parseMetricasFallback(texto) {
+  const clean = (texto || "").replace(/,/g, ".");
+  const mHor = clean.match(/(\d+(?:\.\d+)?)\s*(?:hrs?|horas?|hor[oó]metro)/i) || clean.match(/hor[oó]metro\s*(?:de|:)?\s*(\d+(?:\.\d+)?)/i);
+  const mIz = clean.match(/(\d+)\s*(?:izajes?|maniobras?|movimientos?|movs?)/i) || clean.match(/(?:izajes?|movimientos?)\s*(?:de|:)?\s*(\d+)/i);
+  const mCant = clean.match(/(\d+(?:\.\d+)?)\s*(m3|m2|ml|metros?|m|toneladas?|ton|t|kg|unidades?|un|spools?|pulgadas?)/i);
+
+  let cantidad = mCant ? parseFloat(mCant[1]) : null;
+  let unidad = mCant ? mCant[2] : null;
+  let horometro = mHor ? parseFloat(mHor[1]) : null;
+  let izajes = mIz ? parseInt(mIz[1], 10) : null;
+
+  if (cantidad === null && horometro === null && izajes === null) {
+    const nums = (clean.match(/\d+(?:\.\d+)?/g) || []).map(Number);
+    if (nums.length >= 1) cantidad = nums[0];
+    if (nums.length >= 2) horometro = nums[1];
+    if (nums.length >= 3) izajes = Math.round(nums[2]);
+  }
+
+  return {
+    cantidad_ejecutada: cantidad,
+    unidad: unidad,
+    horometro_horas: horometro,
+    izajes_movimientos: izajes,
+  };
+}
+
+async function aplicarMetricasFinales(supabase, consultaPendiente, respuestaTexto) {
+  const interp = consultaPendiente.respuesta_interpretada || {};
+  const actividadBase = interp.actividad_final || "Labor en faena";
+  const actividadId = interp.actividad_id || null;
+
+  let metricas = {};
+  try {
+    metricas = await extraerMetricasActividadSupervisor(respuestaTexto, actividadBase);
+  } catch (err) {
+    console.warn("[podConsultaService] Fallback regex para métricas:", err.message);
+    metricas = parseMetricasFallback(respuestaTexto);
+  }
+
+  const fb = parseMetricasFallback(respuestaTexto);
+  const cantidad = metricas.cantidad_ejecutada ?? fb.cantidad_ejecutada ?? null;
+  const unidad = metricas.unidad || fb.unidad || null;
+  const horometro = metricas.horometro_horas ?? fb.horometro_horas ?? null;
+  const izajes = metricas.izajes_movimientos ?? fb.izajes_movimientos ?? null;
+
+  const partesDetalle = [];
+  if (cantidad !== null) partesDetalle.push(`Cant: ${cantidad}${unidad ? ` ${unidad}` : ""}`);
+  if (horometro !== null) partesDetalle.push(`Horómetro: ${horometro} hrs`);
+  if (izajes !== null) partesDetalle.push(`Izajes/Mov: ${izajes}`);
+  const sufijoMetricas = partesDetalle.length > 0 ? ` (${partesDetalle.join(" · ")})` : ` (${respuestaTexto})`;
+  const descripcionCompleta = `${actividadBase}${sufijoMetricas}`;
+
+  if (actividadId) {
+    const updateAct = {
+      descripcion: descripcionCompleta,
+      cantidad_ejecutada: cantidad,
+      unidad: unidad,
+    };
+    // Intentar primero con columnas extendidas (horometro_horas, izajes)
+    const { error: errExt } = await supabase
+      .from("actividades")
+      .update({
+        ...updateAct,
+        ...(horometro !== null ? { horometro_horas: horometro } : {}),
+        ...(izajes !== null ? { izajes: izajes } : {}),
+      })
+      .eq("id", actividadId);
+
+    if (errExt) {
+      await supabase.from("actividades").update(updateAct).eq("id", actividadId);
+    }
+  }
+
+  await supabase
+    .from("planificacion_bloques_pod")
+    .update({
+      actividad_especifica: descripcionCompleta,
+      actividad_respondida_at: new Date().toISOString(),
+    })
+    .eq("id", consultaPendiente.planificacion_id);
+
+  if (consultaPendiente.evento_operador_id) {
+    await supabase
+      .from("eventos_jornada")
+      .update({ nota_transcripcion: `Actividad confirmada por supervisor: ${descripcionCompleta}` })
+      .eq("id", consultaPendiente.evento_operador_id);
+  }
+
+  await supabase
+    .from("estados_consulta_bot")
+    .update({
+      estado_pregunta: "Procesado",
+      esperando_libre: false,
+      esperando_confirmacion: false,
+      respuesta_interpretada: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", consultaPendiente.id);
+
+  return { actividadBase, cantidad, unidad, horometro, izajes, respuestaTexto };
+}
+
+function extraerNumeroOpcion(texto) {
+  const clean = (texto || "").trim();
+  if (/^\d+$/.test(clean)) return parseInt(clean, 10);
+  const m = clean.match(/^(?:opci[oó]n|tarea|la|el|n[uú]mero|#)?\s*(\d+)\s*[.️⃣)]?$/i);
+  if (m) return parseInt(m[1], 10);
+  return NaN;
 }
 
 function esAfirmacion(texto) {
@@ -187,19 +309,52 @@ export async function resolverRespuestaSupervisor(supabase, { telefonoSupervisor
     return { manejado: true, action: "RESPUESTA_SUPERVISOR_VACIA" };
   }
 
+  const enMetricas = pendientes.filter(p => p.respuesta_interpretada?.etapa === "ESPERANDO_METRICAS");
+
+  // Caso 0: el supervisor ya seleccionó la tarea y ahora está enviando cantidades realizadas, horómetro e izajes/movimientos
+  if (enMetricas.length > 0) {
+    const resList = [];
+    for (const p of enMetricas) {
+      const resMet = await aplicarMetricasFinales(supabase, p, respuestaTexto);
+      resList.push(resMet);
+    }
+    const r0 = resList[0];
+    const msgResumen = [
+      `¡Excelente! Hemos registrado el avance y métricas para este bloque:`,
+      ``,
+      `📌 *Tarea:* ${r0.actividadBase}`,
+      `📏 *Cantidad realizada:* ${r0.cantidad !== null ? `${r0.cantidad}${r0.unidad ? ` ${r0.unidad}` : ""}` : "No especificada"}`,
+      `⏱️ *Horómetro / Horas:* ${r0.horometro !== null ? `${r0.horometro} hrs` : "No especificado"}`,
+      `🏗️ *Izajes / Movimientos:* ${r0.izajes !== null ? r0.izajes : "No especificado"}`,
+      ``,
+      `Muchas gracias. 💪`,
+    ].join("\n");
+
+    await enviarMensajeWhatsApp(jid, phoneClean, msgResumen, !!audio, geminiKey);
+    return { manejado: true, action: "METRICAS_SUPERVISOR_REGISTRADAS" };
+  }
+
   const enConfirmacion = pendientes.filter(p => p.esperando_confirmacion);
 
   // Caso A: el supervisor está respondiendo a un "¿confirmas?" de una ronda anterior
   if (enConfirmacion.length > 0) {
     if (esAfirmacion(respuestaTexto)) {
+      const nombres = [];
       for (const p of enConfirmacion) {
         const interp = p.respuesta_interpretada;
         if (!interp) continue;
         const actividadFinal = interp.tarea_nombre || interp.texto_libre;
-        await aplicarResolucion(supabase, p, { actividadFinal, tareaProgramadaId: interp.tarea_id || null }, geminiKey);
+        nombres.push(actividadFinal);
+        await aplicarActividadInicial(supabase, p, { actividadFinal, tareaProgramadaId: interp.tarea_id || null }, geminiKey);
       }
-      await enviarMensajeWhatsApp(jid, phoneClean, `¡Excelente! Actividad(es) registrada(s). Muchas gracias.`, !!audio, geminiKey);
-      return { manejado: true, action: "CONFIRMACION_APLICADA" };
+      await enviarMensajeWhatsApp(
+        jid,
+        phoneClean,
+        `✅ *Tarea(s) confirmada(s):*\n_"${nombres.join(", ")}"_\n\n📊 Ahora por favor indícame (en texto o audio) las métricas realizadas asociadas a la tarea:\n1️⃣ *Cantidad realizada* (ej: 15 m, 4 ton, 3 un)\n2️⃣ *Horómetro / Horas* destinadas (ej: 4 hrs)\n3️⃣ *Cantidad de izajes o movimientos* (ej: 6 izajes)\n\n_Ejemplo: "15 metros, 4 horas de horómetro y 6 izajes"_`,
+        !!audio,
+        geminiKey
+      );
+      return { manejado: true, action: "CONFIRMACION_APLICADA_ESPERANDO_METRICAS" };
     }
 
     if (esNegacion(respuestaTexto)) {
@@ -218,7 +373,7 @@ export async function resolverRespuestaSupervisor(supabase, { telefonoSupervisor
     return { manejado: true, action: "CONFIRMACION_RECORDATORIO" };
   }
 
-  // Caso B: exactamente 1 pregunta abierta -> parseo directo, sin paso de confirmación
+  // Caso B: exactamente 1 pregunta abierta -> parseo directo, pasa a pedir cantidades, horómetro e izajes/movimientos
   if (pendientes.length === 1) {
     const p = pendientes[0];
     const tareasEnviadas = p.tareas_enviadas || [];
@@ -228,8 +383,8 @@ export async function resolverRespuestaSupervisor(supabase, { telefonoSupervisor
     if (p.esperando_libre) {
       actividadFinal = `[NO PROGRAMADA] ${respuestaTexto}`;
     } else {
-      const numero = parseInt(respuestaTexto, 10);
-      if (!isNaN(numero) && /^\d+$/.test(respuestaTexto.trim())) {
+      const numero = extraerNumeroOpcion(respuestaTexto);
+      if (!isNaN(numero)) {
         if (numero === 0) {
           await supabase.from("estados_consulta_bot")
             .update({ esperando_libre: true, updated_at: new Date().toISOString() })
@@ -237,7 +392,7 @@ export async function resolverRespuestaSupervisor(supabase, { telefonoSupervisor
           await enviarMensajeWhatsApp(jid, phoneClean, `✏️ Describe brevemente la actividad que ejecutarás hoy:`, !!audio, geminiKey);
           return { manejado: true, action: "ESPERANDO_ACTIVIDAD_LIBRE" };
         } else if (tareasEnviadas.length > 0) {
-          const tareaElegida = tareasEnviadas.find(t => t.orden === numero);
+          const tareaElegida = tareasEnviadas.find(t => Number(t.orden) === numero);
           if (tareaElegida) {
             actividadFinal = tareaElegida.nombre;
             tareaProgramadaId = tareaElegida.id || null;
@@ -249,9 +404,15 @@ export async function resolverRespuestaSupervisor(supabase, { telefonoSupervisor
       }
     }
 
-    await aplicarResolucion(supabase, p, { actividadFinal, tareaProgramadaId }, geminiKey);
-    await enviarMensajeWhatsApp(jid, phoneClean, `¡Excelente! Hemos registrado la actividad para este bloque:\n\n_"${respuestaTexto}"_\n\nMuchas gracias.`, !!audio, geminiKey);
-    return { manejado: true, action: "RESPUESTA_SUPERVISOR_PROCESADA" };
+    await aplicarActividadInicial(supabase, p, { actividadFinal, tareaProgramadaId }, geminiKey);
+    await enviarMensajeWhatsApp(
+      jid,
+      phoneClean,
+      `✅ *Tarea registrada para este bloque:*\n_"${actividadFinal}"_\n\n📊 Para completar el registro, por favor indícame (en texto o audio):\n1️⃣ *Cantidades realizadas* asociadas a la tarea (ej: 15 m, 4 ton, 3 un)\n2️⃣ *Horómetro / Horas* destinadas a la tarea (ej: 4 hrs)\n3️⃣ *Cantidad de izajes o movimientos* realizados (ej: 6 izajes)\n\n_Ejemplo: "15 metros, 4 horas de horómetro y 6 izajes"_`,
+      !!audio,
+      geminiKey
+    );
+    return { manejado: true, action: "RESPUESTA_SUPERVISOR_ESPERANDO_METRICAS" };
   }
 
   // Caso C: 2+ preguntas abiertas -> interpretar con Gemini y pedir confirmación antes de aplicar

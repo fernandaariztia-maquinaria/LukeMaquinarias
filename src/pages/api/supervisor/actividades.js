@@ -171,9 +171,20 @@ export default async function handler(req, res) {
       }
 
       const rowsInsert = [];
+      const rowsInsertBase = [];
 
       for (const act of actividades) {
         const isProgramada = act.programada !== false;
+        const cantNum = act.cantidad_ejecutada ? parseFloat(act.cantidad_ejecutada) : null;
+        const horNum = act.horometro_horas ? parseFloat(act.horometro_horas) : null;
+        const izNum = act.izajes ? parseInt(act.izajes, 10) : 0;
+        const descBase = act.descripcion || act.nombre || "Labor en faena";
+        const partes = [];
+        if (cantNum !== null) partes.push(`Cant: ${cantNum} ${act.unidad || "Ton"}`);
+        if (horNum !== null) partes.push(`Horómetro: ${horNum} hrs`);
+        if (izNum) partes.push(`Izajes/Mov: ${izNum}`);
+        const descEnriquecida = partes.length > 0 ? `${descBase} (${partes.join(" · ")})` : descBase;
+
         rowsInsert.push({
           fecha: fechaFinal,
           proyecto_id: proyectoId,
@@ -183,29 +194,45 @@ export default async function handler(req, res) {
           especialidad_id: act.especialidad_id || null,
           tarea_programada_id: act.tarea_programada_id || null,
           id_3wl: act.id_3wl || null,
-          descripcion: act.descripcion || act.nombre || "Labor en faena",
+          descripcion: descEnriquecida,
           categoria_disciplina: act.categoria_disciplina || "General",
           subactividad: act.subactividad || null,
-          cantidad_ejecutada: act.cantidad_ejecutada ? parseFloat(act.cantidad_ejecutada) : null,
+          cantidad_ejecutada: cantNum,
           unidad: act.unidad || "Ton",
-          izajes: act.izajes ? parseInt(act.izajes, 10) : 0,
-          horometro_horas: act.horometro_horas ? parseFloat(act.horometro_horas) : null,
+          izajes: izNum,
+          horometro_horas: horNum,
+          programada: isProgramada,
+        });
+
+        rowsInsertBase.push({
+          fecha: fechaFinal,
+          proyecto_id: proyectoId,
+          especialidad_id: act.especialidad_id || null,
+          tarea_programada_id: act.tarea_programada_id || null,
+          descripcion: descEnriquecida,
+          cantidad_ejecutada: cantNum,
+          unidad: act.unidad || "Ton",
           programada: isProgramada,
         });
       }
 
-      const { data: inserted, error: errInsert } = await supabase
+      let { data: inserted, error: errInsert } = await supabase
         .from("actividades")
         .insert(rowsInsert)
         .select();
 
-      if (errInsert) throw errInsert;
+      if (errInsert) {
+        const fallback = await supabase
+          .from("actividades")
+          .insert(rowsInsertBase)
+          .select();
+        if (fallback.error) throw fallback.error;
+        inserted = fallback.data;
+      }
 
       // 3. Si hay reporte diario, crear un hito en eventos_jornada resumiendo las actividades
       if (reporteId && inserted && inserted.length > 0) {
-        const resumenTextos = inserted.map(a => 
-          `[${a.categoria_disciplina || "Tarea"}${a.id_3wl ? ` 3WL:${a.id_3wl}` : ""}] ${a.descripcion} (${a.cantidad_ejecutada || 0} ${a.unidad || ""}, Horómetro: ${a.horometro_horas || 0} hrs, Izajes: ${a.izajes || 0})`
-        ).join(" | ");
+        const resumenTextos = inserted.map(a => a.descripcion).join(" | ");
 
         await supabase.from("eventos_jornada").insert({
           reporte_id: reporteId,
@@ -217,7 +244,7 @@ export default async function handler(req, res) {
         });
       }
 
-      // 4. Si hay bloque POD, actualizar actividad_especifica con el resumen
+      // 4. Si hay bloque POD, actualizar actividad_especifica con el resumen y cerrar consulta bot pendiente
       if (bloque_id && inserted && inserted.length > 0) {
         const resumenBloque = inserted.map(a => a.descripcion).slice(0, 3).join(", ");
         await supabase
@@ -228,6 +255,17 @@ export default async function handler(req, res) {
             actividad_respondida_at: new Date().toISOString()
           })
           .eq("id", bloque_id);
+
+        await supabase
+          .from("estados_consulta_bot")
+          .update({
+            estado_pregunta: "Procesado",
+            esperando_libre: false,
+            esperando_confirmacion: false,
+            respuesta_interpretada: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("planificacion_id", bloque_id);
       }
 
       return res.status(201).json({

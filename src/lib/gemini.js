@@ -873,3 +873,60 @@ Responde ÚNICAMENTE con un JSON válido:
   }
 }
 
+export async function extraerMetricasActividadSupervisor(mensajeSupervisor, nombreActividad = "") {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (!geminiKey) throw new Error("[Gemini] GEMINI_API_KEY no configurada");
+
+  const prompt = `Un supervisor de obra industrial está reportando las métricas ejecutadas para la tarea: "${nombreActividad}".
+Mensaje del supervisor: "${mensajeSupervisor}"
+
+Extrae del mensaje:
+1. "cantidad_ejecutada": número correspondiente a la cantidad realizada de la tarea (ej: metros, toneladas, m3, unidades, spools). Si no se menciona, null.
+2. "unidad": unidad de medida de la cantidad realizada (ej: "m", "Ton", "m3", "un", "spools", "ml"). Si no se menciona, null.
+3. "horometro_horas": número de horas o lectura de horómetro asociada a la tarea. Si no se menciona, null.
+4. "izajes_movimientos": número entero de izajes, maniobras o movimientos realizados. Si no se menciona, null.
+5. "resumen_libre": resumen breve de lo indicado por el supervisor.
+
+Responde ÚNICAMENTE con un JSON válido:
+{
+  "cantidad_ejecutada": 15,
+  "unidad": "m",
+  "horometro_horas": 4,
+  "izajes_movimientos": 6,
+  "resumen_libre": "15 m ejecutados, 4 hrs horómetro, 6 izajes"
+}`;
+
+  const payload = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: "application/json",
+    }
+  };
+
+  const res = await fetch(
+    `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`[Gemini] Error extrayendo métricas supervisor: ${res.status} - ${err}`);
+  }
+
+  const data = await res.json();
+  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "{}";
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    const match = rawText.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    return {};
+  }
+}
+
+
