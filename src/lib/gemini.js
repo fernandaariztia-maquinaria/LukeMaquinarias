@@ -185,14 +185,23 @@ export function parsearTextoVehiculoFallback(textoRaw = "", contexto = {}) {
 // Recibe historial ordenado cronológicamente y lo pasa a la API nativa
 // ================================================================
 export async function procesarMensajeConContexto(historialConversacion, listaEspecialidades, contexto = {}) {
+  const ultimoTurno = Array.isArray(historialConversacion) && historialConversacion.length > 0
+    ? historialConversacion[historialConversacion.length - 1]
+    : null;
+  const ultimoTexto = ultimoTurno?.parts?.find((p) => typeof p.text === "string")?.text || "";
+
   const geminiKey = process.env.GEMINI_API_KEY;
-  if (!geminiKey) throw new Error("[Gemini] GEMINI_API_KEY no configurada");
+  if (!geminiKey) {
+    console.warn("[Gemini] GEMINI_API_KEY no configurada, usando parser local de respaldo.");
+    return parsearMensajeOperadorFallback(ultimoTexto, listaEspecialidades, contexto);
+  }
 
-  const listadoEsp = Array.isArray(listaEspecialidades)
-    ? listaEspecialidades.map(e => `- ID: ${e.id} | Nombre: ${e.nombre_oficial}`).join("\n")
-    : "";
+  try {
+    const listadoEsp = Array.isArray(listaEspecialidades)
+      ? listaEspecialidades.map(e => `- ID: ${e.id} | Nombre: ${e.nombre_oficial}`).join("\n")
+      : "";
 
-  const systemInstruction = `Eres Jaime, el asistente inteligente de operaciones para el proyecto LukeMontaje (LukeEquipos) en una faena industrial chilena.
+    const systemInstruction = `Eres Jaime, el asistente inteligente de operaciones para el proyecto LukeMontaje (LukeEquipos) en una faena industrial chilena.
 Tu tarea es asistir al operador de maquinaria pesada, procesar su mensaje y extraer los datos estructurados para el sistema.
 
 Fecha y hora actual: ${formatFechaHoraChile()}
@@ -239,7 +248,7 @@ REGLAS ESTRICTAS DE INTERACCIÓN Y RESPUESTA:
        - "un cuarto" / "1/4" / "25%" / "0.25" → combustible_nivel_porcentaje = 25, combustible_unidad = 'estanque'
        - "reserva" / "luz de reserva" / "10%" / "0.1" → combustible_nivel_porcentaje = 10, combustible_unidad = 'estanque'
      * Litros directos: si menciona explícitamente "litros" (ej: "180 litros", "cargué 120 litros"), extrae el valor numérico en 'petroleo_litros' o 'combustible_valor_original' con combustible_unidad = 'litros'.
-     * REGLA DE UNIDAD DE MEDIDA DE COMBUSTIBLE: Si el operador entrega un dato numérico de combustible pero no especifica la unidad de medida (por ejemplo dice solo "combustible 50" o "le puse 80" sin aclarar si son litros, cuartos o porcentaje), indícale amablemente en 'mensaje_conversacional_bot': "¿Me confirma si ese valor de combustible (${valor}) corresponde a litros o a fracción/porcentaje de estanque (ej: 1/4, 1/2, 3/4, full)?".
+     * REGLA DE UNIDAD DE MEDIDA DE COMBUSTIBLE: Si el operador entrega un dato numérico de combustible pero no especifica la unidad de medida (por ejemplo dice solo "combustible 50" o "le puse 80" sin aclarar si son litros, cuartos o porcentaje), indícale amablemente en 'mensaje_conversacional_bot': "¿Me confirma si ese valor de combustible indicado corresponde a litros o a fracción/porcentaje de estanque (ej: 1/4, 1/2, 3/4, full)?".
    - Descripción de Labores Realizadas:
      * Si el operador describe las labores efectuadas durante el día o en el cierre (ej: "estuve cargando camiones tolva con la gente de OOCC y luego zanjas con Piping"), extrae un resumen limpio y técnico en el campo 'labores_descripcion'.
    - Números hablados como horómetros: "dos mil trescientos" = 2300, "tres mil" = 3000
@@ -273,27 +282,16 @@ Responde ÚNICAMENTE con un JSON válido. Esquema:
   "mensaje_conversacional_bot": "Confirmación cordial en español de faena chilena, o consulta de unidad de medida de combustible si fue ambiguo"
 }`;
 
-  const payload = {
-    contents: historialConversacion,
-    systemInstruction: { parts: [{ text: systemInstruction }] },
-    generationConfig: {
-      temperature: 0.1,
-      maxOutputTokens: 4096,
-      responseMimeType: "application/json",
-    },
-  };
+    const payload = {
+      contents: historialConversacion,
+      systemInstruction: { parts: [{ text: systemInstruction }] },
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 4096,
+        responseMimeType: "application/json",
+      },
+    };
 
-  const ultimoTurno = Array.isArray(historialConversacion) && historialConversacion.length > 0
-    ? historialConversacion[historialConversacion.length - 1]
-    : null;
-  const ultimoTexto = ultimoTurno?.parts?.find((p) => typeof p.text === "string")?.text || "";
-
-  if (!geminiKey) {
-    console.warn("[Gemini] GEMINI_API_KEY no configurada, usando parser local de respaldo.");
-    return parsearMensajeOperadorFallback(ultimoTexto, listaEspecialidades, contexto);
-  }
-
-  try {
     const res = await fetch(
       `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
       {
@@ -447,7 +445,7 @@ Reglas de Mapeo Semántico ESTRICTAS:
     - "un cuarto" / "1/4" / "25%" / "0.25" → combustible_nivel_porcentaje = 25, combustible_unidad = 'estanque'
     - "reserva" / "luz de reserva" / "10%" / "0.1" → combustible_nivel_porcentaje = 10, combustible_unidad = 'estanque'
   * Litros directos: si menciona explícitamente "litros", extrae el valor en 'petroleo_litros' o 'combustible_inicio_valor' con combustible_unidad = 'litros'.
-  * UNIDAD DE MEDIDA AMBIGUA: Si el operador entrega un número de combustible sin unidad clara (ej: "combustible 40"), indícale amablemente en 'mensaje_conversacional_bot': "¿Me confirma si ese valor de combustible (${valor}) corresponde a litros o a fracción/porcentaje de estanque (ej: 1/4, 1/2, 3/4, full)?".
+  * UNIDAD DE MEDIDA AMBIGUA: Si el operador entrega un número de combustible sin unidad clara (ej: "combustible 40"), indícale amablemente en 'mensaje_conversacional_bot': "¿Me confirma si ese valor de combustible indicado corresponde a litros o a fracción/porcentaje de estanque (ej: 1/4, 1/2, 3/4, full)?".
 - Descripción de Labores Realizadas:
   * Si el operador describe qué hizo durante el día o al cierre y con qué especialidades trabajó, extrae un resumen técnico en 'labores_descripcion'.
 - IMPORTANTE (Carga de Combustible): Frases como "sin combustible", "no cargué combustible", "sin petróleo" o "sin carga" al referirse al cierre significan petroleo_litros = 0. NUNCA las interpretes como falla o estado 'Detenido por Falla'.
