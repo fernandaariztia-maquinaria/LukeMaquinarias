@@ -43,17 +43,17 @@ export function skynavFechaAISO(fechaStr) {
 }
 
 /**
- * Divide un rango de fechas en bloques de máximo 30 días para no exceder la limitación de la API de SKYNAV
+ * Divide un rango de fechas en bloques de máximo 15 días para consultas seguras y rápidas a SKYNAV
  */
-export function dividirEnBloques30Dias(fechaDesdeStr, fechaHastaStr) {
-  const d1 = new Date(fechaDesdeStr);
-  const d2 = new Date(fechaHastaStr);
+export function dividirEnBloques15Dias(fechaDesde, fechaHasta) {
+  const d1 = new Date(fechaDesde);
+  const d2 = new Date(fechaHasta);
   const bloques = [];
 
   let inicio = new Date(d1);
   while (inicio <= d2) {
     let fin = new Date(inicio);
-    fin.setDate(fin.getDate() + 29); // bloque de 30 días máx
+    fin.setDate(fin.getDate() + 14); // Bloques de 15 días máx
     if (fin > d2) fin = new Date(d2);
 
     bloques.push({
@@ -69,50 +69,19 @@ export function dividirEnBloques30Dias(fechaDesdeStr, fechaHastaStr) {
 }
 
 /**
- * Consulta la API de SKYNAV para un rango de fechas (con soporte automático para rangos > 30 días)
+ * Consulta la API de SKYNAV para un bloque simple con reintentos y timeout de 120s
  */
-export async function fetchSkynavResumen({ desde, hasta }) {
-  const baseUrl = process.env.SKYNAV_BASE_URL || DEFAULT_BASE_URL;
-  const path = process.env.SKYNAV_RESUMEN_PATH || DEFAULT_RESUMEN_PATH;
-  const token = process.env.SKYNAV_API_TOKEN;
-
-  if (!token) {
-    throw new Error("[SKYNAV] Variable SKYNAV_API_TOKEN no configurada en .env.local");
-  }
-
-  // Si se pasan fechas en ISO, convertir a dd-MM-yyyy
-  const desdeTxt = formatearFechaSkynav(desde);
-  const hastaTxt = formatearFechaSkynav(hasta);
-
-  // Calcular diferencia en días
-  const fDesde = new Date(skynavFechaAISO(desdeTxt));
-  const fHasta = new Date(skynavFechaAISO(hastaTxt));
-  const diffDias = Math.round((fHasta - fDesde) / (1000 * 60 * 60 * 24));
-
-  if (diffDias > 30) {
-    const bloques = dividirEnBloques30Dias(fDesde, fHasta);
-    const resultadosTotales = [];
-    for (const b of bloques) {
-      const parte = await fetchBloqueSimple(baseUrl, path, token, b.desde, b.hasta);
-      resultadosTotales.push(...parte);
-    }
-    return resultadosTotales;
-  }
-
-  return await fetchBloqueSimple(baseUrl, path, token, desdeTxt, hastaTxt);
-}
-
 async function fetchBloqueSimple(baseUrl, path, token, desdeStr, hastaStr) {
   const url = `${baseUrl}/${path}?desde=${encodeURIComponent(desdeStr)}&hasta=${encodeURIComponent(hastaStr)}`;
 
+  console.log(`[SKYNAV] Consultando ${url}`);
   const res = await fetch(url, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    // Timeout de 60 segundos
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(120000), // 120s
   });
 
   if (!res.ok) {
@@ -129,7 +98,115 @@ async function fetchBloqueSimple(baseUrl, path, token, desdeStr, hastaStr) {
 }
 
 /**
- * Agrupa los eventos granulares de SKYNAV por (unidad, fecha) para generar los resúmenes diarios
+ * Consulta la API de SKYNAV para cualquier rango de fechas dividiendo automáticamente en bloques <= 15 días
+ */
+export async function fetchSkynavResumen({ desde, hasta }) {
+  const baseUrl = process.env.SKYNAV_BASE_URL || DEFAULT_BASE_URL;
+  const path = process.env.SKYNAV_RESUMEN_PATH || DEFAULT_RESUMEN_PATH;
+  const token = process.env.SKYNAV_API_TOKEN;
+
+  if (!token) {
+    throw new Error("[SKYNAV] Variable SKYNAV_API_TOKEN no configurada en .env.local");
+  }
+
+  const desdeTxt = formatearFechaSkynav(desde);
+  const hastaTxt = formatearFechaSkynav(hasta);
+
+  const fDesde = new Date(skynavFechaAISO(desdeTxt));
+  const fHasta = new Date(skynavFechaAISO(hastaTxt));
+  const diffDias = Math.round((fHasta - fDesde) / (1000 * 60 * 60 * 24));
+
+  if (diffDias > 15) {
+    const bloques = dividirEnBloques15Dias(fDesde, fHasta);
+    const resultadosTotales = [];
+    for (const b of bloques) {
+      const parte = await fetchBloqueSimple(baseUrl, path, token, b.desde, b.hasta);
+      resultadosTotales.push(...parte);
+    }
+    return resultadosTotales;
+  }
+
+  return await fetchBloqueSimple(baseUrl, path, token, desdeTxt, hastaTxt);
+}
+
+/**
+ * Procesa y extrae TODOS los viajes y usos individuales (Viaje y Trabajando)
+ * vinculando con la flota de maquinaria y evitando duplicados
+ */
+export function procesarViajesSkynav(registrosCrudos, mapaPorPatente, mapaPorCodigo) {
+  const mapaViajes = new Map();
+
+  for (const r of registrosCrudos) {
+    const evento = (r.Evento || "").trim();
+    // Considerar viajes u operación de trabajo (no ralentí ni estacionado ni excesos)
+    if (evento !== "Viaje" && evento !== "Trabajando") continue;
+
+    const rawId = (r.Patente || r.Nombre || "").trim();
+    if (!rawId) continue;
+
+    const fechaISO = skynavFechaAISO(r.Fecha);
+    if (!fechaISO) continue;
+
+    const horaInicio = r.Inicio || "00:00:00";
+    const clave = `${normalizarIdentificador(rawId)}_${fechaISO}_${horaInicio}_${evento}`;
+
+    const patNorm = normalizarIdentificador(r.Patente);
+    const nomNorm = normalizarIdentificador(r.Nombre);
+    const eq =
+      (patNorm ? mapaPorPatente.get(patNorm) : null) ||
+      (nomNorm ? mapaPorCodigo.get(nomNorm) : null) ||
+      (patNorm ? mapaPorCodigo.get(patNorm) : null) ||
+      (nomNorm ? mapaPorPatente.get(nomNorm) : null);
+
+    const distKm = Number(r["Distancia (km)"]) || 0;
+    const durMin = Number(r["Tiempo (min)"]) || 0;
+    const litCan = Number(r["Litros CAN"]) || 0;
+    const litGps = Number(r["Litros GPS"]) || 0;
+    const comb = Number(r.Combustible) || (litCan > 0 ? litCan : litGps);
+
+    const orig = (r["Origen Combustible"] || "").toUpperCase();
+    const esCan = orig === "CAN" || litCan > 0;
+    const origenKm = esCan ? "CAN" : "GPS";
+    const origenComb = esCan ? "CAN" : "GPS";
+
+    // Deduplicación en memoria: si ya existe el viaje exacto, se actualiza
+    mapaViajes.set(clave, {
+      equipo_id: eq ? eq.id : null,
+      identificador_skynav: rawId,
+      patente: r.Patente ? r.Patente.trim() : (eq?.patente || null),
+      nombre_skynav: r.Nombre ? r.Nombre.trim() : null,
+      tipo_skynav: r.Tipo || null,
+      subtipo_skynav: r.Subtipo || null,
+      evento: evento,
+      fecha: fechaISO,
+      hora_inicio: horaInicio,
+      hora_fin: r.Fin || null,
+      tiempo_min: Math.round(durMin * 100) / 100,
+      km_recorridos: Math.round(distKm * 100) / 100,
+      litros_combustible: Math.round(comb * 100) / 100,
+      litros_can: Math.round(litCan * 100) / 100,
+      litros_gps: Math.round(litGps * 100) / 100,
+      origen_km: origenKm,
+      origen_combustible: origenComb,
+      rut_conductor: r["RUT Conductor"] ? String(r["RUT Conductor"]).trim() : null,
+      nombre_conductor: r["Nombre Conductor"] ? String(r["Nombre Conductor"]).trim() : null,
+      lugar_inicio: r["Lugar Inicio"] || null,
+      lugar_fin: r["Lugar Fin"] || null,
+      geocerca_inicio: r["Geocerca Inicio"] || null,
+      geocerca_fin: r["Geocerca Fin"] || null,
+      latitud_inicio: r["Latitud Inicio"] ? Number(r["Latitud Inicio"]) : null,
+      longitud_inicio: r["Longitud Inicio"] ? Number(r["Longitud Inicio"]) : null,
+      latitud_fin: r["Latitud Fin"] ? Number(r["Latitud Fin"]) : null,
+      longitud_fin: r["Longitud Fin"] ? Number(r["Longitud Fin"]) : null,
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  return Array.from(mapaViajes.values());
+}
+
+/**
+ * Agrupa los eventos granulares por (unidad, fecha) para el resumen diario
  */
 export function procesarEventosSkynav(registrosCrudos) {
   const mapaDiario = new Map();
@@ -221,7 +298,6 @@ export function procesarEventosSkynav(registrosCrudos) {
       item.conductores.add(r["Nombre Conductor"].trim());
     }
 
-    // Actualizar última posición del día con base en la hora de fin
     const finHora = r.Fin || "00:00:00";
     if (finHora >= item.ultimo_fin_hora) {
       item.ultimo_fin_hora = finHora;
@@ -239,7 +315,6 @@ export function procesarEventosSkynav(registrosCrudos) {
     }
   }
 
-  // Formatear salida redondeando decimales y convirtiendo Set a Array
   return Array.from(mapaDiario.values()).map((u) => ({
     ...u,
     km_recorridos: Math.round(u.km_recorridos * 100) / 100,
@@ -259,6 +334,8 @@ export function procesarEventosSkynav(registrosCrudos) {
 
 /**
  * Realiza la sincronización completa desde SKYNAV hacia Supabase (esquema maquinaria)
+ * Guarda viajes detallados (maquinaria.telemetria_viajes), resúmenes diarios (maquinaria.telemetria_diaria)
+ * y actualiza la última posición GPS de los equipos.
  */
 export async function sincronizarTelemetria({ desde, hasta, iniciadoPor = "MANUAL" }) {
   const inicioTiempo = Date.now();
@@ -274,7 +351,7 @@ export async function sincronizarTelemetria({ desde, hasta, iniciadoPor = "MANUA
     throw new Error(`[SKYNAV] Error consultando equipos en Supabase: ${errEquipos.message}`);
   }
 
-  // Índices en memoria para matching ultrarrápido
+  // Índices para matching rápido
   const mapaPorPatente = new Map();
   const mapaPorCodigo = new Map();
 
@@ -289,14 +366,20 @@ export async function sincronizarTelemetria({ desde, hasta, iniciadoPor = "MANUA
 
   // 2. Consultar API SKYNAV
   const rawList = await fetchSkynavResumen({ desde, hasta });
+  console.log(`[SKYNAV] Eventos crudos obtenidos: ${rawList.length}`);
+
+  // 3. Procesar Viajes Individuales
+  const viajes = procesarViajesSkynav(rawList, mapaPorPatente, mapaPorCodigo);
+  console.log(`[SKYNAV] Viajes individuales procesados: ${viajes.length}`);
+
+  // 4. Procesar Resúmenes Diarios
   const resumenes = procesarEventosSkynav(rawList);
 
   let mapeadas = 0;
   let sinMapear = 0;
   const equiposAActualizar = new Map();
 
-  // 3. Asociar equipo_id a cada resumen diario
-  const filasParaInsertar = resumenes.map((r) => {
+  const filasDiarias = resumenes.map((r) => {
     const patNorm = normalizarIdentificador(r.patente);
     const nomNorm = normalizarIdentificador(r.nombre_skynav);
 
@@ -310,7 +393,6 @@ export async function sincronizarTelemetria({ desde, hasta, iniciadoPor = "MANUA
 
     if (equipoId) {
       mapeadas += 1;
-      // Guardar última posición conocida para actualizar maquinaria.equipos
       if (r.latitud_ultima && r.longitud_ultima) {
         equiposAActualizar.set(equipoId, {
           latitud_actual: r.latitud_ultima,
@@ -332,23 +414,39 @@ export async function sincronizarTelemetria({ desde, hasta, iniciadoPor = "MANUA
     };
   });
 
-  // 4. Upsert en lotes de 100 registros a maquinaria.telemetria_diaria
+  // 5. Guardar VIAJES en lotes de 100 con upsert idempotente
   const BATCH_SIZE = 100;
-  for (let i = 0; i < filasParaInsertar.length; i += BATCH_SIZE) {
-    const lote = filasParaInsertar.slice(i, i + BATCH_SIZE);
-    const { error: errUpsert } = await supabase
+  for (let i = 0; i < viajes.length; i += BATCH_SIZE) {
+    const lote = viajes.slice(i, i + BATCH_SIZE);
+    const { error: errViajes } = await supabase
+      .schema("maquinaria")
+      .from("telemetria_viajes")
+      .upsert(lote, {
+        onConflict: "identificador_skynav,fecha,hora_inicio,evento",
+      });
+
+    if (errViajes) {
+      console.error(`[SKYNAV] Error al guardar lote de viajes:`, errViajes);
+      throw new Error(`[SKYNAV] Error al guardar lote de viajes: ${errViajes.message}`);
+    }
+  }
+
+  // 6. Guardar RESÚMENES DIARIOS en lotes de 100
+  for (let i = 0; i < filasDiarias.length; i += BATCH_SIZE) {
+    const lote = filasDiarias.slice(i, i + BATCH_SIZE);
+    const { error: errDiario } = await supabase
       .schema("maquinaria")
       .from("telemetria_diaria")
       .upsert(lote, {
         onConflict: "identificador_skynav,fecha",
       });
 
-    if (errUpsert) {
-      throw new Error(`[SKYNAV] Error al guardar lote de telemetría: ${errUpsert.message}`);
+    if (errDiario) {
+      console.error(`[SKYNAV] Error al guardar lote diario:`, errDiario);
     }
   }
 
-  // 5. Actualizar última posición de los equipos en maquinaria.equipos
+  // 7. Actualizar última posición de los equipos en maquinaria.equipos
   for (const [eqId, updateData] of equiposAActualizar.entries()) {
     await supabase
       .schema("maquinaria")
@@ -359,7 +457,7 @@ export async function sincronizarTelemetria({ desde, hasta, iniciadoPor = "MANUA
 
   const duracionMs = Date.now() - inicioTiempo;
 
-  // 6. Registrar en auditoría de sincronizaciones
+  // 8. Registrar auditoría de sincronización
   const fDesdeISO = skynavFechaAISO(formatearFechaSkynav(desde));
   const fHastaISO = skynavFechaAISO(formatearFechaSkynav(hasta));
 
@@ -382,6 +480,7 @@ export async function sincronizarTelemetria({ desde, hasta, iniciadoPor = "MANUA
     success: true,
     rango: { desde: fDesdeISO, hasta: fHastaISO },
     registros_crudos: rawList.length,
+    total_viajes: viajes.length,
     unidades_procesadas: resumenes.length,
     unidades_mapeadas: mapeadas,
     unidades_sin_mapear: sinMapear,
@@ -389,4 +488,3 @@ export async function sincronizarTelemetria({ desde, hasta, iniciadoPor = "MANUA
     duracion_ms: duracionMs,
   };
 }
-
