@@ -15,31 +15,71 @@ export default async function handler(req, res) {
     patente,
     origen,
     search,
-    limit = 200,
+    limit = 100,
     offset = 0,
   } = req.query;
 
   try {
-    // 1. Si solicitan las fechas disponibles con datos guardados
+    // 1. Obtener todas las fechas distintas guardadas en la base de datos
+    const { data: fechasRaw } = await supabase
+      .schema("maquinaria")
+      .from("telemetria_fechas_disponibles")
+      .select("fecha");
+
+    const fechasUnicas = (fechasRaw || []).map((f) => f.fecha);
+    const fechaMin = fechasUnicas[fechasUnicas.length - 1] || "2026-10-01";
+    const fechaMax = fechasUnicas[0] || new Date().toISOString().slice(0, 10);
+
     if (action === "fechas_disponibles") {
-      const { data: fechasRaw, error: errFechas } = await supabase
-        .schema("maquinaria")
-        .from("telemetria_viajes")
-        .select("fecha")
-        .order("fecha", { ascending: false });
-
-      if (errFechas) throw errFechas;
-
-      const fechasUnicas = [...new Set((fechasRaw || []).map((f) => f.fecha))];
       return res.status(200).json({
         success: true,
         fechas: fechasUnicas,
-        min: fechasUnicas[fechasUnicas.length - 1] || null,
-        max: fechasUnicas[0] || null,
+        min: fechaMin,
+        max: fechaMax,
       });
     }
 
-    // 2. Consulta de VIAJES individuales
+    // Normalizar fechas para filtros
+    const filtroDesde = fecha || desde || null;
+    const filtroHasta = fecha || hasta || null;
+
+    // 2. Calcular KPIs exactos instantáneamente mediante la función RPC
+    const { data: kpisRpc, error: errRpc } = await supabase
+      .schema("maquinaria")
+      .rpc("get_telemetria_kpis", {
+        p_desde: filtroDesde,
+        p_hasta: filtroHasta,
+        p_patente: patente || null,
+        p_origen: origen || null,
+        p_search: search || null,
+      });
+
+    let kpis = {
+      total_viajes: 0,
+      total_km: 0,
+      total_km_can: 0,
+      total_km_gps: 0,
+      total_horas: 0,
+      total_combustible_litros: 0,
+      total_combustible_can: 0,
+      total_combustible_gps: 0,
+    };
+
+    if (kpisRpc && kpisRpc.length > 0) {
+      const row = kpisRpc[0];
+      kpis = {
+        total_viajes: Number(row.total_viajes) || 0,
+        total_km: Number(row.total_km) || 0,
+        total_km_can: Number(row.total_km_can) || 0,
+        total_km_gps: Number(row.total_km_gps) || 0,
+        total_horas: Number(row.total_horas) || 0,
+        total_combustible_litros: Number(row.total_combustible) || 0,
+        total_combustible_can: Number(row.total_combustible_can) || 0,
+        total_combustible_gps: Number(row.total_combustible_gps) || 0,
+      };
+    }
+
+    // 3. Consulta de viajes paginados
     let query = supabase
       .schema("maquinaria")
       .from("telemetria_viajes")
@@ -49,8 +89,7 @@ export default async function handler(req, res) {
         equipo:equipos!telemetria_viajes_equipo_id_fkey(
           id, codigo_interno, patente, descripcion_equipo, tipo, categoria
         )
-      `,
-        { count: "exact" }
+      `
       );
 
     if (fecha) {
@@ -83,68 +122,27 @@ export default async function handler(req, res) {
       );
     }
 
+    const nLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+    const nOffset = Math.max(Number(offset) || 0, 0);
+
     query = query
       .order("fecha", { ascending: false })
       .order("hora_inicio", { ascending: false })
-      .range(Number(offset), Number(offset) + Number(limit) - 1);
+      .range(nOffset, nOffset + nLimit - 1);
 
-    const { data, count, error } = await query;
-    if (error) throw error;
-
-    // Calcular KPIs acumulados de los viajes obtenidos
-    let totalKm = 0;
-    let totalKmCan = 0;
-    let totalKmGps = 0;
-    let totalHoras = 0;
-    let totalCombustible = 0;
-    let totalCombustibleCan = 0;
-    let totalCombustibleGps = 0;
-
-    (data || []).forEach((r) => {
-      const km = Number(r.km_recorridos) || 0;
-      const comb = Number(r.litros_combustible) || 0;
-      const canLit = Number(r.litros_can) || 0;
-      const gpsLit = Number(r.litros_gps) || 0;
-      const min = Number(r.tiempo_min) || 0;
-
-      totalKm += km;
-      if (r.origen_km === "CAN" || r.origen_combustible === "CAN" || canLit > 0) {
-        totalKmCan += km;
-      } else {
-        totalKmGps += km;
-      }
-
-      totalHoras += min / 60;
-      totalCombustible += comb;
-      totalCombustibleCan += canLit > 0 ? canLit : (r.origen_combustible === "CAN" ? comb : 0);
-      totalCombustibleGps += gpsLit > 0 ? gpsLit : (r.origen_combustible === "GPS" ? comb : 0);
-    });
-
-    // Obtener fechas disponibles (para que el frontend conozca el rango con datos)
-    const { data: fechasDistintas } = await supabase
-      .schema("maquinaria")
-      .from("telemetria_viajes")
-      .select("fecha")
-      .order("fecha", { ascending: false })
-      .limit(300);
-
-    const fechasUnicas = [...new Set((fechasDistintas || []).map((f) => f.fecha))];
+    const { data: viajes, error: errViajes } = await query;
+    if (errViajes) throw errViajes;
 
     return res.status(200).json({
       success: true,
-      total: count,
+      total: kpis.total_viajes,
+      limit: nLimit,
+      offset: nOffset,
       fechas_disponibles: fechasUnicas,
-      kpis: {
-        total_viajes: count || (data || []).length,
-        total_km: Math.round(totalKm * 10) / 10,
-        total_km_can: Math.round(totalKmCan * 10) / 10,
-        total_km_gps: Math.round(totalKmGps * 10) / 10,
-        total_horas: Math.round(totalHoras * 10) / 10,
-        total_combustible_litros: Math.round(totalCombustible * 10) / 10,
-        total_combustible_can: Math.round(totalCombustibleCan * 10) / 10,
-        total_combustible_gps: Math.round(totalCombustibleGps * 10) / 10,
-      },
-      data: data || [],
+      fecha_min: fechaMin,
+      fecha_max: fechaMax,
+      kpis,
+      data: viajes || [],
     });
   } catch (err) {
     console.error("[API telemetria/index GET] Error:", err);

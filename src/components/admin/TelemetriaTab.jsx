@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Radio, RefreshCw, Gauge, Clock, Fuel,
-  MapPin, Search, Calendar, ChevronRight,
-  ExternalLink, Filter, Car, Navigation, User, Info
+  MapPin, Search, Calendar, ChevronLeft, ChevronRight,
+  ExternalLink, Filter, Car, Navigation, User, Info, Check
 } from "lucide-react";
 
 export default function TelemetriaTab({ currentUser }) {
-  // Verificar si el usuario actual es Administrador
+  // 1. Permiso de Administrador
   const esAdmin = useMemo(() => {
     if (!currentUser) return false;
     const rol = String(currentUser.rol || "").toLowerCase();
@@ -15,7 +15,11 @@ export default function TelemetriaTab({ currentUser }) {
 
   // Estados de datos
   const [viajes, setViajes] = useState([]);
+  const [totalViajes, setTotalViajes] = useState(0);
   const [fechasDisponibles, setFechasDisponibles] = useState([]);
+  const [fechaMinima, setFechaMinima] = useState("2026-10-01");
+  const [fechaMaxima, setFechaMaxima] = useState(() => new Date().toISOString().slice(0, 10));
+
   const [kpis, setKpis] = useState({
     total_viajes: 0,
     total_km: 0,
@@ -26,26 +30,28 @@ export default function TelemetriaTab({ currentUser }) {
     total_combustible_can: 0,
     total_combustible_gps: 0,
   });
+
   const [loading, setLoading] = useState(true);
   const [sincronizando, setSincronizando] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
 
-  // Filtros locales (consultan SOLO la base de datos Supabase, nunca la API de SKYNAV)
+  // Paginación
+  const [pagina, setPagina] = useState(1);
+  const LIMIT = 100;
+
+  // Filtros de Consulta en Base de Datos (NO llaman a la API externa)
+  // Por defecto abarca desde el 01 de Octubre hasta hoy para ver todo el histórico guardado
+  const [desdeFiltro, setDesdeFiltro] = useState("2026-10-01");
+  const [hastaFiltro, setHastaFiltro] = useState(() => new Date().toISOString().slice(0, 10));
   const [search, setSearch] = useState("");
-  const [desdeFiltro, setDesdeFiltro] = useState("");
-  const [hastaFiltro, setHastaFiltro] = useState("");
   const [origenFiltro, setOrigenFiltro] = useState(""); // "" | "CAN" | "GPS"
   const [equipoFiltro, setEquipoFiltro] = useState("");
 
   // Rango para el panel de sincronización manual (solo visible para Administradores)
-  const [syncDesde, setSyncDesde] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().slice(0, 10);
-  });
+  const [syncDesde, setSyncDesde] = useState("2026-10-01");
   const [syncHasta, setSyncHasta] = useState(() => new Date().toISOString().slice(0, 10));
 
-  // Cargar datos locales de viajes desde la base de datos Supabase
+  // Cargar viajes desde Supabase
   const cargarViajesGuardados = useCallback(async () => {
     setLoading(true);
     try {
@@ -55,33 +61,41 @@ export default function TelemetriaTab({ currentUser }) {
       if (search) params.set("search", search);
       if (origenFiltro) params.set("origen", origenFiltro);
       if (equipoFiltro) params.set("patente", equipoFiltro);
-      params.set("limit", "500");
+      params.set("limit", String(LIMIT));
+      params.set("offset", String((pagina - 1) * LIMIT));
 
       const res = await fetch(`/api/admin/telemetria?${params.toString()}`);
       const json = await res.json();
       if (json.success) {
         setViajes(json.data || []);
+        setTotalViajes(json.total || 0);
         if (json.kpis) setKpis(json.kpis);
-        if (json.fechas_disponibles && json.fechas_disponibles.length > 0) {
-          setFechasDisponibles(json.fechas_disponibles);
-        }
+        if (json.fechas_disponibles) setFechasDisponibles(json.fechas_disponibles);
+        if (json.fecha_min) setFechaMinima(json.fecha_min);
+        if (json.fecha_max) setFechaMaxima(json.fecha_max);
       }
     } catch (e) {
       console.error("[TelemetriaTab] Error al cargar viajes:", e.message);
     } finally {
       setLoading(false);
     }
-  }, [desdeFiltro, hastaFiltro, search, origenFiltro, equipoFiltro]);
+  }, [desdeFiltro, hastaFiltro, search, origenFiltro, equipoFiltro, pagina]);
 
   useEffect(() => {
     cargarViajesGuardados();
   }, [cargarViajesGuardados]);
 
-  // Ejecutar sincronización con SKYNAV (solo admins)
+  // Al cambiar filtros, resetear a página 1
+  const handleFiltroCambio = (setter, val) => {
+    setter(val);
+    setPagina(1);
+  };
+
+  // Sincronización manual (solo Administrador)
   const ejecutarSincronizacion = async (desde, hasta) => {
     if (!esAdmin) return;
     setSincronizando(true);
-    setSyncMsg({ tipo: "info", texto: "Sincronizando viajes con SKYNAV... (esto puede tardar unos segundos)" });
+    setSyncMsg({ tipo: "info", texto: "Sincronizando viajes con SKYNAV... (consultando API externa)" });
     try {
       const res = await fetch("/api/admin/telemetria/sync", {
         method: "POST",
@@ -92,8 +106,9 @@ export default function TelemetriaTab({ currentUser }) {
       if (json.success) {
         setSyncMsg({
           tipo: "success",
-          texto: `Sincronización completada: ${json.total_viajes || 0} viajes registrados (${json.unidades_mapeadas || 0} unidades vinculadas a la flota).`,
+          texto: `Sincronización completada: ${json.total_viajes || 0} viajes registrados.`,
         });
+        setPagina(1);
         cargarViajesGuardados();
       } else {
         setSyncMsg({ tipo: "error", texto: `Error en sincronización: ${json.error || "Falla desconocida"}` });
@@ -105,25 +120,8 @@ export default function TelemetriaTab({ currentUser }) {
     }
   };
 
-  // Rango de fechas disponibles en base de datos
-  const fechaMinima = fechasDisponibles[fechasDisponibles.length - 1] || "";
-  const fechaMaxima = fechasDisponibles[0] || "";
-
-  // Lista única de equipos / patentes en los viajes cargados para filtro rápido
-  const patentesDisponibles = useMemo(() => {
-    const map = new Map();
-    viajes.forEach((v) => {
-      const pat = v.patente || v.identificador_skynav;
-      if (pat && !map.has(pat)) {
-        map.set(pat, {
-          patente: pat,
-          codigo: v.equipo?.codigo_interno || "",
-          descripcion: v.equipo?.descripcion_equipo || v.subtipo_skynav || "",
-        });
-      }
-    });
-    return Array.from(map.values()).sort((a, b) => a.patente.localeCompare(b.patente));
-  }, [viajes]);
+  const totalPaginas = Math.ceil(totalViajes / LIMIT) || 1;
+  const hoyISO = new Date().toISOString().slice(0, 10);
 
   return (
     <div style={{ padding: "24px", maxWidth: "1650px", margin: "0 auto" }}>
@@ -144,7 +142,7 @@ export default function TelemetriaTab({ currentUser }) {
               Telemetría y Registro de Viajes
             </h1>
             <p style={{ margin: "2px 0 0", fontSize: "13px", color: "#64748b" }}>
-              Histórico detallado de cada uso y viaje por equipo: chofer, distancias, combustible, lugar de inicio y fin.
+              Histórico permanente de cada viaje: equipo, chofer, kilometraje, combustible consumido, lugar de inicio y fin.
             </p>
           </div>
         </div>
@@ -215,7 +213,7 @@ export default function TelemetriaTab({ currentUser }) {
       {/* Tarjetas KPI (Sin excesos de velocidad) */}
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-        gap: "16px", marginBottom: "22px",
+        gap: "16px", marginBottom: "20px",
       }}>
         {/* Total Viajes Registrados */}
         <div style={{
@@ -230,7 +228,7 @@ export default function TelemetriaTab({ currentUser }) {
             {kpis.total_viajes?.toLocaleString("es-CL") || 0}
           </div>
           <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "6px", borderTop: "1px solid #f1f5f9", paddingTop: "6px" }}>
-            Usos y recorridos en el filtro
+            Viajes en el período filtrado
           </div>
         </div>
 
@@ -262,14 +260,14 @@ export default function TelemetriaTab({ currentUser }) {
           border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
         }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", color: "#64748b", fontSize: "13px" }}>
-            <span>Tiempo de Recorrido</span>
+            <span>Tiempo de Operación</span>
             <Clock size={18} color="#f59e0b" />
           </div>
           <div style={{ fontSize: "26px", fontWeight: 700, color: "#0f172a", marginTop: "8px" }}>
             {kpis.total_horas?.toLocaleString("es-CL") || 0} <span style={{ fontSize: "14px", fontWeight: 500, color: "#64748b" }}>hrs</span>
           </div>
           <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "6px", borderTop: "1px solid #f1f5f9", paddingTop: "6px" }}>
-            Horas acumuladas de viaje
+            Horas acumuladas de uso
           </div>
         </div>
 
@@ -302,60 +300,96 @@ export default function TelemetriaTab({ currentUser }) {
         border: "1px solid #e2e8f0", marginBottom: "20px", display: "flex",
         flexDirection: "column", gap: "12px",
       }}>
-        {/* Información de Fechas Disponibles en el Histórico */}
-        {fechaMinima && fechaMaxima && (
-          <div style={{
-            display: "flex", alignItems: "center", gap: "8px",
-            fontSize: "12px", color: "#475569", backgroundColor: "#f8fafc",
-            padding: "8px 12px", borderRadius: "6px", border: "1px solid #e2e8f0",
-          }}>
-            <Info size={14} color="#0284c7" />
+        {/* Banner Informativo del Histórico */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap",
+          gap: "8px", fontSize: "12px", color: "#475569", backgroundColor: "#f8fafc",
+          padding: "8px 14px", borderRadius: "6px", border: "1px solid #e2e8f0",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <Info size={15} color="#0284c7" />
             <span>
-              <strong>Histórico guardado disponible:</strong> desde el <strong>{fechaMinima}</strong> hasta el <strong>{fechaMaxima}</strong> ({fechasDisponibles.length} días con registros).
+              <strong>Histórico de viajes disponible:</strong> desde el <strong>{fechaMinima}</strong> hasta el <strong>{fechaMaxima}</strong> ({fechasDisponibles.length} días registrados).
             </span>
           </div>
-        )}
+          <span style={{ color: "#16a34a", fontWeight: 600, fontSize: "11px" }}>
+            ✓ Consultando base de datos guardada
+          </span>
+        </div>
 
         <div style={{
           display: "flex", flexWrap: "wrap", alignItems: "center",
           justifyContent: "space-between", gap: "12px",
         }}>
-          {/* Rango de Fechas (Restringido a fechas guardadas) */}
+          {/* Rango de Fechas (Permite consultar TODO octubre, noviembre o cualquier fecha) */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
             <Calendar size={16} color="#64748b" />
-            <span style={{ fontSize: "12px", fontWeight: 600, color: "#334155" }}>Filtrar por Fecha:</span>
+            <span style={{ fontSize: "12px", fontWeight: 600, color: "#334155" }}>Rango de Fechas:</span>
             <input
               type="date"
               value={desdeFiltro}
-              min={fechaMinima}
-              max={fechaMaxima}
-              onChange={(e) => setDesdeFiltro(e.target.value)}
+              max={hoyISO}
+              onChange={(e) => handleFiltroCambio(setDesdeFiltro, e.target.value)}
               style={{
                 fontSize: "12px", padding: "6px 8px", borderRadius: "6px",
-                border: "1px solid #cbd5e1", outline: "none",
+                border: "1px solid #cbd5e1", outline: "none", backgroundColor: "#ffffff",
               }}
             />
             <span style={{ fontSize: "12px", color: "#94a3b8" }}>al</span>
             <input
               type="date"
               value={hastaFiltro}
-              min={fechaMinima}
-              max={fechaMaxima}
-              onChange={(e) => setHastaFiltro(e.target.value)}
+              max={hoyISO}
+              onChange={(e) => handleFiltroCambio(setHastaFiltro, e.target.value)}
               style={{
                 fontSize: "12px", padding: "6px 8px", borderRadius: "6px",
-                border: "1px solid #cbd5e1", outline: "none",
+                border: "1px solid #cbd5e1", outline: "none", backgroundColor: "#ffffff",
               }}
             />
 
-            {/* Accesos rápidos de rango */}
-            <div style={{ display: "flex", gap: "4px", marginLeft: "6px" }}>
+            {/* Accesos rápidos */}
+            <div style={{ display: "flex", gap: "4px", marginLeft: "4px", flexWrap: "wrap" }}>
               <button
                 onClick={() => {
-                  if (fechaMaxima) {
-                    setDesdeFiltro(fechaMaxima);
-                    setHastaFiltro(fechaMaxima);
-                  }
+                  handleFiltroCambio(setDesdeFiltro, "2026-10-01");
+                  handleFiltroCambio(setHastaFiltro, hoyISO);
+                }}
+                style={{
+                  fontSize: "11px", padding: "4px 8px", borderRadius: "4px",
+                  border: "1px solid #0284c7", backgroundColor: (desdeFiltro === "2026-10-01" && hastaFiltro === hoyISO) ? "#e0f2fe" : "#ffffff",
+                  color: "#0369a1", cursor: "pointer", fontWeight: 600,
+                }}
+              >
+                Octubre a Hoy
+              </button>
+              <button
+                onClick={() => {
+                  handleFiltroCambio(setDesdeFiltro, "2026-11-01");
+                  handleFiltroCambio(setHastaFiltro, hoyISO);
+                }}
+                style={{
+                  fontSize: "11px", padding: "4px 8px", borderRadius: "4px",
+                  border: "1px solid #cbd5e1", backgroundColor: "#f8fafc", cursor: "pointer",
+                }}
+              >
+                Noviembre
+              </button>
+              <button
+                onClick={() => {
+                  handleFiltroCambio(setDesdeFiltro, "2026-10-01");
+                  handleFiltroCambio(setHastaFiltro, "2026-10-31");
+                }}
+                style={{
+                  fontSize: "11px", padding: "4px 8px", borderRadius: "4px",
+                  border: "1px solid #cbd5e1", backgroundColor: "#f8fafc", cursor: "pointer",
+                }}
+              >
+                Solo Octubre
+              </button>
+              <button
+                onClick={() => {
+                  handleFiltroCambio(setDesdeFiltro, fechaMaxima);
+                  handleFiltroCambio(setHastaFiltro, fechaMaxima);
                 }}
                 style={{
                   fontSize: "11px", padding: "4px 8px", borderRadius: "4px",
@@ -364,46 +398,15 @@ export default function TelemetriaTab({ currentUser }) {
               >
                 Último día ({fechaMaxima})
               </button>
-              <button
-                onClick={() => {
-                  setDesdeFiltro("");
-                  setHastaFiltro("");
-                }}
-                style={{
-                  fontSize: "11px", padding: "4px 8px", borderRadius: "4px",
-                  border: "1px solid #cbd5e1", backgroundColor: "#f8fafc", cursor: "pointer",
-                }}
-              >
-                Todo el histórico
-              </button>
             </div>
           </div>
 
-          {/* Filtro por Equipo / Patente */}
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            <Car size={16} color="#64748b" />
-            <select
-              value={equipoFiltro}
-              onChange={(e) => setEquipoFiltro(e.target.value)}
-              style={{
-                fontSize: "12px", padding: "6px 10px", borderRadius: "6px",
-                border: "1px solid #cbd5e1", outline: "none", backgroundColor: "#ffffff",
-                maxWidth: "220px",
-              }}
-            >
-              <option value="">Todos los equipos</option>
-              {patentesDisponibles.map((p) => (
-                <option key={p.patente} value={p.patente}>
-                  {p.patente} {p.codigo ? `(${p.codigo})` : ""}
-                </option>
-              ))}
-            </select>
-
-            {/* Filtro por Origen de Medición (CAN vs GPS) */}
-            <Filter size={15} color="#64748b" />
+          {/* Filtro por Origen de Medición (CAN vs GPS) */}
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <Filter size={14} color="#64748b" />
             <select
               value={origenFiltro}
-              onChange={(e) => setOrigenFiltro(e.target.value)}
+              onChange={(e) => handleFiltroCambio(setOrigenFiltro, e.target.value)}
               style={{
                 fontSize: "12px", padding: "6px 10px", borderRadius: "6px",
                 border: "1px solid #cbd5e1", outline: "none", backgroundColor: "#ffffff",
@@ -416,14 +419,14 @@ export default function TelemetriaTab({ currentUser }) {
             </select>
           </div>
 
-          {/* Búsqueda por texto (Chofer, lugar, etc.) */}
+          {/* Búsqueda por texto (Chofer, lugar, patente, etc.) */}
           <div style={{ position: "relative", minWidth: "260px" }}>
             <Search size={15} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
             <input
               type="text"
-              placeholder="Buscar por chofer, lugar, patente..."
+              placeholder="Buscar por patente, chofer, lugar..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => handleFiltroCambio(setSearch, e.target.value)}
               style={{
                 width: "100%", padding: "6px 10px 6px 30px", fontSize: "12px",
                 borderRadius: "6px", border: "1px solid #cbd5e1", outline: "none",
@@ -432,31 +435,75 @@ export default function TelemetriaTab({ currentUser }) {
           </div>
 
           {/* Botón limpiar */}
-          {(desdeFiltro || hastaFiltro || search || origenFiltro || equipoFiltro) && (
+          {(desdeFiltro !== "2026-10-01" || hastaFiltro !== hoyISO || search || origenFiltro || equipoFiltro) && (
             <button
               onClick={() => {
-                setDesdeFiltro("");
-                setHastaFiltro("");
+                setDesdeFiltro("2026-10-01");
+                setHastaFiltro(hoyISO);
                 setSearch("");
                 setOrigenFiltro("");
                 setEquipoFiltro("");
+                setPagina(1);
               }}
               style={{
                 fontSize: "12px", color: "#0284c7", background: "none",
                 border: "none", textDecoration: "underline", cursor: "pointer",
               }}
             >
-              Limpiar filtros
+              Restablecer filtros
             </button>
           )}
         </div>
       </div>
 
-      {/* Tabla Detallada de Viajes Individuales */}
+      {/* Contenedor de la Tabla */}
       <div style={{
         backgroundColor: "#ffffff", borderRadius: "10px", border: "1px solid #e2e8f0",
         overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
       }}>
+        {/* Barra superior de conteo y paginación */}
+        <div style={{
+          padding: "12px 18px", borderBottom: "1px solid #e2e8f0", backgroundColor: "#f8fafc",
+          display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px",
+        }}>
+          <div style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>
+            Mostrando {viajes.length > 0 ? `${(pagina - 1) * LIMIT + 1} - ${Math.min(pagina * LIMIT, totalViajes)}` : 0} de {totalViajes.toLocaleString("es-CL")} viajes
+          </div>
+
+          {totalPaginas > 1 && (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "12px", color: "#64748b" }}>
+                Página {pagina} de {totalPaginas}
+              </span>
+              <button
+                onClick={() => setPagina((p) => Math.max(p - 1, 1))}
+                disabled={pagina === 1}
+                style={{
+                  display: "flex", alignItems: "center", gap: "4px", padding: "5px 10px",
+                  fontSize: "12px", borderRadius: "6px", border: "1px solid #cbd5e1",
+                  backgroundColor: pagina === 1 ? "#f1f5f9" : "#ffffff",
+                  cursor: pagina === 1 ? "not-allowed" : "pointer", color: pagina === 1 ? "#94a3b8" : "#334155",
+                }}
+              >
+                <ChevronLeft size={14} /> Anterior
+              </button>
+              <button
+                onClick={() => setPagina((p) => Math.min(p + 1, totalPaginas))}
+                disabled={pagina === totalPaginas}
+                style={{
+                  display: "flex", alignItems: "center", gap: "4px", padding: "5px 10px",
+                  fontSize: "12px", borderRadius: "6px", border: "1px solid #cbd5e1",
+                  backgroundColor: pagina === totalPaginas ? "#f1f5f9" : "#ffffff",
+                  cursor: pagina === totalPaginas ? "not-allowed" : "pointer", color: pagina === totalPaginas ? "#94a3b8" : "#334155",
+                }}
+              >
+                Siguiente <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Tabla */}
         {loading ? (
           <div style={{ padding: "60px", textAlign: "center", color: "#64748b" }}>
             <RefreshCw size={24} className="animate-spin" style={{ margin: "0 auto 10px", display: "block" }} />
@@ -466,24 +513,11 @@ export default function TelemetriaTab({ currentUser }) {
           <div style={{ padding: "60px", textAlign: "center", color: "#64748b" }}>
             <Car size={38} style={{ margin: "0 auto 12px", display: "block", color: "#cbd5e1" }} />
             <div style={{ fontSize: "16px", fontWeight: 600, color: "#334155" }}>
-              No se encontraron viajes con los filtros seleccionados
+              No se encontraron viajes para este rango de fechas
             </div>
             <p style={{ fontSize: "13px", color: "#94a3b8", maxWidth: "480px", margin: "6px auto 16px" }}>
-              Prueba cambiando el rango de fechas o limpiando los filtros para ver otros viajes ya registrados.
+              Intenta seleccionar un rango más amplio o haz clic en "Octubre a Hoy".
             </p>
-            {esAdmin && (
-              <button
-                onClick={() => ejecutarSincronizacion(syncDesde, syncHasta)}
-                disabled={sincronizando}
-                style={{
-                  backgroundColor: "#0284c7", color: "#ffffff", border: "none",
-                  padding: "8px 18px", borderRadius: "6px", fontSize: "13px",
-                  fontWeight: 600, cursor: "pointer",
-                }}
-              >
-                Sincronizar con SKYNAV
-              </button>
-            )}
           </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
@@ -496,13 +530,12 @@ export default function TelemetriaTab({ currentUser }) {
                   <th style={{ padding: "12px 14px", width: "180px" }}>Chofer / Conductor</th>
                   <th style={{ padding: "12px 14px", width: "130px" }}>Distancia</th>
                   <th style={{ padding: "12px 14px", width: "130px" }}>Combustible</th>
-                  <th style={{ padding: "12px 14px", minWidth: "250px" }}>Lugar de Inicio</th>
-                  <th style={{ padding: "12px 14px", minWidth: "250px" }}>Lugar de Fin</th>
+                  <th style={{ padding: "12px 14px", minWidth: "260px" }}>Lugar de Inicio</th>
+                  <th style={{ padding: "12px 14px", minWidth: "260px" }}>Lugar de Fin</th>
                 </tr>
               </thead>
               <tbody>
                 {viajes.map((viaje) => {
-                  // URLs de Google Maps
                   const mapsInicio = viaje.latitud_inicio && viaje.longitud_inicio
                     ? `https://www.google.com/maps?q=${viaje.latitud_inicio},${viaje.longitud_inicio}`
                     : null;
@@ -513,7 +546,6 @@ export default function TelemetriaTab({ currentUser }) {
 
                   const esCan = viaje.origen_km === "CAN" || viaje.origen_combustible === "CAN" || Number(viaje.litros_can) > 0;
 
-                  // Formatear duración
                   const minTotales = Math.round(Number(viaje.tiempo_min) || 0);
                   const horas = Math.floor(minTotales / 60);
                   const minResto = minTotales % 60;
@@ -695,6 +727,50 @@ export default function TelemetriaTab({ currentUser }) {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Paginación Inferior */}
+        {totalPaginas > 1 && (
+          <div style={{
+            padding: "12px 18px", borderTop: "1px solid #e2e8f0", backgroundColor: "#f8fafc",
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+          }}>
+            <span style={{ fontSize: "12px", color: "#64748b" }}>
+              Página {pagina} de {totalPaginas} ({totalViajes.toLocaleString("es-CL")} viajes en total)
+            </span>
+            <div style={{ display: "flex", gap: "6px" }}>
+              <button
+                onClick={() => {
+                  setPagina((p) => Math.max(p - 1, 1));
+                  window.scrollTo({ top: 300, behavior: "smooth" });
+                }}
+                disabled={pagina === 1}
+                style={{
+                  display: "flex", alignItems: "center", gap: "4px", padding: "5px 12px",
+                  fontSize: "12px", borderRadius: "6px", border: "1px solid #cbd5e1",
+                  backgroundColor: pagina === 1 ? "#f1f5f9" : "#ffffff",
+                  cursor: pagina === 1 ? "not-allowed" : "pointer", color: pagina === 1 ? "#94a3b8" : "#334155",
+                }}
+              >
+                <ChevronLeft size={14} /> Anterior
+              </button>
+              <button
+                onClick={() => {
+                  setPagina((p) => Math.min(p + 1, totalPaginas));
+                  window.scrollTo({ top: 300, behavior: "smooth" });
+                }}
+                disabled={pagina === totalPaginas}
+                style={{
+                  display: "flex", alignItems: "center", gap: "4px", padding: "5px 12px",
+                  fontSize: "12px", borderRadius: "6px", border: "1px solid #cbd5e1",
+                  backgroundColor: pagina === totalPaginas ? "#f1f5f9" : "#ffffff",
+                  cursor: pagina === totalPaginas ? "not-allowed" : "pointer", color: pagina === totalPaginas ? "#94a3b8" : "#334155",
+                }}
+              >
+                Siguiente <ChevronRight size={14} />
+              </button>
+            </div>
           </div>
         )}
       </div>
