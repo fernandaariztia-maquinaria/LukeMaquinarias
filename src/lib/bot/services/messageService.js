@@ -1,7 +1,13 @@
 const BRIDGE_URL = process.env.WA_BRIDGE_URL || "http://localhost:4000/equipos";
 
 export async function enviarMensajeWhatsApp(jid, phoneClean, texto, tieneAudioEntrante = false, geminiKey = null) {
-  const dest = jid || `${phoneClean}@s.whatsapp.net`;
+  const cleanDigits = String(phoneClean || "").replace(/[^0-9]/g, "");
+  // CRÍTICO: Evitar enviar a JIDs @lid en mensajes directos 1:1 (causa "Esperando mensaje. Esto puede tomar tiempo.")
+  const dest = (jid && String(jid).endsWith("@g.us"))
+    ? jid
+    : cleanDigits
+      ? `${cleanDigits}@s.whatsapp.net`
+      : (jid && String(jid).includes("@s.whatsapp.net") ? jid : `${String(jid || "").replace(/[^0-9]/g, "")}@s.whatsapp.net`);
   let audioBase64ParaEnviar = null;
 
   // Solo sintetizar si el usuario original envió audio y no hay URLs en la respuesta,

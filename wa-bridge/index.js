@@ -45,10 +45,15 @@ let latestQr = null;
 
 // Cache anti-duplicados (mismo patrón que LukeDelivery)
 const processedMessageIds = new Map();
+// Cache de mensajes enviados para responder a retry receipts de Signal ("Esperando mensaje...")
+const sentMessagesCache = new Map();
 setInterval(() => {
   const now = Date.now();
   for (const [id, ts] of processedMessageIds.entries()) {
     if (now - ts > 5 * 60 * 1000) processedMessageIds.delete(id);
+  }
+  for (const [id, item] of sentMessagesCache.entries()) {
+    if (now - item.ts > 30 * 60 * 1000) sentMessagesCache.delete(id);
   }
 }, 60000);
 
@@ -69,6 +74,10 @@ async function connectToWhatsApp() {
     auth: state,
     printQRInTerminal: false,
     logger: pino({ level: "silent" }),
+    getMessage: async (key) => {
+      const cached = key?.id ? sentMessagesCache.get(key.id) : null;
+      return cached?.message || undefined;
+    },
   });
 
   sock.ev.on("connection.update", (update) => {
@@ -209,12 +218,18 @@ async function connectToWhatsApp() {
           headers["x-wa-bridge-secret"] = process.env.WA_BRIDGE_SECRET;
         }
 
+        const pnClean = msg.key.senderPn ? getCleanId(msg.key.senderPn) : null;
+        const effectivePhone = pnClean || senderClean;
+        const effectiveJid = (senderNumber && senderNumber.endsWith("@lid") && pnClean)
+          ? `${pnClean}@s.whatsapp.net`
+          : senderNumber;
+
         const response = await fetch(WEBHOOK_URL, {
           method: "POST",
           headers,
           body: JSON.stringify({
-            phone: senderClean,
-            jid: senderNumber,
+            phone: effectivePhone,
+            jid: effectiveJid,
             message: messageText,
             audio: audioData,
             image: imageData,
@@ -303,6 +318,10 @@ app.post("/send", async (req, res) => {
         return res.status(400).json({ success: false, message: "Falta texto para enviar" });
       }
       sentMsg = await sock.sendMessage(formattedNum, { text });
+    }
+
+    if (sentMsg?.key?.id && sentMsg?.message) {
+      sentMessagesCache.set(sentMsg.key.id, { message: sentMsg.message, ts: Date.now() });
     }
 
     res.json({ success: true, data: sentMsg });

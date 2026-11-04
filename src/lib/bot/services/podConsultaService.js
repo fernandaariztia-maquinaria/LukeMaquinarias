@@ -11,7 +11,7 @@ async function obtenerPendientes(supabase, telefonoSupervisor) {
     .select(`
       *,
       planificacion_bloques_pod(
-        id, especialidad_id,
+        id, fecha, especialidad_id,
         equipos(codigo_interno, patente),
         equipo_id
       ),
@@ -23,7 +23,31 @@ async function obtenerPendientes(supabase, telefonoSupervisor) {
     .eq("telefono_supervisor", telefonoSupervisor)
     .eq("estado_pregunta", "Pendiente_Actividad")
     .order("created_at", { ascending: true });
-  return data || [];
+
+  const rows = data || [];
+  const hoyChile = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Santiago" });
+  const vig = [];
+  const expiradosIds = [];
+
+  for (const r of rows) {
+    const fechaBloque = r.planificacion_bloques_pod?.fecha;
+    const createdAtMs = r.created_at ? new Date(r.created_at).getTime() : 0;
+    const horasAntiguedad = createdAtMs ? (Date.now() - createdAtMs) / (1000 * 60 * 60) : 999;
+    if ((fechaBloque && fechaBloque < hoyChile) || horasAntiguedad > 14) {
+      expiradosIds.push(r.id);
+    } else {
+      vig.push(r);
+    }
+  }
+
+  if (expiradosIds.length > 0) {
+    await supabase
+      .from("estados_consulta_bot")
+      .update({ estado_pregunta: "Procesado", updated_at: new Date().toISOString() })
+      .in("id", expiradosIds);
+  }
+
+  return vig;
 }
 
 function equipoLabelDePendiente(p) {
@@ -298,6 +322,17 @@ function esNegacion(texto) {
   return /^\s*(no|incorrecto|est(a|á) mal|mal|corr[ií]geme)\s*[.!]?\s*$/i.test(texto);
 }
 
+function esConsultaConversacionalSupervisor(texto = "") {
+  const clean = String(texto || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (!clean) return false;
+  if (clean.includes("?")) return true;
+  if (/^(hola|buenos dias|buenas tardes|buenas noches|ayuda|menu|jaime)\b/.test(clean)) return true;
+  if (/\b(que tareas tengo|que equipos tengo|que tengo hoy|que tengo manana|que mas te puedo|que puedes hacer|mi planificacion|mis bloques|estado de equipos|quien esta trabajando)\b/.test(clean)) {
+    return true;
+  }
+  return false;
+}
+
 export async function resolverRespuestaSupervisor(supabase, { telefonoSupervisor, respuestaTexto, jid, phoneClean, audio, geminiKey }) {
   const pendientes = await obtenerPendientes(supabase, telefonoSupervisor);
   if (pendientes.length === 0) {
@@ -307,6 +342,12 @@ export async function resolverRespuestaSupervisor(supabase, { telefonoSupervisor
   if (!respuestaTexto) {
     await enviarMensajeWhatsApp(jid, phoneClean, `⚠️ No logramos procesar tu respuesta. Por favor escribe tu respuesta en texto o envía un audio más claro.`, !!audio, geminiKey);
     return { manejado: true, action: "RESPUESTA_SUPERVISOR_VACIA" };
+  }
+
+  // Si el supervisor hace una consulta general al asistente (ej. "Hola que tareas tengo hoy", "Que mas te puedo preguntar?"),
+  // delegar al flujo administrativo (jAIme) en vez de tomarlo como nombre de tarea o métrica.
+  if (esConsultaConversacionalSupervisor(respuestaTexto)) {
+    return { manejado: false };
   }
 
   const enMetricas = pendientes.filter(p => p.respuesta_interpretada?.etapa === "ESPERANDO_METRICAS");

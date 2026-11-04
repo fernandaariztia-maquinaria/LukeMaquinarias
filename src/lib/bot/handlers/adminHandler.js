@@ -492,8 +492,176 @@ Directrices al programar 'codigo_javascript' para "crear_herramienta_dinamica":
     return res.status(200).json({ success: true, responseText });
 
   } catch (geminiErr) {
-    console.error("[adminHandler] Error chateando con Supervisor:", geminiErr.message, geminiErr.stack);
-    await enviarMensajeWhatsApp(jid, phoneClean, "Hola, lo siento, tuve un problema al procesar tu consulta comercial. Intenta de nuevo por favor.", !!audio, geminiKey);
-    return res.status(500).json({ success: false, error: geminiErr.message });
+    console.error("[adminHandler] Error chateando con Supervisor, usando motor de respuesta directa:", geminiErr.message);
+    try {
+      const fallbackText = await responderConsultaSupervisorFallback(supabase, personal, message);
+      await guardarMensajeChat(supabase, phoneClean, "user", message || "[Audio de supervisor]", audio ? "audio" : "texto");
+      await guardarMensajeChat(supabase, phoneClean, "model", fallbackText, "texto");
+      await enviarMensajeWhatsApp(jid, phoneClean, fallbackText, !!audio, geminiKey);
+      return res.status(200).json({ success: true, responseText: fallbackText, fallback: true });
+    } catch (fbErr) {
+      console.error("[adminHandler] Error en fallback de supervisor:", fbErr.message);
+      await enviarMensajeWhatsApp(jid, phoneClean, "Hola, tuve un inconveniente temporal al consultar la base de datos. Por favor intenta nuevamente en unos segundos.", !!audio, geminiKey);
+      return res.status(200).json({ success: false, error: geminiErr.message });
+    }
   }
+}
+
+async function responderConsultaSupervisorFallback(supabase, personal, rawMessage = "") {
+  const texto = String(rawMessage || "").trim();
+  const lower = texto.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  const hoyDate = new Date();
+  const hoyChile = hoyDate.toLocaleDateString("sv-SE", { timeZone: "America/Santiago" });
+  const mananaDate = new Date(hoyDate.getTime() + 24 * 60 * 60 * 1000);
+  const mananaChile = mananaDate.toLocaleDateString("sv-SE", { timeZone: "America/Santiago" });
+
+  const fmtDMY = (iso) => {
+    if (!iso) return "";
+    const [y, m, d] = iso.split("-");
+    return `${d}/${m}/${y}`;
+  };
+
+  // 1. Consulta sobre qué puede preguntar / ayuda / menú
+  if (/\b(que mas te puedo|que te puedo preguntar|que puedes hacer|ayuda|menu|comandos|funciones)\b/.test(lower)) {
+    return [
+      `👋 ¡Hola *${personal.nombre_completo}*! Soy *jAIme*, tu asistente virtual de LukeEquipos.`,
+      ``,
+      `Como *${personal.rol}*, puedes consultarme en cualquier momento por texto o audio:`,
+      ``,
+      `📅 *1. Tus tareas y equipos del día (Sala POD):*`,
+      `• _"¿Qué tareas tengo hoy?"_`,
+      `• _"¿Qué equipos tengo asignados mañana?"_`,
+      ``,
+      `🚜 *2. Estado de la flota y disponibilidad:*`,
+      `• _"¿Cuál es el estado de los equipos?"_`,
+      `• _"¿Qué equipos están disponibles o en panne?"_`,
+      ``,
+      `👷 *3. Operadores y jornadas en curso:*`,
+      `• _"¿Quiénes están trabajando hoy?"_`,
+      `• _"Resumen de reportes de hoy"_`,
+      ``,
+      `📋 *4. Catálogo de tareas de tu especialidad:*`,
+      `• _"¿Qué tareas programadas tengo en mi especialidad?"_`,
+      ``,
+      `🌐 *Vista pública en vivo (sin login):*`,
+      `https://equipos.lukeapp.cl/pod-publico`,
+    ].join("\n");
+  }
+
+  // 2. Consulta de estado de equipos / flota
+  if (/\b(estado de equipos|estado de la flota|equipos disponibles|equipos en panne|flota|disponibilidad de equipos)\b/.test(lower)) {
+    let qEq = supabase.from("equipos").select("codigo_interno, descripcion_equipo, patente, estado_actual");
+    if (personal.proyecto_actual_id) {
+      qEq = qEq.eq("proyecto_actual_id", personal.proyecto_actual_id);
+    }
+    const { data: equipos } = await qEq.order("codigo_interno");
+    const lista = equipos || [];
+    const operativos = lista.filter(e => e.estado_actual === "Equipo Operativo" || e.estado_actual === "Trabajando");
+    const disponibles = lista.filter(e => e.estado_actual === "Disponible");
+    const colacion = lista.filter(e => e.estado_actual === "En Colacion");
+    const falla = lista.filter(e => e.estado_actual && (e.estado_actual.includes("Falla") || e.estado_actual.includes("Panne")));
+
+    const lines = [
+      `🚜 *Resumen de Flota (${fmtDMY(hoyChile)})*`,
+      `• Total equipos: *${lista.length}*`,
+      `• 🟢 Operativos / Trabajando: *${operativos.length}*`,
+      `• 🔵 Disponibles: *${disponibles.length}*`,
+      `• 🟡 En Colación: *${colacion.length}*`,
+      `• 🔴 Detenidos por Falla / Panne: *${falla.length}*`,
+    ];
+
+    if (falla.length > 0) {
+      lines.push(``, `*Equipos en Falla/Panne:*`);
+      for (const f of falla.slice(0, 8)) {
+        lines.push(`• 🔴 *${f.codigo_interno}* — ${f.descripcion_equipo}`);
+      }
+    }
+
+    lines.push(``, `🌐 *Ver detalle completo en vivo:* https://equipos.lukeapp.cl/pod-publico`);
+    return lines.join("\n");
+  }
+
+  // 3. Consulta de operadores / jornadas activas hoy
+  if (/\b(quien esta trabajando|quienes estan trabajando|operadores activos|reportes de hoy|jornadas de hoy)\b/.test(lower)) {
+    const { data: reps } = await supabase
+      .from("reportes_diarios")
+      .select("horometro_inicio, horometro_final, estado_final, equipos(codigo_interno, descripcion_equipo), personal!reportes_diarios_operador_id_fkey(nombre_completo)")
+      .eq("fecha", hoyChile)
+      .order("created_at", { ascending: false });
+
+    if (!reps || reps.length === 0) {
+      return `📋 *Jornadas de Hoy (${fmtDMY(hoyChile)})*\n\nAún no se registran jornadas iniciadas el día de hoy.`;
+    }
+
+    const lines = [`👷 *Jornadas Registradas Hoy (${fmtDMY(hoyChile)}):*\n`];
+    for (const r of reps.slice(0, 12)) {
+      const estado = r.estado_final === "Cerrado" ? "🏁 Cerrado" : "🟢 En turno";
+      lines.push(`• *${r.equipos?.codigo_interno || "Equipo"}* (${r.equipos?.descripcion_equipo || ""})\n  👤 ${r.personal?.nombre_completo || "Operador"} — ${estado}`);
+    }
+    return lines.join("\n");
+  }
+
+  // 4. Consulta de tareas / bloques asignados de hoy o mañana (o saludo general)
+  const pideManana = /\b(manana)\b/.test(lower);
+  const fechaConsulta = pideManana ? mananaChile : hoyChile;
+  const labelDia = pideManana ? `mañana (${fmtDMY(mananaChile)})` : `hoy (${fmtDMY(hoyChile)})`;
+
+  const { data: bloques } = await supabase
+    .from("planificacion_bloques_pod")
+    .select(`
+      id, fecha, hora_inicio, hora_fin, actividad_especifica,
+      equipos ( codigo_interno, descripcion_equipo, patente ),
+      especialidades ( nombre_oficial )
+    `)
+    .eq("supervisor_id", personal.id)
+    .eq("fecha", fechaConsulta)
+    .order("hora_inicio");
+
+  let tareasCatalogo = [];
+  if (personal.especialidad_id) {
+    const { data: tCat } = await supabase
+      .from("tareas_programadas")
+      .select("orden, nombre")
+      .eq("especialidad_id", personal.especialidad_id)
+      .eq("activa", true)
+      .order("orden", { ascending: true });
+    tareasCatalogo = tCat || [];
+  }
+
+  const lines = [
+    `👋 ¡Hola *${personal.nombre_completo}*!`,
+    ``,
+    `📅 *Tu planificación y tareas para ${labelDia}:*`,
+  ];
+
+  if (!bloques || bloques.length === 0) {
+    lines.push(`• No tienes bloques de equipos asignados en la Sala POD para ${labelDia}.`);
+  } else {
+    for (const b of bloques) {
+      const ini = b.hora_inicio?.slice(0, 5) || "--:--";
+      const fin = b.hora_fin?.slice(0, 5) || "--:--";
+      const eqCodigo = b.equipos?.codigo_interno || "Equipo";
+      const eqDesc = b.equipos?.descripcion_equipo || "";
+      const esp = b.especialidades?.nombre_oficial || "";
+      const act = b.actividad_especifica || "Pendiente de definir al iniciar turno";
+      lines.push(
+        ``,
+        `🔧 *${ini}–${fin}* | *${eqCodigo}*`,
+        `   🚜 ${eqDesc}`,
+        `   🏗️ Especialidad: *${esp}*`,
+        `   📌 Tarea: _${act}_`
+      );
+    }
+  }
+
+  if (tareasCatalogo.length > 0) {
+    lines.push(``, `📋 *Tareas programadas de tu especialidad:*`);
+    for (const t of tareasCatalogo.slice(0, 10)) {
+      lines.push(`   ${t.orden}. ${t.nombre}`);
+    }
+  }
+
+  lines.push(``, `💬 _Puedes preguntarme "¿Qué equipos tengo mañana?", "¿Cuál es el estado de los equipos?" o "¿Quiénes están trabajando hoy?"._`);
+  return lines.join("\n");
 }

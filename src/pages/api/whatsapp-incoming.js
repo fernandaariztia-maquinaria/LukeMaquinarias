@@ -47,9 +47,14 @@ export default async function handler(req, res) {
     `[whatsapp-incoming] De: ${phoneClean} | ${audio ? "🎤 Audio" : image ? "📷 Imagen" : `💬 "${message}"`}`
   );
 
+  // Normalizar JID de destino a @s.whatsapp.net para evitar errores de cifrado Signal con @lid
+  const safeJid = (jid && typeof jid === "string" && jid.endsWith("@g.us"))
+    ? jid
+    : `${phoneClean}@s.whatsapp.net`;
+
   // Simular presencia (escribiendo)
   const BRIDGE_URL = process.env.WA_BRIDGE_URL || "http://localhost:4000/equipos";
-  const destJid = jid || `${phoneClean}@s.whatsapp.net`;
+  const destJid = safeJid;
   fetch(`${BRIDGE_URL}/presence`, {
     method: "POST",
     headers: { 
@@ -78,7 +83,7 @@ export default async function handler(req, res) {
       personal,
       sesion,
       phoneClean,
-      jid,
+      jid: safeJid,
       message,
       audio,
       image,
