@@ -11,9 +11,13 @@ export default async function handler(req, res) {
   const bridgeUrl = process.env.WA_BRIDGE_URL || "http://localhost:4000/equipos";
 
   try {
+    const headers = { "Content-Type": "application/json" };
+    if (process.env.WA_BRIDGE_SECRET) {
+      headers["x-wa-bridge-secret"] = process.env.WA_BRIDGE_SECRET;
+    }
     const response = await fetch(`${bridgeUrl}/send`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(req.body),
     });
 

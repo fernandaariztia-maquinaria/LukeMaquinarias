@@ -657,9 +657,9 @@ async function responderConsultaSupervisorFallback(supabase, personal, rawMessag
 
   if (tareasCatalogo.length > 0) {
     lines.push(``, `📋 *Tareas programadas de tu especialidad:*`);
-    for (const t of tareasCatalogo.slice(0, 10)) {
-      lines.push(`   ${t.orden}. ${t.nombre}`);
-    }
+    tareasCatalogo.slice(0, 10).forEach((t, idx) => {
+      lines.push(`   ${t.orden > 0 ? t.orden : idx + 1}. ${t.nombre}`);
+    });
   }
 
   lines.push(``, `💬 _Puedes preguntarme "¿Qué equipos tengo mañana?", "¿Cuál es el estado de los equipos?" o "¿Quiénes están trabajando hoy?"._`);
