@@ -14,3 +14,8 @@ public/reportes/
 *.log
 scratch/
 .agents/
+telemetria_csv/*.csv
+telemetria_csv/*.gz
+telemetria_csv/*.zip
+data_gps/
+*.csv

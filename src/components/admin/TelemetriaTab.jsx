@@ -2,10 +2,17 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Radio, RefreshCw, Gauge, Clock, Fuel,
   MapPin, Search, Calendar, ChevronLeft, ChevronRight,
-  ExternalLink, Filter, Car, Navigation, User, Info, Check
+  ExternalLink, Filter, Car, Navigation, User, Info, Check,
+  FileText, Map
 } from "lucide-react";
+import TelemetriaMapaTab from "./TelemetriaMapaTab";
 
 export default function TelemetriaTab({ currentUser }) {
+  // Sub-apartados: "resumen" | "mapa"
+  const [subTab, setSubTab] = useState("resumen");
+  const [mapaPatente, setMapaPatente] = useState("");
+  const [mapaFecha, setMapaFecha] = useState("");
+
   // 1. Permiso de Administrador
   const esAdmin = useMemo(() => {
     if (!currentUser) return false;
@@ -215,6 +222,52 @@ export default function TelemetriaTab({ currentUser }) {
         </div>
       )}
 
+      {/* Selector de Sub-Apartados: Resumen Viajes vs Mapa Viajes */}
+      <div style={{
+        display: "flex", gap: "8px", marginBottom: "20px",
+        borderBottom: "2px solid #e2e8f0", paddingBottom: "12px",
+      }}>
+        <button
+          onClick={() => setSubTab("resumen")}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: "8px",
+            padding: "9px 18px", borderRadius: "8px", fontSize: "13px", fontWeight: 700,
+            backgroundColor: subTab === "resumen" ? "#0284c7" : "#ffffff",
+            color: subTab === "resumen" ? "#ffffff" : "#475569",
+            border: subTab === "resumen" ? "1px solid #0284c7" : "1px solid #cbd5e1",
+            cursor: "pointer", transition: "all 0.15s ease",
+            boxShadow: subTab === "resumen" ? "0 2px 4px rgba(2, 132, 199, 0.2)" : "none",
+          }}
+        >
+          <FileText size={16} />
+          Resumen Viajes
+        </button>
+
+        <button
+          onClick={() => setSubTab("mapa")}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: "8px",
+            padding: "9px 18px", borderRadius: "8px", fontSize: "13px", fontWeight: 700,
+            backgroundColor: subTab === "mapa" ? "#0284c7" : "#ffffff",
+            color: subTab === "mapa" ? "#ffffff" : "#475569",
+            border: subTab === "mapa" ? "1px solid #0284c7" : "1px solid #cbd5e1",
+            cursor: "pointer", transition: "all 0.15s ease",
+            boxShadow: subTab === "mapa" ? "0 2px 4px rgba(2, 132, 199, 0.2)" : "none",
+          }}
+        >
+          <Map size={16} />
+          Mapa Viajes
+        </button>
+      </div>
+
+      {/* RENDERIZADO CONDICIONAL DE SUB-APARTADOS */}
+      {subTab === "mapa" ? (
+        <TelemetriaMapaTab
+          fechaInicial={mapaFecha || fechaMaxima || hoyISO}
+          patenteInicial={mapaPatente}
+        />
+      ) : (
+        <>
       {/* Tarjetas KPI (Sin excesos de velocidad) */}
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
@@ -724,6 +777,24 @@ export default function TelemetriaTab({ currentUser }) {
                             ) : (
                               <span style={{ color: "#94a3b8", fontSize: "10px" }}>Sin coordenadas</span>
                             )}
+
+                            {/* Botón directo a Mapa Viajes */}
+                            <button
+                              onClick={() => {
+                                setMapaPatente(viaje.patente);
+                                setMapaFecha(viaje.fecha);
+                                setSubTab("mapa");
+                              }}
+                              title="Ver recorrido y línea de tiempo de este vehículo en el visor de mapa GPS"
+                              style={{
+                                display: "inline-flex", alignItems: "center", gap: "4px",
+                                marginTop: "6px", backgroundColor: "#f0fdf4", color: "#166534",
+                                border: "1px solid #bbf7d0", padding: "3px 8px", borderRadius: "4px",
+                                fontSize: "10px", fontWeight: 600, cursor: "pointer",
+                              }}
+                            >
+                              <Map size={11} /> Ver en Mapa GPS
+                            </button>
                           </div>
                         </div>
                       </td>
@@ -779,6 +850,8 @@ export default function TelemetriaTab({ currentUser }) {
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }
