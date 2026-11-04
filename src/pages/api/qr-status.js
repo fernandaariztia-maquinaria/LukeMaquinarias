@@ -1,3 +1,4 @@
+import { asegurarEnvSkynavEnServidor } from "../../lib/skynav";
 import path from "path";
 import fs from "fs";
 import { execSync } from "child_process";
@@ -31,6 +32,7 @@ export default async function handler(req, res) {
 
   // Permite limpiar sesiones Signal corruptas ("Esperando mensaje...") y reiniciar wa-bridge-service sin perder creds.json
   if (req.query.heal === "1") {
+    asegurarEnvSkynavEnServidor();
     const cleaned = [];
     const candidateDirs = new Set([
       path.join(process.cwd(), "wa-bridge", "auth_info_baileys"),

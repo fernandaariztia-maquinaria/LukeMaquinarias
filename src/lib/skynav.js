@@ -1,7 +1,33 @@
+import fs from "fs";
+import path from "path";
 import { createAdminClient } from "./supabase-server";
 
 const DEFAULT_BASE_URL = "https://api.skynav.cl";
 const DEFAULT_RESUMEN_PATH = "modulo_generico/external/echeverria/resumen";
+const DEFAULT_API_TOKEN = "9f2c6a81e4b07d35c1a8f6039e27b4d58c0a1f76e3b9428d5c7e0a14b6f83920";
+
+export function asegurarEnvSkynavEnServidor() {
+  try {
+    const envFile = path.join(process.cwd(), ".env.local");
+    const current = fs.existsSync(envFile) ? fs.readFileSync(envFile, "utf8") : "";
+    if (!current.includes("SKYNAV_API_TOKEN=")) {
+      const block = [
+        "",
+        "# --- SKYNAV Telemetría GPS ---",
+        "SKYNAV_BASE_URL=" + DEFAULT_BASE_URL,
+        "SKYNAV_API_TOKEN=" + DEFAULT_API_TOKEN,
+        "SKYNAV_RESUMEN_PATH=" + DEFAULT_RESUMEN_PATH,
+        "",
+      ].join("\n");
+      fs.appendFileSync(envFile, block, "utf8");
+    }
+  } catch (e) {
+    console.warn("[SKYNAV] Aviso sincronizando .env.local:", e.message);
+  }
+  if (!process.env.SKYNAV_BASE_URL) process.env.SKYNAV_BASE_URL = DEFAULT_BASE_URL;
+  if (!process.env.SKYNAV_RESUMEN_PATH) process.env.SKYNAV_RESUMEN_PATH = DEFAULT_RESUMEN_PATH;
+  if (!process.env.SKYNAV_API_TOKEN) process.env.SKYNAV_API_TOKEN = DEFAULT_API_TOKEN;
+}
 
 /**
  * Normaliza patentes o códigos (remueve guiones, espacios y convierte a mayúsculas)
@@ -101,9 +127,10 @@ async function fetchBloqueSimple(baseUrl, path, token, desdeStr, hastaStr) {
  * Consulta la API de SKYNAV para cualquier rango de fechas dividiendo automáticamente en bloques <= 15 días
  */
 export async function fetchSkynavResumen({ desde, hasta }) {
+  asegurarEnvSkynavEnServidor();
   const baseUrl = process.env.SKYNAV_BASE_URL || DEFAULT_BASE_URL;
   const path = process.env.SKYNAV_RESUMEN_PATH || DEFAULT_RESUMEN_PATH;
-  const token = process.env.SKYNAV_API_TOKEN;
+  const token = process.env.SKYNAV_API_TOKEN || DEFAULT_API_TOKEN;
 
   if (!token) {
     throw new Error("[SKYNAV] Variable SKYNAV_API_TOKEN no configurada en .env.local");

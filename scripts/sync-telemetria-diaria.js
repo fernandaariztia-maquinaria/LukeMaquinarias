@@ -33,6 +33,7 @@ const { createClient } = require("@supabase/supabase-js");
 
 const DEFAULT_BASE_URL = "https://api.skynav.cl";
 const DEFAULT_RESUMEN_PATH = "modulo_generico/external/echeverria/resumen";
+const DEFAULT_API_TOKEN = "9f2c6a81e4b07d35c1a8f6039e27b4d58c0a1f76e3b9428d5c7e0a14b6f83920";
 
 function normalizarIdentificador(str) {
   if (!str) return "";
@@ -114,7 +115,7 @@ async function fetchBloqueSimple(baseUrl, path, token, desdeStr, hastaStr) {
 async function fetchSkynavResumen({ desde, hasta }) {
   const baseUrl = process.env.SKYNAV_BASE_URL || DEFAULT_BASE_URL;
   const path = process.env.SKYNAV_RESUMEN_PATH || DEFAULT_RESUMEN_PATH;
-  const token = process.env.SKYNAV_API_TOKEN;
+  const token = process.env.SKYNAV_API_TOKEN || DEFAULT_API_TOKEN;
 
   if (!token) {
     throw new Error("[SKYNAV] SKYNAV_API_TOKEN no configurada");
