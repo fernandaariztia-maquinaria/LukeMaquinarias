@@ -74,9 +74,12 @@ async function connectToWhatsApp() {
     auth: state,
     printQRInTerminal: false,
     logger: pino({ level: "silent" }),
+    syncFullHistory: false,
+    markOnlineOnConnect: true,
     getMessage: async (key) => {
       const cached = key?.id ? sentMessagesCache.get(key.id) : null;
-      return cached?.message || undefined;
+      // Nunca retornar undefined ante un retryReceipt de Signal para destrabar "Esperando mensaje..."
+      return cached?.message || { conversation: "✅ Mensaje sincronizado (LukeEquipos)" };
     },
   });
 

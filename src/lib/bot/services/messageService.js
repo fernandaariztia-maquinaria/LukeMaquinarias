@@ -58,6 +58,15 @@ export async function enviarMensajeWhatsApp(jid, phoneClean, texto, tieneAudioEn
     }
   }
 
+  if (Array.isArray(global.__WA_OUTBOX__)) {
+    global.__WA_OUTBOX__.push({ to: dest, phoneClean: cleanDigits, text: texto, timestamp: new Date().toISOString() });
+  }
+
+  if (cleanDigits.startsWith("5698888") || process.env.WA_DRY_RUN === "1") {
+    console.log(`[messageService] 🧪 (Simulación WA -> ${cleanDigits}): ${String(texto || "").slice(0, 120)}...`);
+    return;
+  }
+
   try {
     await fetch(`${BRIDGE_URL}/send`, {
       method: "POST",
