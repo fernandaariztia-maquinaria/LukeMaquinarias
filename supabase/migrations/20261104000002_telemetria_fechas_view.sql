@@ -7,3 +7,4 @@ SELECT DISTINCT fecha FROM maquinaria.telemetria_viajes ORDER BY fecha DESC;
 GRANT SELECT ON maquinaria.telemetria_fechas_disponibles TO anon, authenticated, service_role;
 
 NOTIFY pgrst, 'reload schema';
+

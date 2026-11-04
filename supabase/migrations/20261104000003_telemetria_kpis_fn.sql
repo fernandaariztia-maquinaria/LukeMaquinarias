@@ -51,3 +51,4 @@ $$ LANGUAGE plpgsql STABLE;
 GRANT EXECUTE ON FUNCTION maquinaria.get_telemetria_kpis TO anon, authenticated, service_role;
 
 NOTIFY pgrst, 'reload schema';
+

@@ -23,6 +23,21 @@ export default async function handler(req, res) {
 
   if (req.method === "POST") {
     try {
+      // Validar que solo administradores (o cron autorizado) puedan ejecutar la sincronización con SKYNAV
+      const secret = req.headers["x-admin-secret"] || req.headers["authorization"];
+      const userRol = String(req.body?.userRol || "").toLowerCase();
+      const esAdmin =
+        userRol.includes("admin") ||
+        userRol === "administrador" ||
+        (secret && secret.replace("Bearer ", "") === process.env.ADMIN_SECRET);
+
+      if (!esAdmin && req.body?.iniciadoPor !== "CRON_4AM" && req.body?.iniciadoPor !== "MANUAL_CLI") {
+        return res.status(403).json({
+          success: false,
+          error: "Acceso denegado: Solo usuarios con rol Administrador pueden consultar o sincronizar con la API de SKYNAV.",
+        });
+      }
+
       let { desde, hasta } = req.body || {};
 
       // Si no se envían fechas, por defecto sincronizar ayer y hoy
@@ -51,4 +66,3 @@ export default async function handler(req, res) {
 
   return res.status(405).json({ error: "Método no permitido" });
 }
-

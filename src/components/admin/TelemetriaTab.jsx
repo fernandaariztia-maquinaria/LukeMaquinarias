@@ -100,7 +100,12 @@ export default function TelemetriaTab({ currentUser }) {
       const res = await fetch("/api/admin/telemetria/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ desde, hasta, iniciadoPor: currentUser?.nombre_completo || "ADMIN_MANUAL" }),
+        body: JSON.stringify({
+          desde,
+          hasta,
+          iniciadoPor: currentUser?.nombre_completo || "ADMIN_MANUAL",
+          userRol: currentUser?.rol || "",
+        }),
       });
       const json = await res.json();
       if (json.success) {
