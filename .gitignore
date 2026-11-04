@@ -1,4 +1,10 @@
 .env.local
+.env
+Credenciales.txt
+credenciales*
+*.credenciales
+Consulta API SKYNAV*
+consulta*
 node_modules/
 .next/
 wa-bridge/auth_info_baileys/
