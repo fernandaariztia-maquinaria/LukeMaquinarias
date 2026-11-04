@@ -121,16 +121,18 @@ export function parsearMensajeOperadorFallback(textoRaw = "", listaEspecialidade
 
   if (contexto.seguimiento_completo !== false && Array.isArray(listaEspecialidades)) {
     const sinonimosEspecialidad = [
-      { keywords: ["piping", "canonero", "tuberia", "caneria", "linea", "spool", "hdpe"], matchName: "piping" },
-      { keywords: ["estructura", "fierrero", "montador", "viga", "acero", "parrilla"], matchName: "estructura" },
-      { keywords: ["civil", "oocc", "hormigon", "excavacion", "fundacion", "zanja"], matchName: "obras civiles" },
-      { keywords: ["electric", "cable", "bandeja", "tablero"], matchName: "electricidad" },
-      { keywords: ["instrument", "fibra", "sensor", "control"], matchName: "instrumentacion" },
-      { keywords: ["mecanica", "mecanico", "bomba", "chancador", "molino", "equipo"], matchName: "mecanica" },
-      { keywords: ["andamio", "andamiero", "cuerpo de andamio"], matchName: "andamios" },
+      { keywords: ["piping", "canonero", "tuberia", "caneria", "linea", "spool", "spools", "hdpe", "inoxidable", "valvula"], matchName: "piping" },
+      { keywords: ["estructura", "estructural", "fierrero", "montador", "viga", "columna", "acero", "parrilla", "perno", "torque"], matchName: "estructura" },
+      { keywords: ["civil", "civiles", "oocc", "oo.cc", "hormigon", "concreto", "fundacion", "moldaje", "enfierradura", "radier", "zapata"], matchName: "obras civiles" },
+      { keywords: ["tierra", "tierras", "excavacion", "zanja", "relleno", "compactacion", "escarpe", "acopio", "talud"], matchName: "movimiento de tierras" },
+      { keywords: ["electric", "cable", "bandeja", "escalerilla", "tablero", "canalizacion", "subestacion", "transformador", "luminaria"], matchName: "electricidad" },
+      { keywords: ["instrument", "fibra", "sensor", "transmisor", "plc", "lazo", "calibracion"], matchName: "instrumentacion" },
+      { keywords: ["izaje", "maniobra", "tandem", "carga critica", "rigging", "estrobado"], matchName: "izaje" },
+      { keywords: ["mecanica", "mecanico", "bomba", "chancador", "molino", "correa", "reductor", "alimentador", "harnero", "tambor"], matchName: "mecanica" },
+      { keywords: ["andamio", "andamiero", "cuerpo de andamio", "roset", "layher"], matchName: "andamios" },
       { keywords: ["aislacion", "aislador", "aislamiento", "lana", "calorifugo"], matchName: "aislacion" },
       { keywords: ["pintura", "revestimiento", "arenado"], matchName: "pintura" },
-      { keywords: ["mantenimiento", "mantencion", "taller"], matchName: "mantenimiento" },
+      { keywords: ["mantenimiento", "mantencion", "taller", "preventivo", "lubricacion"], matchName: "mantenimiento" },
     ];
 
     for (const esp of listaEspecialidades) {
@@ -160,11 +162,15 @@ export function parsearMensajeOperadorFallback(textoRaw = "", listaEspecialidade
 
   // 2. Detectar Tipo de Evento / Estado
   const tieneSinCombustible = lower.includes("sin combustible") || lower.includes("sin petroleo") || lower.includes("sin carga") || lower.includes("no cargue");
-  const esCierre = /\b(cierre|cerrando|cerrar|termine|terminamos|termino de jornada|termino jornada|termino de turno|fin de jornada|fin de turno|finalizar jornada|horometro final|checkout)\b/.test(lower);
-  const esColacion = /\b(colacion|almuerzo|almorzando)\b/.test(lower);
-  const esFalla = !tieneSinCombustible && /\b(falla|pana|panne|averia|roto|fuera de servicio|desperfecto|fuga)\b/.test(lower);
-  const esRalenti = /\b(ralenti|marcha lenta)\b/.test(lower);
-  const esDisponible = /\b(disponible|esperando|en espera|standby)\b/.test(lower);
+  const niegaFalla = /\b(sin\s+(?:falla|fallas|pana|panne|averia|averias|novedad|novedades)|falla\s+(?:resuelta|superada|reparada)|salimos\s+de\s+(?:panne|pana|falla)|operativo\s+nuevamente)\b/.test(lower);
+  const saleDeColacion = /\b(saliendo|volviendo|terminamos|termino|fin|regresando)\s+de\s+(?:colacion|almuerzo)\b/.test(lower);
+  const indicaTrabajando = /\b(trabajando|retomando|continuando|apoyando|iniciando\s+con|pasamos\s+a)\b/.test(lower);
+
+  const esCierre = /\b(cierre|cerrando|cerrar|termine|terminamos\s+jornada|termino de jornada|termino jornada|termino de turno|fin de jornada|fin de turno|finalizar jornada|horometro final|checkout)\b/.test(lower);
+  const esColacion = !saleDeColacion && !(especialidad_id && indicaTrabajando) && /\b(colacion|almuerzo|almorzando)\b/.test(lower);
+  const esFalla = !tieneSinCombustible && !niegaFalla && !(especialidad_id && indicaTrabajando) && /\b(falla|pana|panne|averia|roto|fuera de servicio|desperfecto|fuga)\b/.test(lower);
+  const esRalenti = !(especialidad_id && indicaTrabajando) && /\b(ralenti|marcha lenta)\b/.test(lower);
+  const esDisponible = !(especialidad_id && indicaTrabajando) && /\b(disponible|esperando|en espera|standby)\b/.test(lower);
 
   let tipo_evento = "Trabajando";
   if (esCierre || contexto.estado_sesion === "CIERRE") {

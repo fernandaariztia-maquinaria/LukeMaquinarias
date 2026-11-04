@@ -2,10 +2,10 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Radio, RefreshCw, Gauge, Clock, Fuel,
   MapPin, Search, Calendar, ChevronLeft, ChevronRight,
-  ExternalLink, Filter, Car, Navigation, User, Info, Check
+  ExternalLink, Filter, Car, Navigation, User, Info, Building2
 } from "lucide-react";
 
-export default function TelemetriaTab({ currentUser }) {
+export default function TelemetriaTab({ currentUser, hookProps }) {
   // 1. Permiso de Administrador
   const esAdmin = useMemo(() => {
     if (!currentUser) return false;
@@ -19,6 +19,15 @@ export default function TelemetriaTab({ currentUser }) {
   const [fechasDisponibles, setFechasDisponibles] = useState([]);
   const [fechaMinima, setFechaMinima] = useState("2026-10-01");
   const [fechaMaxima, setFechaMaxima] = useState(() => new Date().toISOString().slice(0, 10));
+  const [proyectosApi, setProyectosApi] = useState([]);
+
+  // Lista unificada de proyectos (desde hookProps o desde la API de telemetría)
+  const listaProyectos = useMemo(() => {
+    if (hookProps?.proyectos?.data && hookProps.proyectos.data.length > 0) {
+      return hookProps.proyectos.data;
+    }
+    return proyectosApi;
+  }, [hookProps?.proyectos?.data, proyectosApi]);
 
   const [kpis, setKpis] = useState({
     total_viajes: 0,
@@ -43,9 +52,16 @@ export default function TelemetriaTab({ currentUser }) {
   // Por defecto abarca desde el 01 de Octubre hasta hoy para ver todo el histórico guardado
   const [desdeFiltro, setDesdeFiltro] = useState("2026-10-01");
   const [hastaFiltro, setHastaFiltro] = useState(() => new Date().toISOString().slice(0, 10));
+  const [proyectoFiltro, setProyectoFiltro] = useState(() => currentUser?.proyecto_actual_id || "");
   const [search, setSearch] = useState("");
   const [origenFiltro, setOrigenFiltro] = useState(""); // "" | "CAN" | "GPS"
   const [equipoFiltro, setEquipoFiltro] = useState("");
+
+  // Sincronizar si cambia el proyecto global del sidebar
+  useEffect(() => {
+    setProyectoFiltro(currentUser?.proyecto_actual_id || "");
+    setPagina(1);
+  }, [currentUser?.proyecto_actual_id]);
 
   // Rango para el panel de sincronización manual (solo visible para Administradores)
   const [syncDesde, setSyncDesde] = useState("2026-10-01");
@@ -58,6 +74,7 @@ export default function TelemetriaTab({ currentUser }) {
       const params = new URLSearchParams();
       if (desdeFiltro) params.set("desde", desdeFiltro);
       if (hastaFiltro) params.set("hasta", hastaFiltro);
+      if (proyectoFiltro) params.set("proyecto_id", proyectoFiltro);
       if (search) params.set("search", search);
       if (origenFiltro) params.set("origen", origenFiltro);
       if (equipoFiltro) params.set("patente", equipoFiltro);
@@ -73,13 +90,14 @@ export default function TelemetriaTab({ currentUser }) {
         if (json.fechas_disponibles) setFechasDisponibles(json.fechas_disponibles);
         if (json.fecha_min) setFechaMinima(json.fecha_min);
         if (json.fecha_max) setFechaMaxima(json.fecha_max);
+        if (json.proyectos) setProyectosApi(json.proyectos);
       }
     } catch (e) {
       console.error("[TelemetriaTab] Error al cargar viajes:", e.message);
     } finally {
       setLoading(false);
     }
-  }, [desdeFiltro, hastaFiltro, search, origenFiltro, equipoFiltro, pagina]);
+  }, [desdeFiltro, hastaFiltro, proyectoFiltro, search, origenFiltro, equipoFiltro, pagina]);
 
   useEffect(() => {
     cargarViajesGuardados();
@@ -127,6 +145,10 @@ export default function TelemetriaTab({ currentUser }) {
 
   const totalPaginas = Math.ceil(totalViajes / LIMIT) || 1;
   const hoyISO = new Date().toISOString().slice(0, 10);
+  const proyectoSeleccionadoObj = useMemo(
+    () => listaProyectos.find((p) => p.id === proyectoFiltro) || null,
+    [listaProyectos, proyectoFiltro]
+  );
 
   return (
     <div style={{ padding: "24px", maxWidth: "1650px", margin: "0 auto" }}>
@@ -233,7 +255,9 @@ export default function TelemetriaTab({ currentUser }) {
             {kpis.total_viajes?.toLocaleString("es-CL") || 0}
           </div>
           <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "6px", borderTop: "1px solid #f1f5f9", paddingTop: "6px" }}>
-            Viajes en el período filtrado
+            {proyectoSeleccionadoObj
+              ? `Proyecto: ${proyectoSeleccionadoObj.codigo_cc ? `[${proyectoSeleccionadoObj.codigo_cc}] ` : ""}${proyectoSeleccionadoObj.nombre_proyecto}`
+              : "Viajes en el período filtrado"}
           </div>
         </div>
 
@@ -406,6 +430,32 @@ export default function TelemetriaTab({ currentUser }) {
             </div>
           </div>
 
+          {/* Filtro por Proyecto */}
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <Building2 size={15} color="#0284c7" />
+            <span style={{ fontSize: "12px", fontWeight: 600, color: "#334155" }}>Proyecto:</span>
+            <select
+              value={proyectoFiltro}
+              onChange={(e) => handleFiltroCambio(setProyectoFiltro, e.target.value)}
+              style={{
+                fontSize: "12px", padding: "6px 10px", borderRadius: "6px",
+                border: proyectoFiltro ? "1.5px solid #0284c7" : "1px solid #cbd5e1",
+                outline: "none",
+                backgroundColor: proyectoFiltro ? "#f0f9ff" : "#ffffff",
+                color: proyectoFiltro ? "#0369a1" : "#334155",
+                fontWeight: proyectoFiltro ? 600 : 500,
+                minWidth: "210px",
+              }}
+            >
+              <option value="">🌎 Todos los Proyectos</option>
+              {listaProyectos.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.codigo_cc ? `[${p.codigo_cc}] ` : ""}{p.nombre_proyecto}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Filtro por Origen de Medición (CAN vs GPS) */}
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
             <Filter size={14} color="#64748b" />
@@ -425,7 +475,7 @@ export default function TelemetriaTab({ currentUser }) {
           </div>
 
           {/* Búsqueda por texto (Chofer, lugar, patente, etc.) */}
-          <div style={{ position: "relative", minWidth: "260px" }}>
+          <div style={{ position: "relative", minWidth: "240px" }}>
             <Search size={15} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
             <input
               type="text"
@@ -440,11 +490,12 @@ export default function TelemetriaTab({ currentUser }) {
           </div>
 
           {/* Botón limpiar */}
-          {(desdeFiltro !== "2026-10-01" || hastaFiltro !== hoyISO || search || origenFiltro || equipoFiltro) && (
+          {(desdeFiltro !== "2026-10-01" || hastaFiltro !== hoyISO || proyectoFiltro || search || origenFiltro || equipoFiltro) && (
             <button
               onClick={() => {
                 setDesdeFiltro("2026-10-01");
                 setHastaFiltro(hoyISO);
+                setProyectoFiltro("");
                 setSearch("");
                 setOrigenFiltro("");
                 setEquipoFiltro("");
@@ -473,6 +524,14 @@ export default function TelemetriaTab({ currentUser }) {
         }}>
           <div style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>
             Mostrando {viajes.length > 0 ? `${(pagina - 1) * LIMIT + 1} - ${Math.min(pagina * LIMIT, totalViajes)}` : 0} de {totalViajes.toLocaleString("es-CL")} viajes
+            {proyectoSeleccionadoObj && (
+              <span style={{
+                marginLeft: "8px", padding: "2px 8px", borderRadius: "999px",
+                backgroundColor: "#e0f2fe", color: "#0369a1", fontSize: "11px", fontWeight: 700,
+              }}>
+                {proyectoSeleccionadoObj.codigo_cc ? `${proyectoSeleccionadoObj.codigo_cc} — ` : ""}{proyectoSeleccionadoObj.nombre_proyecto}
+              </span>
+            )}
           </div>
 
           {totalPaginas > 1 && (
@@ -518,10 +577,10 @@ export default function TelemetriaTab({ currentUser }) {
           <div style={{ padding: "60px", textAlign: "center", color: "#64748b" }}>
             <Car size={38} style={{ margin: "0 auto 12px", display: "block", color: "#cbd5e1" }} />
             <div style={{ fontSize: "16px", fontWeight: 600, color: "#334155" }}>
-              No se encontraron viajes para este rango de fechas
+              No se encontraron viajes para los filtros seleccionados
             </div>
             <p style={{ fontSize: "13px", color: "#94a3b8", maxWidth: "480px", margin: "6px auto 16px" }}>
-              Intenta seleccionar un rango más amplio o haz clic en "Octubre a Hoy".
+              Intenta seleccionar "Todos los Proyectos" o un rango de fechas más amplio.
             </p>
           </div>
         ) : (
@@ -529,14 +588,14 @@ export default function TelemetriaTab({ currentUser }) {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
               <thead>
                 <tr style={{ backgroundColor: "#f8fafc", borderBottom: "1px solid #e2e8f0", color: "#475569", fontWeight: 600 }}>
-                  <th style={{ padding: "12px 14px", width: "160px" }}>Equipo</th>
+                  <th style={{ padding: "12px 14px", width: "180px" }}>Equipo / Proyecto</th>
                   <th style={{ padding: "12px 14px", width: "110px" }}>Fecha</th>
                   <th style={{ padding: "12px 14px", width: "130px" }}>Horario / Tiempo</th>
                   <th style={{ padding: "12px 14px", width: "180px" }}>Chofer / Conductor</th>
                   <th style={{ padding: "12px 14px", width: "130px" }}>Distancia</th>
                   <th style={{ padding: "12px 14px", width: "130px" }}>Combustible</th>
-                  <th style={{ padding: "12px 14px", minWidth: "260px" }}>Lugar de Inicio</th>
-                  <th style={{ padding: "12px 14px", minWidth: "260px" }}>Lugar de Fin</th>
+                  <th style={{ padding: "12px 14px", minWidth: "250px" }}>Lugar de Inicio</th>
+                  <th style={{ padding: "12px 14px", minWidth: "250px" }}>Lugar de Fin</th>
                 </tr>
               </thead>
               <tbody>
@@ -563,7 +622,7 @@ export default function TelemetriaTab({ currentUser }) {
                       onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f8fafc")}
                       onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
                     >
-                      {/* Equipo / Patente */}
+                      {/* Equipo / Patente / Proyecto */}
                       <td style={{ padding: "12px 14px" }}>
                         <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
                           <span style={{
@@ -581,6 +640,17 @@ export default function TelemetriaTab({ currentUser }) {
                               <div style={{ fontSize: "11px", color: "#64748b" }}>
                                 {viaje.equipo.tipo || viaje.subtipo_skynav || ""}
                               </div>
+                              {viaje.equipo.proyecto && (
+                                <span style={{
+                                  fontSize: "10px", fontWeight: 600, color: "#0369a1",
+                                  backgroundColor: "#e0f2fe", padding: "1px 6px", borderRadius: "4px",
+                                  width: "fit-content", marginTop: "2px",
+                                }}>
+                                  {viaje.equipo.proyecto.codigo_cc
+                                    ? `${viaje.equipo.proyecto.codigo_cc} · ${viaje.equipo.proyecto.nombre_proyecto}`
+                                    : viaje.equipo.proyecto.nombre_proyecto}
+                                </span>
+                              )}
                             </>
                           ) : (
                             <span style={{ fontSize: "10px", color: "#94a3b8" }}>

@@ -646,19 +646,66 @@ export async function handleJornadaFlow(ctx, res) {
     const nowSantiago = new Date().toLocaleTimeString("sv-SE", { timeZone: "America/Santiago" });
     const hoy = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Santiago" });
 
-    // Buscar si hay bloque de planificación para esta hora
-    const { data: bloque } = await supabase
+    // Buscar bloques de planificación para hoy y priorizar el que coincida con la especialidad reportada
+    const { data: bloquesHoy } = await supabase
       .from("planificacion_bloques_pod")
       .select("*, supervisor:supervisor_id(id, nombre_completo, whatsapp)")
       .eq("equipo_id", reporteActual.equipo_id)
       .eq("fecha", hoy)
-      .lte("hora_inicio", nowSantiago)
-      .gte("hora_fin", nowSantiago)
-      .order("created_at", { ascending: false })
-      .maybeSingle();
+      .order("hora_inicio", { ascending: true });
+
+    const listaBloques = bloquesHoy || [];
+    let bloque =
+      listaBloques.find(
+        (b) =>
+          b.especialidad_id === resultado.especialidad_id &&
+          b.hora_inicio <= nowSantiago &&
+          b.hora_fin >= nowSantiago &&
+          !b.actividad_id
+      ) ||
+      listaBloques.find(
+        (b) =>
+          b.especialidad_id === resultado.especialidad_id &&
+          b.hora_inicio <= nowSantiago &&
+          b.hora_fin >= nowSantiago
+      ) ||
+      listaBloques.find((b) => b.especialidad_id === resultado.especialidad_id && !b.actividad_id) ||
+      listaBloques.find((b) => b.especialidad_id === resultado.especialidad_id) ||
+      listaBloques.find((b) => b.hora_inicio <= nowSantiago && b.hora_fin >= nowSantiago) ||
+      null;
+
+    // Si el operador cambió a una especialidad que no tenía bloque en la grilla hoy, vincular al supervisor activo de esa especialidad en el proyecto
+    if (!bloque || (bloque.especialidad_id && bloque.especialidad_id !== resultado.especialidad_id)) {
+      const proyId = reporteActual?.equipos?.proyecto_actual_id || personal?.proyecto_actual_id || null;
+      let qSup = supabase
+        .from("personal")
+        .select("id, nombre_completo, whatsapp, proyecto_actual_id")
+        .eq("rol", "Supervisor")
+        .eq("especialidad_id", resultado.especialidad_id)
+        .eq("activo", true);
+      if (proyId) qSup = qSup.eq("proyecto_actual_id", proyId);
+      const { data: supsEsp } = await qSup.limit(1);
+      const supMatch = supsEsp?.[0];
+
+      if (supMatch) {
+        const { data: nuevoBloque } = await supabase
+          .from("planificacion_bloques_pod")
+          .insert({
+            fecha: hoy,
+            equipo_id: reporteActual.equipo_id,
+            especialidad_id: resultado.especialidad_id,
+            supervisor_id: supMatch.id,
+            hora_inicio: "08:00:00",
+            hora_fin: "20:00:00",
+          })
+          .select("*, supervisor:supervisor_id(id, nombre_completo, whatsapp)")
+          .single();
+        if (nuevoBloque) bloque = nuevoBloque;
+      }
+    }
 
     if (bloque) {
-      if (bloque.supervisor_id && !reporteActual?.supervisor_id) {
+      if (bloque.supervisor_id) {
         await supabase.from("reportes_diarios").update({ supervisor_id: bloque.supervisor_id }).eq("id", sesion.reporte_activo_id);
       }
       if (bloque.actividad_id) {

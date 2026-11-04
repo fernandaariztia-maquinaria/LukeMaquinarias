@@ -89,10 +89,10 @@ function AdminMaquinariaContent({ currentUser, setCurrentUser, onChangeUser, onS
   const renderActiveTab = () => {
     switch (tab) {
       case "monitor":        return <ConsoleTab hookProps={hookProps} />;
-      case "mapa":           return <MapTab hookProps={hookProps} />;
+      case "mapa":           return <MapTab hookProps={hookProps} currentUser={currentUser} />;
       case "equipos":        return <EquiposTab hookProps={hookProps} />;
       case "eimiplanner":    return <EimiplannerTab currentUser={currentUser} />;
-      case "telemetria":     return <TelemetriaTab currentUser={currentUser} />;
+      case "telemetria":     return <TelemetriaTab currentUser={currentUser} hookProps={hookProps} />;
       case "proyectos":      return <ProyectosTab hookProps={hookProps} />;
       case "especialidades": return <EspecialidadesTab hookProps={hookProps} />;
       case "personal":       return <PersonalTab hookProps={hookProps} />;

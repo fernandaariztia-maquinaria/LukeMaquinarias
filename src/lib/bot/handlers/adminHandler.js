@@ -550,7 +550,7 @@ async function responderConsultaSupervisorFallback(supabase, personal, rawMessag
   }
 
   // 2. Consulta de estado de equipos / flota
-  if (/\b(estado de equipos|estado de la flota|equipos disponibles|equipos en panne|flota|disponibilidad de equipos)\b/.test(lower)) {
+  if (/\b(estado\s+de\s+(?:los\s+|la\s+)?(?:equipos|flota|maquinas|maquinaria)|equipos\s+(?:disponibles|operativos|en\s+panne|en\s+falla)|flota|disponibilidad\s+de\s+(?:los\s+)?equipos)\b/.test(lower)) {
     let qEq = supabase.from("equipos").select("codigo_interno, descripcion_equipo, patente, estado_actual");
     if (personal.proyecto_actual_id) {
       qEq = qEq.eq("proyecto_actual_id", personal.proyecto_actual_id);
@@ -607,16 +607,21 @@ async function responderConsultaSupervisorFallback(supabase, personal, rawMessag
   const fechaConsulta = pideManana ? mananaChile : hoyChile;
   const labelDia = pideManana ? `mañana (${fmtDMY(mananaChile)})` : `hoy (${fmtDMY(hoyChile)})`;
 
-  const { data: bloques } = await supabase
+  const esJefeOAdmin = personal.rol === "Jefe de Area" || personal.rol === "Administrador";
+  let qBloques = supabase
     .from("planificacion_bloques_pod")
     .select(`
       id, fecha, hora_inicio, hora_fin, actividad_especifica,
       equipos ( codigo_interno, descripcion_equipo, patente ),
-      especialidades ( nombre_oficial )
+      especialidades ( nombre_oficial ),
+      supervisor:supervisor_id ( nombre_completo )
     `)
-    .eq("supervisor_id", personal.id)
     .eq("fecha", fechaConsulta)
     .order("hora_inicio");
+  if (!esJefeOAdmin) {
+    qBloques = qBloques.eq("supervisor_id", personal.id);
+  }
+  const { data: bloques } = await qBloques;
 
   let tareasCatalogo = [];
   if (personal.especialidad_id) {
