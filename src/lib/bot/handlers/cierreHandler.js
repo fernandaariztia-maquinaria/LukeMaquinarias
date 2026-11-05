@@ -166,10 +166,8 @@ export async function handleCierreFlow(ctx, res) {
   const updateData = { estado_final: esFalla ? "Detenido por Falla" : "Disponible" };
   if (horometroFinal !== null && horometroFinal !== undefined) {
     updateData.horometro_final = horometroFinal;
-    const diffHoras = Number(horometroFinal) - Number(lecturaInicio || 0);
-    if (!Number.isNaN(diffHoras) && diffHoras >= 0) {
-      updateData.horas_trabajadas = Number(diffHoras.toFixed(1));
-    }
+    // Nota: 'horas_trabajadas' es una columna generada en Postgres (horometro_final - horometro_inicio),
+    // por lo que NO se debe asignar manualmente en updateData para evitar el error 428C9.
   }
   if (kmFinal !== null && kmFinal !== undefined) {
     updateData.km_final = kmFinal;
@@ -275,7 +273,7 @@ export async function handleCierreFlow(ctx, res) {
     reporte_id: sesion.reporte_activo_id,
     estado_hito: estadoFinalCierre,
     hora_evento: new Date().toISOString(),
-    nota_transcripcion: `CHECK-OUT: ${observacionCierre}${kmFinal ? ` | Odómetro: ${kmFinal}` : ""}${horometroFinal ? ` | Horómetro: ${horometroFinal}` : ""}${petroleoLitros ? ` | Combustible: ${petroleoLitros} L` : " | Sin carga combustible"}${usaPlataforma ? (platEstado === 'Cargada' ? ` | Plataforma Cargada (${platDetalle || 'sin detalle'})` : ' | Plataforma Limpia') : ''}`,
+    nota_transcripcion: `Término de jornada: ${observacionCierre}${kmFinal ? ` | Odómetro: ${kmFinal} km` : ""}${horometroFinal ? ` | Horómetro: ${horometroFinal} hrs` : ""}${petroleoLitros ? ` | Combustible: ${petroleoLitros} L` : " | Sin carga combustible"}${usaPlataforma ? (platEstado === 'Cargada' ? ` | Plataforma Cargada (${platDetalle || 'sin detalle'})` : ' | Plataforma Limpia') : ''}`,
   });
 
   const horasDetencionTexto = totalHorasDetencion > 0 ? `\n⚠️ *Horas Detenido por Falla:* ${totalHorasDetencion.toFixed(1)} hrs` : "";

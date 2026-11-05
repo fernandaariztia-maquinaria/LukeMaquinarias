@@ -2,7 +2,7 @@ import PDFDocument from "pdfkit";
 import fs from "fs";
 import path from "path";
 import { createClient } from "@supabase/supabase-js";
-import { formatEquipoLabel } from "./equipoLabel";
+import { formatEquipoLabel } from "./equipoLabel.js";
 
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "evidencias-montaje";
 
@@ -128,7 +128,7 @@ export async function generarReportePDF({
       // ============================================================
       const doc = new PDFDocument({
         size: "A4",
-        margin: 50,
+        margins: { top: 40, bottom: 35, left: 50, right: 50 },
         bufferPages: true,
         info: {
           Title: `Reporte Diario - ${equipo.descripcion_equipo} - ${reporte.fecha}`,
@@ -174,30 +174,40 @@ export async function generarReportePDF({
         doc.fontSize(9).font("Helvetica").fillColor("#64748b").text("LukeEquipos", 54, 78);
       }
 
-      // Título a la derecha
+      // Título en el centro con ancho acotado
+      const tituloW = 200;
       doc
         .fillColor(AZUL_OSCURO)
-        .fontSize(16)
+        .fontSize(14)
         .font("Helvetica-Bold")
-        .text("REPORTE DIARIO DE JORNADA", 190, 58, { width: W - 140 });
+        .text("REPORTE DIARIO DE JORNADA", 185, 55, { width: tituloW });
 
       doc
-        .fontSize(10)
+        .fontSize(9)
         .font("Helvetica")
         .fillColor("#475569")
-        .text("LukeEquipos — Sistema de Control Operacional", 190, 78);
+        .text("LukeEquipos — Control Operacional", 185, 73, { width: tituloW });
 
       doc
         .fontSize(8)
+        .font("Helvetica")
         .fillColor("#64748b")
-        .text(`Generado: ${new Date().toLocaleString("es-CL")}`, 190, 93);
+        .text(`Generado: ${new Date().toLocaleString("es-CL")}`, 185, 87, { width: tituloW });
 
-      // Código de equipo alineado a la derecha
+      // Código de equipo a la derecha en una pastilla destacada (evita colisiones con el título)
+      const codeW = 155;
+      const codeX = 50 + W - codeW;
+      doc.roundedRect(codeX, 54, codeW, 38, 5).fillAndStroke("#f8fafc", "#cbd5e1");
       doc
-        .fontSize(14)
+        .fontSize(7.5)
+        .font("Helvetica-Bold")
+        .fillColor("#64748b")
+        .text("CÓDIGO DE EQUIPO", codeX, 59, { width: codeW, align: "center" });
+      doc
+        .fontSize(11)
         .font("Helvetica-Bold")
         .fillColor(NARANJA)
-        .text(formatEquipoLabel(equipo), 50, 68, { align: "right", width: W });
+        .text(formatEquipoLabel(equipo), codeX + 4, 72, { width: codeW - 8, align: "center" });
 
       // Línea divisoria inferior de la cabecera
       doc.moveTo(50, 115).lineTo(50 + W, 115).strokeColor(AZUL_ACENTO).lineWidth(2).stroke();
@@ -304,8 +314,16 @@ export async function generarReportePDF({
         eventos.forEach((ev, i) => {
           const hora = new Date(ev.hora_evento).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
 
-          // Sanitizar y limpiar la nota para evitar caracteres extraños o LaTeX
-          const notaLimpia = sanitizarTexto(ev.nota_transcripcion || "—");
+          // Sanitizar y limpiar la nota para evitar prefijos técnicos
+          let notaRaw = ev.nota_transcripcion || "—";
+          notaRaw = notaRaw
+            .replace(/^📍?\s*Check-in Web\s*\[[^\]]+\]:\s*/i, "Inicio de turno: ")
+            .replace(/^📍?\s*Check-in\s*\[[^\]]+\]:\s*/i, "Inicio de turno: ")
+            .replace(/^CHECK-OUT:\s*/i, "Término de jornada: ")
+            .replace(/^Check-out:\s*/i, "Término de jornada: ")
+            .replace(/\s*\|\s*Ubicación:.*$/i, "")
+            .replace(/\s*Ubicación:\s*Lat\s*[-0-9.]+,?\s*Lng\s*[-0-9.]+.*$/i, "");
+          const notaLimpia = sanitizarTexto(notaRaw);
           const notaHeight = doc.fontSize(8.5).heightOfString(notaLimpia, { width: colNotaW, lineGap: 2 });
           const rowHeight = Math.max(22, notaHeight + 14);
 
@@ -439,11 +457,17 @@ export async function generarReportePDF({
         
         doc.fontSize(8).font("Helvetica").fillColor("#64748b");
         
+        // Suprimir temporalmente margin inferior para evitar salto de página fantasma
+        const oldBottomMargin = doc.page.margins.bottom;
+        doc.page.margins.bottom = 0;
+
         // ID de reporte y operador a la izquierda
-        doc.text(`ID Reporte: ${reporte.id} | Operador: ${operador.nombre_completo}`, 50, bottomY, { width: W - 100, align: "left" });
+        doc.text(`ID Reporte: ${reporte.id} | Operador: ${operador.nombre_completo}`, 50, bottomY, { width: W - 100, align: "left", lineBreak: false });
         
         // Paginación a la derecha
-        doc.text(`Página ${pageNum} de ${totalPages}`, 50 + W - 100, bottomY, { width: 100, align: "right" });
+        doc.text(`Página ${pageNum} de ${totalPages}`, 50 + W - 100, bottomY, { width: 100, align: "right", lineBreak: false });
+
+        doc.page.margins.bottom = oldBottomMargin;
       }
 
       doc.end();

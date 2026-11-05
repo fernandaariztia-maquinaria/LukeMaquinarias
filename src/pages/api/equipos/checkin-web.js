@@ -240,7 +240,7 @@ export default async function handler(req, res) {
         reporte_id: reporteId,
         estado_hito: hitoInicial,
         hora_evento: new Date().toISOString(),
-        nota_transcripcion: `📍 Check-in Web [${labelEstado}]: ${esVehiculo ? "Odómetro" : "Horómetro"} inicial de ${valorLectura.toLocaleString("es-CL")} ${esVehiculo ? "km" : "hrs"} registrado. Ubicación: ${notaUbicacion}.`
+        nota_transcripcion: `Inicio de turno [${labelEstado}]: ${esVehiculo ? "Odómetro" : "Horómetro"} inicial ${valorLectura.toLocaleString("es-CL")} ${esVehiculo ? "km" : "hrs"}.`
       })
       .select()
       .single();
