@@ -22,3 +22,8 @@ CREATE INDEX IF NOT EXISTS idx_fallas_estado ON maquinaria.historial_fallas_equi
 ALTER TABLE maquinaria.reportes_diarios 
     ADD COLUMN IF NOT EXISTS observaciones TEXT,
     ADD COLUMN IF NOT EXISTS horas_detencion NUMERIC(6,2) DEFAULT 0;
+
+GRANT ALL ON TABLE maquinaria.historial_fallas_equipos TO anon, authenticated, service_role;
+ALTER TABLE maquinaria.historial_fallas_equipos ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS historial_fallas_all ON maquinaria.historial_fallas_equipos;
+CREATE POLICY historial_fallas_all ON maquinaria.historial_fallas_equipos FOR ALL USING (true) WITH CHECK (true);
