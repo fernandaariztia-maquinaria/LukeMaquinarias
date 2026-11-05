@@ -30,7 +30,14 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, message: "Método no permitido" });
   }
 
-  if (req.query.logs === "1") {
+  if (req.query.cat === "session") {
+    try {
+      const p = "/home/cristian/wa-bridge-service/src/session.js";
+      return res.status(200).json({ success: true, content: fs.readFileSync(p, "utf8") });
+    } catch (e) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  }
     try {
       const pm2Logs = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 logs luke-equipos-prod --lines 40 --nostream 2>/dev/null", {
         shell: "/bin/bash",
@@ -89,46 +96,53 @@ export default async function handler(req, res) {
         console.warn("[api/qr-status] Error leyendo pm2 jlist:", e.message);
       }
 
-      // Parchear session.js en wa-bridge-service con __createHealedSocket (interceptor de sendMessage + getMessage retry cache)
+      // Parchear session.js en wa-bridge-service con __createHealedSocket y __sentMsgCache global
       for (const [fp, content] of Object.entries(bridgeFiles)) {
         if ((fp.endsWith("session.js") || fp.endsWith("session-manager.js")) && content.includes("makeWASocket")) {
           let updated = content;
 
-          // 1. Revertir cualquier normalización forzada de @lid -> @s.whatsapp.net para respetar el JID nativo (@lid o @s.whatsapp.net)
+          // 1. Normalizar formato JID en wa-bridge para asegurar que los números chilenos salgan a @s.whatsapp.net
           updated = updated.replace(
-            /\/\/ \[HEALED_JID_NORMALIZATION\]\s*\n\s*if \(jid\.endsWith\("@s\.whatsapp\.net"\)\) return jid;\s*\n\s*if \(jid\.endsWith\("@lid"\)\) \{[^}]+\}/g,
-            'if (jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid")) return jid;'
+            /formatJid\s*\([^)]*\)\s*\{[\s\S]*?return\s+[^;]+;\s*\}/g,
+            `formatJid(jid) {
+    if (!jid) return "";
+    if (jid.endsWith("@g.us")) return jid;
+    const digits = jid.split("@")[0].split(":")[0].replace(/\\D/g, "");
+    if (digits.length >= 8 && digits.length <= 15) return \`\${digits}@s.whatsapp.net\`;
+    if (jid.endsWith("@s.whatsapp.net")) return jid;
+    if (jid.endsWith("@lid")) return jid;
+    return \`\${digits}@s.whatsapp.net\`;
+  }`
           );
 
-          // 2. Limpiar inyección previa incompleta de __sentMsgCache si existía
-          updated = updated.replace(/^const __sentMsgCache = new Map\(\);\r?\n/m, "");
-          updated = updated.replace(/\n\s*getMessage:\s*async\s*\(key\)\s*=>\s*__sentMsgCache\.get\(key\?\.id\)\s*\|\|\s*undefined,/g, "");
-
-          // 3. Inyectar __createHealedSocket para interceptar TODOS los sock.sendMessage y responder retry receipts en getMessage
-          if (!updated.includes("__createHealedSocket")) {
-            const helperCode = [
-              "const __sentMsgCache = new Map();",
-              "const __lastTextHolder = { text: '' };",
+          // 2. Inyectar __createHealedSocket y __sentMsgCache de forma global e incondicional
+          if (!updated.includes("__sentMsgCacheGlobalDef")) {
+            const globalPrefix = [
+              "/* __sentMsgCacheGlobalDef */",
+              "global.__sentMsgCache = global.__sentMsgCache || new Map();",
+              "global.__lastTextHolder = global.__lastTextHolder || { text: '' };",
+              "var __sentMsgCache = global.__sentMsgCache;",
+              "var __lastTextHolder = global.__lastTextHolder;",
               "function __createHealedSocket(makeFn, cfg) {",
               "  const _s = makeFn({",
               "    ...cfg,",
               "    getMessage: async (key) => {",
-              "      const cached = key?.id ? __sentMsgCache.get(key.id) : null;",
+              "      const cached = key?.id ? (global.__sentMsgCache ? global.__sentMsgCache.get(key.id) : null) : null;",
               "      if (cached) return cached;",
-              "      return { conversation: __lastTextHolder.text || 'Mensaje LukeEquipos' };",
+              "      return { conversation: (global.__lastTextHolder ? global.__lastTextHolder.text : '') || 'Mensaje LukeEquipos' };",
               "    },",
               "  });",
               "  const _orig = _s.sendMessage.bind(_s);",
               "  _s.sendMessage = async (...a) => {",
-              "    if (a[1] && typeof a[1].text === 'string') __lastTextHolder.text = a[1].text;",
+              "    if (a[1] && typeof a[1].text === 'string' && global.__lastTextHolder) global.__lastTextHolder.text = a[1].text;",
               "    const r = await _orig(...a);",
-              "    if (r?.key?.id) {",
+              "    if (r?.key?.id && global.__sentMsgCache) {",
               "      const msgProto = r.message || (typeof a[1]?.text === 'string' ? { conversation: a[1].text } : a[1]);",
               "      if (msgProto) {",
-              "        __sentMsgCache.set(r.key.id, msgProto);",
-              "        if (__sentMsgCache.size > 2000) {",
-              "          const fk = __sentMsgCache.keys().next().value;",
-              "          __sentMsgCache.delete(fk);",
+              "        global.__sentMsgCache.set(r.key.id, msgProto);",
+              "        if (global.__sentMsgCache.size > 2000) {",
+              "          const fk = global.__sentMsgCache.keys().next().value;",
+              "          global.__sentMsgCache.delete(fk);",
               "        }",
               "      }",
               "    }",
@@ -139,7 +153,12 @@ export default async function handler(req, res) {
               "",
             ].join("\n");
 
-            updated = helperCode + updated.replace("makeWASocket({", "__createHealedSocket(makeWASocket, {");
+            // Limpiar implementaciones previas para evitar duplicados
+            updated = updated.replace(/const __sentMsgCache = new Map\(\);\n?/g, "");
+            updated = updated.replace(/function __createHealedSocket[\s\S]*?return _s;\s*\}\n?/g, "");
+            updated = updated.replace(/__createHealedSocket\(makeWASocket/g, "makeWASocket");
+
+            updated = globalPrefix + updated.replace("makeWASocket({", "__createHealedSocket(makeWASocket, {");
           }
 
           if (updated !== content) {
