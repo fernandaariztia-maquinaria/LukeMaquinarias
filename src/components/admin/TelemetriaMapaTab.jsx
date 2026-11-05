@@ -420,13 +420,14 @@ export default function TelemetriaMapaTab({
                 }}
               >
                 <option value="">Seleccionar patente...</option>
-                {equiposFiltrados.map((p) => {
+                {equiposFiltrados.map((p, idx) => {
                   const rawPat = typeof p === "string" ? p : p.patente;
                   const pat = formatearPatente(rawPat);
                   const cod = typeof p === "object" ? p.codigo_interno || p.codigo : "";
                   const desc = typeof p === "object" ? p.descripcion_equipo || p.tipo : "";
+                  const optKey = (typeof p === "object" && p.id) ? p.id : `${rawPat || "sin_pat"}_${idx}`;
                   return (
-                    <option key={rawPat} value={rawPat}>
+                    <option key={optKey} value={rawPat}>
                       {cod ? `[${cod}] ` : ""}{pat}{desc ? ` - ${desc}` : ""}
                     </option>
                   );
