@@ -38,6 +38,8 @@ export default async function handler(req, res) {
       return res.status(500).json({ success: false, error: e.message });
     }
   }
+
+  if (req.query.logs === "1") {
     try {
       const pm2Logs = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 logs luke-equipos-prod --lines 40 --nostream 2>/dev/null", {
         shell: "/bin/bash",
