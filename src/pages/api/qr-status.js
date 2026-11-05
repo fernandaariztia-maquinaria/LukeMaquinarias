@@ -107,7 +107,7 @@ export default async function handler(req, res) {
 
       let restartOut = "";
       try {
-        restartOut = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 restart wa-bridge-service", { shell: "/bin/bash", timeout: 8000 }).toString();
+        restartOut = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 restart wa-bridge-service || pm2 restart all || true", { shell: "/bin/bash", timeout: 8000 }).toString();
       } catch (e) {
         restartOut = e.message;
       }
@@ -225,7 +225,8 @@ export default async function handler(req, res) {
           updated = updated.replace(/var __lastTextHolder\s*=[^;]*;\n?/g, "");
           updated = updated.replace(/var __sentMsgCache\s*=[^;]*;\n?/g, "");
           updated = updated.replace(/function __createHealedSocket[\s\S]*?return _s;\s*\}\n?/g, "");
-          updated = updated.replace(/__createHealedSocket\(makeWASocket/g, "makeWASocket");
+          updated = updated.replace(/__createHealedSocket\(makeWASocket,\s*/g, "makeWASocket(");
+          updated = updated.replace(/makeWASocket,\s*\{/g, "makeWASocket({");
 
           const globalPrefix = [
             "/* __sentMsgCacheGlobalDef */",
@@ -263,7 +264,7 @@ export default async function handler(req, res) {
             "",
           ].join("\n");
 
-          updated = globalPrefix + updated.replace("makeWASocket({", "__createHealedSocket(makeWASocket, {");
+          updated = globalPrefix + updated.replace(/makeWASocket\(\{/g, "__createHealedSocket(makeWASocket, {");
 
           if (updated !== content) {
             fs.writeFileSync(fp, updated, "utf8");
