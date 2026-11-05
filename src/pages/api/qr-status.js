@@ -30,8 +30,21 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, message: "Método no permitido" });
   }
 
-  // Permite limpiar sesiones Signal corruptas ("Esperando mensaje...") y reiniciar wa-bridge-service sin perder creds.json
-  if (req.query.heal === "1") {
+  if (req.query.logs === "1") {
+    try {
+      const pm2Logs = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 logs luke-equipos-prod --lines 40 --nostream 2>/dev/null", {
+        shell: "/bin/bash",
+        timeout: 8000,
+      }).toString();
+      const bridgeLogs = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 logs wa-bridge-service --lines 40 --nostream 2>/dev/null", {
+        shell: "/bin/bash",
+        timeout: 8000,
+      }).toString();
+      return res.status(200).json({ success: true, pm2Logs, bridgeLogs });
+    } catch (e) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  }
     asegurarEnvSkynavEnServidor();
     const cleaned = [];
     const candidateDirs = new Set([
