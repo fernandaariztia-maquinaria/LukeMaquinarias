@@ -487,12 +487,12 @@ export default function TelemetriaMapaTab({
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               <AlertCircle size={18} color="#d97706" style={{ flexShrink: 0 }} />
               <span>
-                <strong>Modo Preliminar (Sin archivo CSV para el {fechaFiltro}):</strong> Mostrando trazo entre punto de inicio y fin. El archivo CSV cargado en <code style={{ backgroundColor: "#fde68a", padding: "1px 4px", borderRadius: "3px" }}>telemetria_csv/</code> contiene los registros del <strong>01 al 15 de Octubre de 2026</strong>.
+                <strong>Modo Preliminar (Sin archivo CSV para el {fechaFiltro}):</strong> Mostrando trazo entre punto de inicio y fin. Los archivos CSV cargados en <code style={{ backgroundColor: "#fde68a", padding: "1px 4px", borderRadius: "3px" }}>telemetria_csv/</code> contienen los registros del <strong>01 al 31 de Octubre de 2026</strong>.
               </span>
             </div>
             <button
               onClick={() => {
-                const fTarget = datosRecorrido?.cobertura_csv?.fecha_min || "2026-10-02";
+                const fTarget = datosRecorrido?.cobertura_csv?.fecha_max || "2026-10-31";
                 setFechaFiltro(fTarget);
               }}
               style={{
@@ -502,7 +502,7 @@ export default function TelemetriaMapaTab({
                 alignItems: "center", gap: "6px",
               }}
             >
-              Ver fecha con GPS ({datosRecorrido?.cobertura_csv?.fecha_min || "02/10/2026"}) →
+              Ver fecha con GPS ({datosRecorrido?.cobertura_csv?.fecha_max || "31/10/2026"}) →
             </button>
           </div>
         )

@@ -397,11 +397,12 @@ async function procesarArchivoCsv(rutaArchivo, mapaFlota) {
     if (totalLineas % 25000 === 0) {
       const segs = Math.max(1, Math.round((Date.now() - inicioTiempo) / 1000));
       const velProm = Math.round(insertados / segs);
-      const pct = Math.min(100, ((totalLineas / 3264475) * 100)).toFixed(1);
-      const restantes = Math.max(0, 3264475 - totalLineas);
+      const totalEstimado = Math.max(totalLineas, Math.round(tamBytes / 285));
+      const pct = Math.min(100, ((totalLineas / totalEstimado) * 100)).toFixed(1);
+      const restantes = Math.max(0, totalEstimado - totalLineas);
       const etaMin = velProm > 0 ? (restantes / velProm / 60).toFixed(1) : "--";
 
-      console.log(`[PROGRESO] ${totalLineas.toLocaleString("es-CL")} filas (${pct}%) | ${insertados.toLocaleString("es-CL")} guardados (${velProm} pts/s) | ETA: ~${etaMin} min`);
+      console.log(`[PROGRESO] ${totalLineas.toLocaleString("es-CL")} filas (~${pct}%) | ${insertados.toLocaleString("es-CL")} guardados (${velProm} pts/s) | ETA: ~${etaMin} min`);
     }
   }
 
