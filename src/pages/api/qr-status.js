@@ -52,6 +52,73 @@ export default async function handler(req, res) {
       return res.status(500).json({ success: false, error: e.message });
     }
   }
+  if (req.query.fix_session === "1") {
+    try {
+      const p = "/home/cristian/wa-bridge-service/src/session.js";
+      let content = fs.readFileSync(p, "utf8");
+      
+      // Eliminar cualquier bloque previo de __sentMsgCacheGlobalDef
+      content = content.replace(/\/\* __sentMsgCacheGlobalDef \*\/[\s\S]*?return _s;\s*\}\n?/g, "");
+      // Eliminar cualquier declaración previa de __lastTextHolder o __sentMsgCache
+      content = content.replace(/const __lastTextHolder\s*=\s*\{[^}]*\};\n?/g, "");
+      content = content.replace(/var __lastTextHolder\s*=[^;]*;\n?/g, "");
+      content = content.replace(/const __sentMsgCache\s*=[^;]*;\n?/g, "");
+      content = content.replace(/var __sentMsgCache\s*=[^;]*;\n?/g, "");
+      content = content.replace(/function __createHealedSocket[\s\S]*?return _s;\s*\}\n?/g, "");
+      content = content.replace(/__createHealedSocket\(makeWASocket/g, "makeWASocket");
+
+      const header = [
+        "/* __sentMsgCacheGlobalDef */",
+        "global.__sentMsgCache = global.__sentMsgCache || new Map();",
+        "global.__lastTextHolder = global.__lastTextHolder || { text: '' };",
+        "var __sentMsgCache = global.__sentMsgCache;",
+        "var __lastTextHolder = global.__lastTextHolder;",
+        "function __createHealedSocket(makeFn, cfg) {",
+        "  const _s = makeFn({",
+        "    ...cfg,",
+        "    getMessage: async (key) => {",
+        "      const cached = key?.id ? (global.__sentMsgCache ? global.__sentMsgCache.get(key.id) : null) : null;",
+        "      if (cached) return cached;",
+        "      return { conversation: (global.__lastTextHolder ? global.__lastTextHolder.text : '') || 'Mensaje LukeEquipos' };",
+        "    },",
+        "  });",
+        "  const _orig = _s.sendMessage.bind(_s);",
+        "  _s.sendMessage = async (...a) => {",
+        "    if (a[1] && typeof a[1].text === 'string' && global.__lastTextHolder) global.__lastTextHolder.text = a[1].text;",
+        "    const r = await _orig(...a);",
+        "    if (r?.key?.id && global.__sentMsgCache) {",
+        "      const msgProto = r.message || (typeof a[1]?.text === 'string' ? { conversation: a[1].text } : a[1]);",
+        "      if (msgProto) {",
+        "        global.__sentMsgCache.set(r.key.id, msgProto);",
+        "        if (global.__sentMsgCache.size > 2000) {",
+        "          const fk = global.__sentMsgCache.keys().next().value;",
+        "          global.__sentMsgCache.delete(fk);",
+        "        }",
+        "      }",
+        "    }",
+        "    return r;",
+        "  };",
+        "  return _s;",
+        "}",
+        "",
+      ].join("\n");
+
+      content = header + content.replace("makeWASocket({", "__createHealedSocket(makeWASocket, {");
+      fs.writeFileSync(p, content, "utf8");
+
+      let restartOut = "";
+      try {
+        restartOut = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 restart wa-bridge-service", { shell: "/bin/bash", timeout: 8000 }).toString();
+      } catch (e) {
+        restartOut = e.message;
+      }
+
+      return res.status(200).json({ success: true, fixed: true, restartOut, snippet: content.substring(0, 500) });
+    } catch (e) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  }
+
   if (req.query.cat === "session") {
     try {
       const p = "/home/cristian/wa-bridge-service/src/session.js";
