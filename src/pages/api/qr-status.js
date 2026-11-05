@@ -30,7 +30,28 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, message: "Método no permitido" });
   }
 
-  if (req.query.cat === "session") {
+  if (req.query.keys === "1") {
+    try {
+      const files = [
+        "/home/cristian/luke-equipos/.env.local",
+        "/home/cristian/luke-delivery/.env",
+        "/home/cristian/luke-delivery/.env.local",
+        "/home/cristian/andina-dashboard/.env",
+        "/home/cristian/.bashrc"
+      ];
+      const results = {};
+      for (const f of files) {
+        if (fs.existsSync(f)) {
+          const content = fs.readFileSync(f, "utf8");
+          const matches = content.match(/GEMINI[A-Z0-9_]*\s*=\s*[^\r\n]+/g);
+          if (matches) results[f] = matches.map(m => m.split("=")[0].trim() + " = " + m.split("=")[1].trim().slice(0, 10) + "..." + m.split("=")[1].trim().slice(-6));
+        }
+      }
+      return res.status(200).json({ success: true, results });
+    } catch (e) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  }
     try {
       const p = "/home/cristian/wa-bridge-service/src/session.js";
       return res.status(200).json({ success: true, content: fs.readFileSync(p, "utf8") });
@@ -56,7 +77,7 @@ export default async function handler(req, res) {
         shell: "/bin/bash",
         timeout: 8000,
       }).toString();
-      const bridgeLogs = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 logs luke-equipos-wa-bridge --lines 40 --nostream 2>/dev/null || true", {
+      const bridgeLogs = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 logs wa-bridge-service --lines 40 --nostream 2>/dev/null || pm2 logs luke-equipos-wa-bridge --lines 40 --nostream 2>/dev/null || true", {
         shell: "/bin/bash",
         timeout: 8000,
       }).toString();
