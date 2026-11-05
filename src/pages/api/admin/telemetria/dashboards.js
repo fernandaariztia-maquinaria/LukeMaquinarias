@@ -1,4 +1,5 @@
 import { createAdminClient } from "../../../../lib/supabase-server";
+import { formatearPatente, clasificarTipoEquipo, normalizarPatente } from "../../../../lib/telemetriaUtils";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") {
@@ -12,6 +13,7 @@ export default async function handler(req, res) {
     proyecto_id,
     patente,
     conductor,
+    tipo_equipo = "todos",
     user_rol = "",
     user_proyecto_id = "",
   } = req.query;
@@ -200,13 +202,16 @@ export default async function handler(req, res) {
       // 4.1 Agregación por Equipo / Patente
       const eqKey = eqMatched?.id || pNorm || v.nombre_skynav || "DESCONOCIDO";
       if (!porEquipo.has(eqKey)) {
+        const rawPat = eqMatched?.patente || v.patente || "S/P";
         porEquipo.set(eqKey, {
           equipo_id: eqMatched?.id || null,
-          patente: eqMatched?.patente || v.patente || "S/P",
+          patente: formatearPatente(rawPat),
+          patente_raw: rawPat,
           codigo_interno: eqMatched?.codigo_interno || v.nombre_skynav || v.patente || "S/C",
           descripcion: eqMatched?.descripcion_equipo || eqMatched?.tipo || "Equipo / Vehículo",
           tipo: eqMatched?.tipo || "Flota",
           categoria: eqMatched?.categoria || "Vehículo Liviano",
+          tipo_clasificado: clasificarTipoEquipo(eqMatched || v),
           marca: eqMatched?.marca || "",
           modelo: eqMatched?.modelo || "",
           proyecto_id: eqMatched?.proyecto_actual_id || null,
@@ -312,6 +317,7 @@ export default async function handler(req, res) {
         modelo: e.modelo,
         proyecto_id: e.proyecto_id,
         proyecto_nombre: e.proyecto_nombre,
+        tipo_clasificado: e.tipo_clasificado || "otros",
         horas_totales: horasTotales,
         horas_efectivas: horasEfectivas,
         horas_ralenti: horasRalenti,
@@ -327,24 +333,30 @@ export default async function handler(req, res) {
       };
     });
 
+    // Filtrar por tipo de equipo si se especifica
+    const equiposFiltradosPorTipo =
+      tipo_equipo && tipo_equipo !== "todos"
+        ? listaEquiposDash.filter((e) => e.tipo_clasificado === tipo_equipo)
+        : listaEquiposDash;
+
     // 6. Construir rankings específicos (Top de mayor a menor)
     // 6.1 Top Horas de Uso
-    const topHorasUso = [...listaEquiposDash]
+    const topHorasUso = [...equiposFiltradosPorTipo]
       .filter((e) => e.horas_totales > 0)
       .sort((a, b) => b.horas_totales - a.horas_totales);
 
     // 6.2 Top Consumo de Combustible
-    const topCombustible = [...listaEquiposDash]
+    const topCombustible = [...equiposFiltradosPorTipo]
       .filter((e) => e.litros_totales > 0)
       .sort((a, b) => b.litros_totales - a.litros_totales);
 
     // 6.3 Top Kilometraje / Distancia
-    const topKilometraje = [...listaEquiposDash]
+    const topKilometraje = [...equiposFiltradosPorTipo]
       .filter((e) => e.km_totales > 0)
       .sort((a, b) => b.km_totales - a.km_totales);
 
     // 6.4 Top Ralentí (Equipos con mayor tiempo en ralentí)
-    const topRalenti = [...listaEquiposDash]
+    const topRalenti = [...equiposFiltradosPorTipo]
       .filter((e) => e.horas_ralenti > 0)
       .sort((a, b) => b.horas_ralenti - a.horas_ralenti);
 
@@ -357,7 +369,7 @@ export default async function handler(req, res) {
         km_totales: Math.round(c.km_total * 10) / 10,
         litros_totales: Math.round(c.litros_total * 10) / 10,
         viajes: c.viajes,
-        vehiculos: Array.from(c.vehiculos_set),
+        vehiculos: Array.from(c.vehiculos_set).map(formatearPatente),
       }))
       .sort((a, b) => b.horas_conducidas - a.horas_conducidas)
       .slice(0, 30);
@@ -420,9 +432,13 @@ export default async function handler(req, res) {
       distribucion_horaria: distribucionFinal,
       equipos_disponibles: todosEquipos.map((e) => ({
         id: e.id,
-        patente: e.patente,
+        patente: formatearPatente(e.patente),
+        patente_raw: e.patente,
         codigo_interno: e.codigo_interno,
         descripcion: e.descripcion_equipo,
+        tipo: e.tipo,
+        categoria: e.categoria,
+        tipo_clasificado: clasificarTipoEquipo(e),
         proyecto_id: e.proyecto_actual_id,
       })),
       proyectos_disponibles: proyectos,
@@ -436,3 +452,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ success: false, error: err.message });
   }
 }
+

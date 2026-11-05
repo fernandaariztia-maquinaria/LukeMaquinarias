@@ -3,16 +3,18 @@ import {
   Radio, RefreshCw, Gauge, Clock, Fuel,
   MapPin, Search, Calendar, ChevronLeft, ChevronRight,
   ExternalLink, Filter, Car, Navigation, User, Info, Check,
-  Building2, FileText, Map, BarChart3, TrendingUp
+  Building2, FileText, Map, BarChart3, TrendingUp, Layers
 } from "lucide-react";
 import TelemetriaMapaTab from "./TelemetriaMapaTab";
 import TelemetriaDashboardsTab from "./TelemetriaDashboardsTab";
+import { formatearPatente, clasificarTipoEquipo, TIPOS_EQUIPO_FILTROS } from "../../lib/telemetriaUtils";
 
 export default function TelemetriaTab({ currentUser, hookProps }) {
-  // Sub-apartados: "resumen" | "mapa"
-  const [subTab, setSubTab] = useState("resumen");
+  // Sub-apartados: "dashboards" | "resumen" | "mapa" (Dashboards primero según solicitud)
+  const [subTab, setSubTab] = useState("dashboards");
   const [mapaPatente, setMapaPatente] = useState("");
   const [mapaFecha, setMapaFecha] = useState("");
+  const [tipoEquipoFiltro, setTipoEquipoFiltro] = useState("todos"); // "todos" | "camionetas" | "camiones" | "gruas" | "maquinaria" | "buses" | "otros"
   // 1. Permiso de Administrador
   const esAdmin = useMemo(() => {
     if (!currentUser) return false;
@@ -109,6 +111,12 @@ export default function TelemetriaTab({ currentUser, hookProps }) {
   useEffect(() => {
     cargarViajesGuardados();
   }, [cargarViajesGuardados]);
+
+  // Filtrado de viajes por tipo de equipo
+  const viajesFiltrados = useMemo(() => {
+    if (tipoEquipoFiltro === "todos") return viajes;
+    return viajes.filter((v) => clasificarTipoEquipo(v.equipo || v) === tipoEquipoFiltro);
+  }, [viajes, tipoEquipoFiltro]);
 
   // Al cambiar filtros, resetear a página 1
   const handleFiltroCambio = (setter, val) => {
@@ -251,79 +259,7 @@ export default function TelemetriaTab({ currentUser, hookProps }) {
         display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px",
         marginBottom: "24px",
       }}>
-        {/* Tab 1: Resumen Viajes */}
-        <button
-          onClick={() => setSubTab("resumen")}
-          style={{
-            flex: "1 1 200px", display: "flex", alignItems: "center", gap: "12px",
-            padding: "12px 18px", borderRadius: "10px", border: "none", cursor: "pointer",
-            transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-            background: subTab === "resumen"
-              ? "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)"
-              : "#f8fafc",
-            color: subTab === "resumen" ? "#ffffff" : "#334155",
-            boxShadow: subTab === "resumen"
-              ? "0 4px 14px rgba(2, 132, 199, 0.35)"
-              : "inset 0 0 0 1px #e2e8f0",
-          }}
-        >
-          <div style={{
-            backgroundColor: subTab === "resumen" ? "rgba(255,255,255,0.2)" : "#e0f2fe",
-            color: subTab === "resumen" ? "#ffffff" : "#0284c7",
-            padding: "8px", borderRadius: "8px", display: "flex",
-          }}>
-            <FileText size={18} />
-          </div>
-          <div style={{ textAlign: "left" }}>
-            <div style={{ fontSize: "14px", fontWeight: 800, letterSpacing: "-0.2px" }}>
-              Resumen Viajes
-            </div>
-            <div style={{
-              fontSize: "11px", fontWeight: 500,
-              color: subTab === "resumen" ? "rgba(255,255,255,0.85)" : "#64748b",
-            }}>
-              Bitácora y tabla de viajes
-            </div>
-          </div>
-        </button>
-
-        {/* Tab 2: Mapa Viajes */}
-        <button
-          onClick={() => setSubTab("mapa")}
-          style={{
-            flex: "1 1 200px", display: "flex", alignItems: "center", gap: "12px",
-            padding: "12px 18px", borderRadius: "10px", border: "none", cursor: "pointer",
-            transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-            background: subTab === "mapa"
-              ? "linear-gradient(135deg, #0d9488 0%, #0f766e 100%)"
-              : "#f8fafc",
-            color: subTab === "mapa" ? "#ffffff" : "#334155",
-            boxShadow: subTab === "mapa"
-              ? "0 4px 14px rgba(13, 148, 136, 0.35)"
-              : "inset 0 0 0 1px #e2e8f0",
-          }}
-        >
-          <div style={{
-            backgroundColor: subTab === "mapa" ? "rgba(255,255,255,0.2)" : "#ccfbf1",
-            color: subTab === "mapa" ? "#ffffff" : "#0d9488",
-            padding: "8px", borderRadius: "8px", display: "flex",
-          }}>
-            <Map size={18} />
-          </div>
-          <div style={{ textAlign: "left" }}>
-            <div style={{ fontSize: "14px", fontWeight: 800, letterSpacing: "-0.2px" }}>
-              Mapa Viajes
-            </div>
-            <div style={{
-              fontSize: "11px", fontWeight: 500,
-              color: subTab === "mapa" ? "rgba(255,255,255,0.85)" : "#64748b",
-            }}>
-              Recorridos GPS alta fidelidad
-            </div>
-          </div>
-        </button>
-
-        {/* Tab 3: Dashboards */}
+        {/* Tab 1: Dashboards (Primero) */}
         <button
           onClick={() => setSubTab("dashboards")}
           style={{
@@ -350,7 +286,7 @@ export default function TelemetriaTab({ currentUser, hookProps }) {
           <div style={{ textAlign: "left", flex: 1 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px" }}>
               <span style={{ fontSize: "14px", fontWeight: 800, letterSpacing: "-0.2px" }}>
-                Dashboards
+                1. Dashboards
               </span>
               <span style={{
                 fontSize: "10px", fontWeight: 800, padding: "2px 6px", borderRadius: "10px",
@@ -358,14 +294,86 @@ export default function TelemetriaTab({ currentUser, hookProps }) {
                 color: subTab === "dashboards" ? "#1e1b4b" : "#ffffff",
                 letterSpacing: "0.5px", textTransform: "uppercase",
               }}>
-                Nuevo
+                Top Flota
               </span>
             </div>
             <div style={{
               fontSize: "11px", fontWeight: 500,
               color: subTab === "dashboards" ? "rgba(255,255,255,0.85)" : "#64748b",
             }}>
-              Top rankings, uso y utilización
+              Métricas, uso y rankings
+            </div>
+          </div>
+        </button>
+
+        {/* Tab 2: Resumen Viajes (Segundo) */}
+        <button
+          onClick={() => setSubTab("resumen")}
+          style={{
+            flex: "1 1 200px", display: "flex", alignItems: "center", gap: "12px",
+            padding: "12px 18px", borderRadius: "10px", border: "none", cursor: "pointer",
+            transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+            background: subTab === "resumen"
+              ? "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)"
+              : "#f8fafc",
+            color: subTab === "resumen" ? "#ffffff" : "#334155",
+            boxShadow: subTab === "resumen"
+              ? "0 4px 14px rgba(2, 132, 199, 0.35)"
+              : "inset 0 0 0 1px #e2e8f0",
+          }}
+        >
+          <div style={{
+            backgroundColor: subTab === "resumen" ? "rgba(255,255,255,0.2)" : "#e0f2fe",
+            color: subTab === "resumen" ? "#ffffff" : "#0284c7",
+            padding: "8px", borderRadius: "8px", display: "flex",
+          }}>
+            <FileText size={18} />
+          </div>
+          <div style={{ textAlign: "left" }}>
+            <div style={{ fontSize: "14px", fontWeight: 800, letterSpacing: "-0.2px" }}>
+              2. Resumen Viajes
+            </div>
+            <div style={{
+              fontSize: "11px", fontWeight: 500,
+              color: subTab === "resumen" ? "rgba(255,255,255,0.85)" : "#64748b",
+            }}>
+              Bitácora y tabla detallada
+            </div>
+          </div>
+        </button>
+
+        {/* Tab 3: Mapa Viajes (Tercero) */}
+        <button
+          onClick={() => setSubTab("mapa")}
+          style={{
+            flex: "1 1 200px", display: "flex", alignItems: "center", gap: "12px",
+            padding: "12px 18px", borderRadius: "10px", border: "none", cursor: "pointer",
+            transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+            background: subTab === "mapa"
+              ? "linear-gradient(135deg, #0d9488 0%, #0f766e 100%)"
+              : "#f8fafc",
+            color: subTab === "mapa" ? "#ffffff" : "#334155",
+            boxShadow: subTab === "mapa"
+              ? "0 4px 14px rgba(13, 148, 136, 0.35)"
+              : "inset 0 0 0 1px #e2e8f0",
+          }}
+        >
+          <div style={{
+            backgroundColor: subTab === "mapa" ? "rgba(255,255,255,0.2)" : "#ccfbf1",
+            color: subTab === "mapa" ? "#ffffff" : "#0d9488",
+            padding: "8px", borderRadius: "8px", display: "flex",
+          }}>
+            <Map size={18} />
+          </div>
+          <div style={{ textAlign: "left" }}>
+            <div style={{ fontSize: "14px", fontWeight: 800, letterSpacing: "-0.2px" }}>
+              3. Mapa Viajes
+            </div>
+            <div style={{
+              fontSize: "11px", fontWeight: 500,
+              color: subTab === "mapa" ? "rgba(255,255,255,0.85)" : "#64748b",
+            }}>
+              Recorridos GPS alta fidelidad
             </div>
           </div>
         </button>
@@ -637,7 +645,7 @@ export default function TelemetriaTab({ currentUser, hookProps }) {
           </div>
 
           {/* Botón limpiar */}
-          {(desdeFiltro !== "2026-10-01" || hastaFiltro !== hoyISO || proyectoFiltro || search || origenFiltro || equipoFiltro) && (
+          {(desdeFiltro !== "2026-10-01" || hastaFiltro !== hoyISO || proyectoFiltro || search || origenFiltro || equipoFiltro || tipoEquipoFiltro !== "todos") && (
             <button
               onClick={() => {
                 setDesdeFiltro("2026-10-01");
@@ -646,6 +654,7 @@ export default function TelemetriaTab({ currentUser, hookProps }) {
                 setSearch("");
                 setOrigenFiltro("");
                 setEquipoFiltro("");
+                setTipoEquipoFiltro("todos");
                 setPagina(1);
               }}
               style={{
@@ -656,6 +665,38 @@ export default function TelemetriaTab({ currentUser, hookProps }) {
               Restablecer filtros
             </button>
           )}
+        </div>
+
+        {/* ── BOTONES DE FILTRO POR TIPO DE EQUIPO ─────────────────────── */}
+        <div style={{
+          marginTop: "4px", paddingTop: "12px", borderTop: "1px solid #f1f5f9",
+          display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px",
+        }}>
+          <span style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "flex", alignItems: "center", gap: "6px" }}>
+            <Layers size={14} color="#0284c7" />
+            Tipo de Equipo:
+          </span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+            {TIPOS_EQUIPO_FILTROS.map((t) => {
+              const activo = tipoEquipoFiltro === t.key;
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => setTipoEquipoFiltro(t.key)}
+                  style={{
+                    fontSize: "11px", fontWeight: 700, padding: "5px 12px", borderRadius: "6px",
+                    cursor: "pointer", transition: "all 0.15s ease",
+                    border: activo ? "1px solid #0284c7" : "1px solid #cbd5e1",
+                    backgroundColor: activo ? "#0284c7" : "#ffffff",
+                    color: activo ? "#ffffff" : "#475569",
+                    boxShadow: activo ? "0 2px 4px rgba(2, 132, 199, 0.25)" : "none",
+                  }}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -746,39 +787,46 @@ export default function TelemetriaTab({ currentUser, hookProps }) {
                 </tr>
               </thead>
               <tbody>
-                {viajes.map((viaje) => {
-                  const mapsInicio = viaje.latitud_inicio && viaje.longitud_inicio
-                    ? `https://www.google.com/maps?q=${viaje.latitud_inicio},${viaje.longitud_inicio}`
-                    : null;
+                {viajesFiltrados.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} style={{ padding: "30px", textAlign: "center", color: "#64748b" }}>
+                      No se encontraron viajes registrados para el filtro de equipo seleccionado ({tipoEquipoFiltro}).
+                    </td>
+                  </tr>
+                ) : (
+                  viajesFiltrados.map((viaje) => {
+                    const mapsInicio = viaje.latitud_inicio && viaje.longitud_inicio
+                      ? `https://www.google.com/maps?q=${viaje.latitud_inicio},${viaje.longitud_inicio}`
+                      : null;
 
-                  const mapsFin = viaje.latitud_fin && viaje.longitud_fin
-                    ? `https://www.google.com/maps?q=${viaje.latitud_fin},${viaje.longitud_fin}`
-                    : null;
+                    const mapsFin = viaje.latitud_fin && viaje.longitud_fin
+                      ? `https://www.google.com/maps?q=${viaje.latitud_fin},${viaje.longitud_fin}`
+                      : null;
 
-                  const esCan = viaje.origen_km === "CAN" || viaje.origen_combustible === "CAN" || Number(viaje.litros_can) > 0;
+                    const esCan = viaje.origen_km === "CAN" || viaje.origen_combustible === "CAN" || Number(viaje.litros_can) > 0;
 
-                  const minTotales = Math.round(Number(viaje.tiempo_min) || 0);
-                  const horas = Math.floor(minTotales / 60);
-                  const minResto = minTotales % 60;
-                  const duracionTxt = horas > 0 ? `${horas}h ${minResto}m` : `${minResto} min`;
+                    const minTotales = Math.round(Number(viaje.tiempo_min) || 0);
+                    const horas = Math.floor(minTotales / 60);
+                    const minResto = minTotales % 60;
+                    const duracionTxt = horas > 0 ? `${horas}h ${minResto}m` : `${minResto} min`;
 
-                  return (
-                    <tr
-                      key={viaje.id}
-                      style={{ borderBottom: "1px solid #f1f5f9", transition: "background-color 0.15s" }}
-                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f8fafc")}
-                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
-                    >
-                      {/* Equipo / Patente / Proyecto */}
-                      <td style={{ padding: "12px 14px" }}>
-                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                          <span style={{
-                            padding: "2px 6px", backgroundColor: "#f1f5f9",
-                            borderRadius: "4px", fontWeight: 700, fontSize: "12px",
-                            fontFamily: "monospace", color: "#0f172a", width: "fit-content",
-                          }}>
-                            {viaje.patente || viaje.identificador_skynav}
-                          </span>
+                    return (
+                      <tr
+                        key={viaje.id}
+                        style={{ borderBottom: "1px solid #f1f5f9", transition: "background-color 0.15s" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f8fafc")}
+                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+                      >
+                        {/* Equipo / Patente / Proyecto */}
+                        <td style={{ padding: "12px 14px" }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                            <span style={{
+                              padding: "2px 6px", backgroundColor: "#f1f5f9",
+                              borderRadius: "4px", fontWeight: 700, fontSize: "12px",
+                              fontFamily: "monospace", color: "#0f172a", width: "fit-content",
+                            }}>
+                              {formatearPatente(viaje.patente || viaje.identificador_skynav)}
+                            </span>
                           {viaje.equipo ? (
                             <>
                               <div style={{ fontWeight: 600, fontSize: "12px", color: "#1e293b" }}>
@@ -964,7 +1012,7 @@ export default function TelemetriaTab({ currentUser, hookProps }) {
                       </td>
                     </tr>
                   );
-                })}
+                }))}
               </tbody>
             </table>
           </div>

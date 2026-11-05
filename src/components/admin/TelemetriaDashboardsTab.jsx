@@ -5,6 +5,7 @@ import {
   CheckCircle2, Award, ArrowUpRight, Flame, Layers, Sliders,
   Info, ChevronRight, FileSpreadsheet
 } from "lucide-react";
+import { formatearPatente, clasificarTipoEquipo, TIPOS_EQUIPO_FILTROS } from "../../lib/telemetriaUtils";
 
 export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
   // 1. Verificación de Administrador
@@ -24,6 +25,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
   const [proyectoFiltro, setProyectoFiltro] = useState(() => (esAdmin ? "" : userProyectoId));
   const [patenteFiltro, setPatenteFiltro] = useState("");
   const [conductorFiltro, setConductorFiltro] = useState("");
+  const [tipoEquipoFiltro, setTipoEquipoFiltro] = useState("todos"); // "todos" | "camionetas" | "camiones" | "gruas" | "maquinaria" | "buses" | "otros"
 
   // 3. Parámetro de Meta de Utilización Editable por el Usuario
   const [modoMeta, setModoMeta] = useState("diario"); // "diario" | "total"
@@ -88,10 +90,34 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
     return Math.max(1, Number(horasMetaTotalPersonalizada || 160));
   }, [modoMeta, horasMetaDiaria, diasPeriodo, horasMetaTotalPersonalizada]);
 
+  // Filtrar rankings y listas por tipo de equipo (Camionetas, grúas, camiones, etc.)
+  const topHorasFiltradas = useMemo(() => {
+    const list = dashData?.rankings?.top_horas_uso || [];
+    if (tipoEquipoFiltro === "todos") return list;
+    return list.filter((e) => (e.tipo_clasificado || clasificarTipoEquipo(e)) === tipoEquipoFiltro);
+  }, [dashData?.rankings?.top_horas_uso, tipoEquipoFiltro]);
+
+  const topCombustibleFiltrado = useMemo(() => {
+    const list = dashData?.rankings?.top_consumo_combustible || [];
+    if (tipoEquipoFiltro === "todos") return list;
+    return list.filter((e) => (e.tipo_clasificado || clasificarTipoEquipo(e)) === tipoEquipoFiltro);
+  }, [dashData?.rankings?.top_consumo_combustible, tipoEquipoFiltro]);
+
+  const topKmFiltrado = useMemo(() => {
+    const list = dashData?.rankings?.top_kilometraje || [];
+    if (tipoEquipoFiltro === "todos") return list;
+    return list.filter((e) => (e.tipo_clasificado || clasificarTipoEquipo(e)) === tipoEquipoFiltro);
+  }, [dashData?.rankings?.top_kilometraje, tipoEquipoFiltro]);
+
+  const topRalentiFiltrado = useMemo(() => {
+    const list = dashData?.rankings?.top_ralenti || [];
+    if (tipoEquipoFiltro === "todos") return list;
+    return list.filter((e) => (e.tipo_clasificado || clasificarTipoEquipo(e)) === tipoEquipoFiltro);
+  }, [dashData?.rankings?.top_ralenti, tipoEquipoFiltro]);
+
   // Enriquecer la lista de horas de uso con los porcentajes dinámicos de utilización
   const equiposConUtilizacion = useMemo(() => {
-    const rawList = dashData?.rankings?.top_horas_uso || [];
-    return rawList.map((eq) => {
+    return topHorasFiltradas.map((eq) => {
       const horasReales = eq.horas_totales || 0;
       const pctUtilizacion = Math.round((horasReales / horasMetaCalculadas) * 1000) / 10;
       let estado = "optimo";
@@ -114,6 +140,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
 
       return {
         ...eq,
+        patente: formatearPatente(eq.patente),
         horas_meta: horasMetaCalculadas,
         pct_utilizacion: pctUtilizacion,
         estado_utilizacion: estado,
@@ -121,7 +148,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
         etiqueta_utilizacion: etiqueta,
       };
     }).sort((a, b) => b.pct_utilizacion - a.pct_utilizacion);
-  }, [dashData?.rankings?.top_horas_uso, horasMetaCalculadas]);
+  }, [topHorasFiltradas, horasMetaCalculadas]);
 
   // Filtrado de equipos por estado de utilización
   const equiposUtilizacionFiltrados = useMemo(() => {
@@ -133,6 +160,12 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
   const listaProyectos = dashData?.proyectos_disponibles || [];
   const listaEquipos = dashData?.equipos_disponibles || [];
 
+  // Filtrar lista de equipos para el selector por tipo de equipo
+  const listaEquiposFiltrada = useMemo(() => {
+    if (tipoEquipoFiltro === "todos") return listaEquipos;
+    return listaEquipos.filter((e) => (e.tipo_clasificado || clasificarTipoEquipo(e)) === tipoEquipoFiltro);
+  }, [listaEquipos, tipoEquipoFiltro]);
+
   // Encontrar nombre del proyecto actual si no es admin
   const nombreProyectoObra = useMemo(() => {
     if (!userProyectoId) return "Obra General";
@@ -142,21 +175,21 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
 
   // Máximo consumo para barras proporcionales
   const maxLitros = useMemo(() => {
-    const top = dashData?.rankings?.top_consumo_combustible?.[0];
+    const top = topCombustibleFiltrado[0];
     return top ? top.litros_totales || 1 : 1;
-  }, [dashData?.rankings?.top_consumo_combustible]);
+  }, [topCombustibleFiltrado]);
 
   // Máximas horas para barras proporcionales
   const maxHoras = useMemo(() => {
-    const top = dashData?.rankings?.top_horas_uso?.[0];
+    const top = topHorasFiltradas[0];
     return top ? top.horas_totales || 1 : 1;
-  }, [dashData?.rankings?.top_horas_uso]);
+  }, [topHorasFiltradas]);
 
   // Máximo km para barras proporcionales
   const maxKm = useMemo(() => {
-    const top = dashData?.rankings?.top_kilometraje?.[0];
+    const top = topKmFiltrado[0];
     return top ? top.km_totales || 1 : 1;
-  }, [dashData?.rankings?.top_kilometraje]);
+  }, [topKmFiltrado]);
 
   // Distribución horaria máxima para barras
   const maxHorasDistribucion = useMemo(() => {
@@ -316,13 +349,13 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
               }}
             >
               <option value="">-- Todos los Vehículos --</option>
-              {listaEquipos.map((eq) => {
+              {listaEquiposFiltrada.map((eq) => {
                 const pat = eq.patente || "";
                 const cod = eq.codigo_interno || "";
                 const desc = eq.descripcion || "";
                 return (
                   <option key={eq.id} value={pat || cod}>
-                    {cod ? `[${cod}] ` : ""}{pat}{desc ? ` - ${desc}` : ""}
+                    {cod ? `[${cod}] ` : ""}{formatearPatente(pat)}{desc ? ` - ${desc}` : ""}
                   </option>
                 );
               })}
@@ -380,6 +413,38 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
               <RefreshCw size={14} className={cargando ? "animate-spin" : ""} />
               {cargando ? "Consultando..." : "Actualizar"}
             </button>
+          </div>
+        </div>
+
+        {/* ── BOTONES DE FILTRO POR TIPO DE EQUIPO ─────────────────────── */}
+        <div style={{
+          marginTop: "16px", paddingTop: "14px", borderTop: "1px solid #f1f5f9",
+          display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px",
+        }}>
+          <span style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "flex", alignItems: "center", gap: "6px" }}>
+            <Layers size={14} color="#0284c7" />
+            Tipo de Equipo:
+          </span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+            {TIPOS_EQUIPO_FILTROS.map((t) => {
+              const activo = tipoEquipoFiltro === t.key;
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => setTipoEquipoFiltro(t.key)}
+                  style={{
+                    fontSize: "11px", fontWeight: 700, padding: "5px 12px", borderRadius: "6px",
+                    cursor: "pointer", transition: "all 0.15s ease",
+                    border: activo ? "1px solid #0284c7" : "1px solid #cbd5e1",
+                    backgroundColor: activo ? "#0284c7" : "#ffffff",
+                    color: activo ? "#ffffff" : "#475569",
+                    boxShadow: activo ? "0 2px 4px rgba(2, 132, 199, 0.25)" : "none",
+                  }}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -750,7 +815,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {(dashData?.rankings?.top_horas_uso || []).slice(0, 5).map((eq, idx) => (
+                {topHorasFiltradas.slice(0, 5).map((eq, idx) => (
                   <div key={eq.patente} style={{
                     padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
                     border: "1px solid #e2e8f0",
@@ -765,7 +830,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                         }}>
                           {idx + 1}
                         </span>
-                        <strong style={{ fontSize: "13px", color: "#0f172a" }}>{eq.patente}</strong>
+                        <strong style={{ fontSize: "13px", color: "#0f172a" }}>{formatearPatente(eq.patente)}</strong>
                         {eq.codigo_interno && (
                           <span style={{ fontSize: "11px", backgroundColor: "#e2e8f0", padding: "1px 6px", borderRadius: "4px", color: "#475569" }}>
                             {eq.codigo_interno}
@@ -822,7 +887,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {(dashData?.rankings?.top_consumo_combustible || []).slice(0, 5).map((eq, idx) => (
+                {topCombustibleFiltrado.slice(0, 5).map((eq, idx) => (
                   <div key={eq.patente} style={{
                     padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
                     border: "1px solid #e2e8f0",
@@ -837,7 +902,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                         }}>
                           {idx + 1}
                         </span>
-                        <strong style={{ fontSize: "13px", color: "#0f172a" }}>{eq.patente}</strong>
+                        <strong style={{ fontSize: "13px", color: "#0f172a" }}>{formatearPatente(eq.patente)}</strong>
                         {eq.codigo_interno && (
                           <span style={{ fontSize: "11px", backgroundColor: "#e2e8f0", padding: "1px 6px", borderRadius: "4px", color: "#475569" }}>
                             {eq.codigo_interno}
@@ -990,7 +1055,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                       </div>
                     </div>
                     <div style={{ fontSize: "10px", color: "#64748b", marginTop: "4px" }}>
-                      Vehículos operados: <strong>{cond.vehiculos?.slice(0, 3).join(", ") || "S/R"}</strong>
+                      Vehículos operados: <strong>{cond.vehiculos?.slice(0, 3).map(formatearPatente).join(", ") || "S/R"}</strong>
                       {cond.vehiculos?.length > 3 ? ` (+${cond.vehiculos.length - 3})` : ""}
                     </div>
                   </div>
@@ -1047,7 +1112,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 </tr>
               </thead>
               <tbody>
-                {(dashData?.rankings?.top_horas_uso || []).map((eq, idx) => (
+                {topHorasFiltradas.map((eq, idx) => (
                   <tr key={eq.patente} style={{ borderBottom: "1px solid #f1f5f9" }}>
                     <td style={{ padding: "10px 12px", fontWeight: 800 }}>
                       <span style={{
@@ -1060,7 +1125,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                       </span>
                     </td>
                     <td style={{ padding: "10px 12px" }}>
-                      <div style={{ fontWeight: 700, color: "#0f172a" }}>{eq.patente}</div>
+                      <div style={{ fontWeight: 700, color: "#0f172a" }}>{formatearPatente(eq.patente)}</div>
                       <div style={{ fontSize: "11px", color: "#64748b" }}>
                         {eq.codigo_interno ? `[${eq.codigo_interno}] ` : ""}{eq.descripcion}
                       </div>
@@ -1147,7 +1212,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 </tr>
               </thead>
               <tbody>
-                {(dashData?.rankings?.top_consumo_combustible || []).map((eq, idx) => (
+                {topCombustibleFiltrado.map((eq, idx) => (
                   <tr key={eq.patente} style={{ borderBottom: "1px solid #f1f5f9" }}>
                     <td style={{ padding: "10px 12px", fontWeight: 800 }}>
                       <span style={{
@@ -1160,7 +1225,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                       </span>
                     </td>
                     <td style={{ padding: "10px 12px" }}>
-                      <div style={{ fontWeight: 700, color: "#0f172a" }}>{eq.patente}</div>
+                      <div style={{ fontWeight: 700, color: "#0f172a" }}>{formatearPatente(eq.patente)}</div>
                       <div style={{ fontSize: "11px", color: "#64748b" }}>
                         {eq.codigo_interno ? `[${eq.codigo_interno}] ` : ""}{eq.descripcion}
                       </div>
@@ -1379,7 +1444,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 </tr>
               </thead>
               <tbody>
-                {(dashData?.rankings?.top_kilometraje || []).map((eq, idx) => (
+                {topKmFiltrado.map((eq, idx) => (
                   <tr key={eq.patente} style={{ borderBottom: "1px solid #f1f5f9" }}>
                     <td style={{ padding: "10px 12px", fontWeight: 800 }}>
                       <span style={{
@@ -1392,7 +1457,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                       </span>
                     </td>
                     <td style={{ padding: "10px 12px" }}>
-                      <div style={{ fontWeight: 700, color: "#0f172a" }}>{eq.patente}</div>
+                      <div style={{ fontWeight: 700, color: "#0f172a" }}>{formatearPatente(eq.patente)}</div>
                       <div style={{ fontSize: "11px", color: "#64748b" }}>
                         {eq.codigo_interno ? `[${eq.codigo_interno}] ` : ""}{eq.descripcion}
                       </div>
@@ -1500,7 +1565,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                             fontSize: "10px", fontWeight: 600, padding: "1px 6px",
                             borderRadius: "4px", backgroundColor: "#e2e8f0", color: "#334155",
                           }}>
-                            {v}
+                            {formatearPatente(v)}
                           </span>
                         ))}
                       </div>
@@ -1583,3 +1648,4 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
     </div>
   );
 }
+

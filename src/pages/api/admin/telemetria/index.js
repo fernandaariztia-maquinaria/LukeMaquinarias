@@ -1,4 +1,5 @@
 import { createAdminClient } from "../../../../lib/supabase-server";
+import { formatearPatente, clasificarTipoEquipo } from "../../../../lib/telemetriaUtils";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") {
@@ -437,13 +438,17 @@ export default async function handler(req, res) {
 
     // Enriquecer viajes que no tengan equipo_id directo usando el mapa por patente normalizada
     const viajes = (viajesRaw || []).map((v) => {
-      if (!v.equipo && v.patente) {
-        const matched = equipoPorPatente.get(normPatente(v.patente));
-        if (matched) {
-          return { ...v, equipo: matched };
-        }
+      let eq = v.equipo;
+      if (!eq && v.patente) {
+        eq = equipoPorPatente.get(normPatente(v.patente)) || null;
       }
-      return v;
+      return {
+        ...v,
+        equipo: eq,
+        patente_raw: v.patente,
+        patente: formatearPatente(v.patente),
+        tipo_clasificado: clasificarTipoEquipo(eq || v),
+      };
     });
 
     return res.status(200).json({

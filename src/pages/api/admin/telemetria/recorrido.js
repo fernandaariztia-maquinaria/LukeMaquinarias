@@ -1,4 +1,5 @@
 import { createAdminClient } from "../../../../lib/supabase-server";
+import { formatearPatente, clasificarTipoEquipo } from "../../../../lib/telemetriaUtils";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") {
@@ -22,7 +23,12 @@ export default async function handler(req, res) {
 
       return res.status(200).json({
         success: true,
-        equipos: eqList || [],
+        equipos: (eqList || []).map((e) => ({
+          ...e,
+          patente_raw: e.patente,
+          patente: formatearPatente(e.patente),
+          tipo_clasificado: clasificarTipoEquipo(e),
+        })),
       });
     } catch (err) {
       console.error("[API telemetria/recorrido lista_equipos] Error:", err);

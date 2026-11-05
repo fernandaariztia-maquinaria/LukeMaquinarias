@@ -4,6 +4,7 @@ import {
   RefreshCw, ChevronRight, Layers, Eye, User, ShieldAlert,
   Sliders, ArrowRight, CheckCircle2, AlertCircle
 } from "lucide-react";
+import { formatearPatente, clasificarTipoEquipo, TIPOS_EQUIPO_FILTROS } from "../../lib/telemetriaUtils";
 
 export default function TelemetriaMapaTab({
   patentesDisponibles = [],
@@ -13,6 +14,7 @@ export default function TelemetriaMapaTab({
   // Estados de búsqueda
   const [listaEquipos, setListaEquipos] = useState([]);
   const [patenteSeleccionada, setPatenteSeleccionada] = useState(() => patenteInicial || "");
+  const [tipoEquipoFiltro, setTipoEquipoFiltro] = useState("todos"); // "todos" | "camionetas" | "camiones" | "gruas" | "maquinaria" | "buses" | "otros"
   const [fechaFiltro, setFechaFiltro] = useState(
     () => fechaInicial || new Date().toISOString().slice(0, 10)
   );
@@ -62,6 +64,12 @@ export default function TelemetriaMapaTab({
     if (patenteInicial) setPatenteSeleccionada(patenteInicial);
     if (fechaInicial) setFechaFiltro(fechaInicial);
   }, [patenteInicial, fechaInicial]);
+
+  // Filtrar lista de equipos según tipo seleccionado
+  const equiposFiltrados = useMemo(() => {
+    if (tipoEquipoFiltro === "todos") return listaEquipos;
+    return listaEquipos.filter((eq) => clasificarTipoEquipo(eq) === tipoEquipoFiltro);
+  }, [listaEquipos, tipoEquipoFiltro]);
 
   // Cargar datos de recorrido desde el endpoint de API
   const cargarRecorrido = useCallback(async (patente, fecha) => {
@@ -351,36 +359,80 @@ export default function TelemetriaMapaTab({
       {/* ── BARRA SUPERIOR DE CONTROLES Y FILTROS ───────────────────── */}
       <div style={{
         backgroundColor: "#ffffff", padding: "14px 18px", borderRadius: "10px",
-        border: "1px solid #e2e8f0", display: "flex", flexWrap: "wrap",
-        alignItems: "center", justifyContent: "space-between", gap: "12px",
+        border: "1px solid #e2e8f0", display: "flex", flexDirection: "column", gap: "12px",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-          {/* Selector de Patente / Equipo */}
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <Car size={16} color="#0284c7" />
-            <span style={{ fontSize: "12px", fontWeight: 600, color: "#334155" }}>Equipo:</span>
-            <select
-              value={patenteSeleccionada}
-              onChange={(e) => setPatenteSeleccionada(e.target.value)}
-              style={{
-                fontSize: "13px", padding: "6px 12px", borderRadius: "6px",
-                border: "1px solid #cbd5e1", outline: "none", backgroundColor: "#f8fafc",
-                fontWeight: 700, color: "#0f172a", minWidth: "220px",
-              }}
-            >
-              <option value="">Seleccionar patente...</option>
-              {listaEquipos.map((p) => {
-                const pat = typeof p === "string" ? p : p.patente;
-                const cod = typeof p === "object" ? p.codigo_interno || p.codigo : "";
-                const desc = typeof p === "object" ? p.descripcion_equipo || p.tipo : "";
-                return (
-                  <option key={pat} value={pat}>
-                    {cod ? `[${cod}] ` : ""}{pat}{desc ? ` - ${desc}` : ""}
-                  </option>
-                );
-              })}
-            </select>
+        {/* ── BOTONES DE FILTRO POR TIPO DE EQUIPO ─────────────────────── */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          flexWrap: "wrap", gap: "8px", width: "100%", paddingBottom: "10px",
+          borderBottom: "1px solid #f1f5f9",
+        }}>
+          <span style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "flex", alignItems: "center", gap: "6px" }}>
+            <Layers size={14} color="#0d9488" />
+            Tipo de Equipo:
+          </span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+            {TIPOS_EQUIPO_FILTROS.map((t) => {
+              const activo = tipoEquipoFiltro === t.key;
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => {
+                    setTipoEquipoFiltro(t.key);
+                    const matched = listaEquipos.filter((eq) => t.key === "todos" || clasificarTipoEquipo(eq) === t.key);
+                    if (matched.length > 0 && !matched.some((m) => (m.patente || m) === patenteSeleccionada)) {
+                      const nextPat = matched[0].patente || matched[0];
+                      setPatenteSeleccionada(nextPat);
+                    }
+                  }}
+                  style={{
+                    fontSize: "11px", fontWeight: 700, padding: "5px 12px", borderRadius: "6px",
+                    cursor: "pointer", transition: "all 0.15s ease",
+                    border: activo ? "1px solid #0d9488" : "1px solid #cbd5e1",
+                    backgroundColor: activo ? "#0d9488" : "#ffffff",
+                    color: activo ? "#ffffff" : "#475569",
+                    boxShadow: activo ? "0 2px 4px rgba(13, 148, 136, 0.25)" : "none",
+                  }}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
           </div>
+        </div>
+
+        <div style={{
+          display: "flex", flexWrap: "wrap", alignItems: "center",
+          justifyContent: "space-between", gap: "12px",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+            {/* Selector de Patente / Equipo */}
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <Car size={16} color="#0284c7" />
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#334155" }}>Equipo:</span>
+              <select
+                value={patenteSeleccionada}
+                onChange={(e) => setPatenteSeleccionada(e.target.value)}
+                style={{
+                  fontSize: "13px", padding: "6px 12px", borderRadius: "6px",
+                  border: "1px solid #cbd5e1", outline: "none", backgroundColor: "#f8fafc",
+                  fontWeight: 700, color: "#0f172a", minWidth: "220px",
+                }}
+              >
+                <option value="">Seleccionar patente...</option>
+                {equiposFiltrados.map((p) => {
+                  const rawPat = typeof p === "string" ? p : p.patente;
+                  const pat = formatearPatente(rawPat);
+                  const cod = typeof p === "object" ? p.codigo_interno || p.codigo : "";
+                  const desc = typeof p === "object" ? p.descripcion_equipo || p.tipo : "";
+                  return (
+                    <option key={rawPat} value={rawPat}>
+                      {cod ? `[${cod}] ` : ""}{pat}{desc ? ` - ${desc}` : ""}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
 
           {/* Selector de Fecha */}
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -441,6 +493,7 @@ export default function TelemetriaMapaTab({
           >
             Satélite
           </button>
+        </div>
         </div>
       </div>
 
@@ -658,7 +711,7 @@ export default function TelemetriaMapaTab({
                 backgroundColor: "#0284c7", color: "#ffffff", borderRadius: "4px",
                 fontFamily: "monospace", letterSpacing: "0.5px",
               }}>
-                {patenteSeleccionada || "SIN PATENTE"}
+                {formatearPatente(patenteSeleccionada) || "SIN PATENTE"}
               </span>
               <span style={{ fontSize: "11px", fontWeight: 600, color: "#16a34a", backgroundColor: "#dcfce7", padding: "2px 6px", borderRadius: "4px" }}>
                 {datosRecorrido?.equipo?.tipo || "VEHÍCULO"}
@@ -666,7 +719,7 @@ export default function TelemetriaMapaTab({
             </div>
 
             <div style={{ fontSize: "13px", fontWeight: 700, color: "#0f172a" }}>
-              {datosRecorrido?.equipo?.codigo_interno || patenteSeleccionada}
+              {datosRecorrido?.equipo?.codigo_interno || formatearPatente(patenteSeleccionada)}
             </div>
             <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px", lineHeight: "1.3" }}>
               {datosRecorrido?.equipo?.descripcion || "Flota de Maquinarias y Equipos"}
