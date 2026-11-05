@@ -1,10 +1,11 @@
 /**
- * Script de ingestión de alto rendimiento para CSVs masivos de GPS (hasta millones de filas).
- * Procesa en streaming sin saturar la memoria y realiza inserciones en lotes optimizados.
+ * Script de ingestión de alto rendimiento para CSVs masivos de GPS (SKYNAV histórico).
+ * Procesa en streaming sin saturar la memoria, deduplica en lote y realiza
+ * inserciones masivas concurrentes en la base de datos Supabase (esquema maquinaria).
  *
  * Uso:
  *   node scripts/importar-gps-csv.js
- *   node scripts/importar-gps-csv.js --archivo=telemetria_csv/mi_archivo.csv
+ *   node scripts/importar-gps-csv.js --archivo=telemetria_csv/datos_historicos_01-10-2026_15-10-2026.csv
  */
 
 const fs = require("fs");
@@ -12,7 +13,7 @@ const path = require("path");
 const readline = require("readline");
 const { createClient } = require("@supabase/supabase-js");
 
-// Cargar variables de entorno desde .env.local
+// 1. Cargar variables de entorno desde .env.local
 const envPath = path.resolve(__dirname, "../.env.local");
 if (fs.existsSync(envPath)) {
   const envContent = fs.readFileSync(envPath, "utf8");
@@ -37,6 +38,7 @@ if (!supabaseUrl || !serviceRoleKey) {
   process.exit(1);
 }
 
+// Cliente Supabase conectado al esquema 'maquinaria' (Regla GEMINI.md)
 const supabase = createClient(supabaseUrl, serviceRoleKey, {
   auth: { persistSession: false },
 });
@@ -52,6 +54,33 @@ function normalizarIdentificador(str) {
 }
 
 /**
+ * Parsea una línea de CSV respetando comillas dobles y comas internas
+ */
+function parsearLineaCSV(text, delimiter = ",") {
+  const result = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      if (inQuotes && text[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (c === delimiter && !inQuotes) {
+      result.push(cur.trim());
+      cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+/**
  * Detecta el delimitador analizando la primera línea
  */
 function detectarDelimitador(linea) {
@@ -64,11 +93,12 @@ function detectarDelimitador(linea) {
 }
 
 /**
- * Mapea columnas por similitud de nombres comunes
+ * Mapea columnas con precisión quirúrgica
  */
 function detectarIndicesColumnas(encabezados) {
   const mapa = {
     patente: -1,
+    codigo_interno: -1,
     fecha_hora: -1,
     fecha: -1,
     hora: -1,
@@ -76,7 +106,7 @@ function detectarIndicesColumnas(encabezados) {
     longitud: -1,
     velocidad: -1,
     rumbo: -1,
-    estado: -1,
+    evento: -1,
     ignicion: -1,
     odometro: -1,
     lugar: -1,
@@ -84,40 +114,64 @@ function detectarIndicesColumnas(encabezados) {
 
   encabezados.forEach((h, idx) => {
     const norm = normalizarTexto(h).replace(/[^a-z0-9]/g, "");
-    if (norm.includes("patente") || norm.includes("placa") || norm.includes("unidad") || norm.includes("vehiculo") || norm === "nombre") {
-      if (mapa.patente === -1) mapa.patente = idx;
+
+    // Patente
+    if (norm === "patente" || norm === "placa") {
+      mapa.patente = idx;
+    } else if (mapa.patente === -1 && norm.includes("patente")) {
+      mapa.patente = idx;
     }
-    if (norm.includes("fechahora") || norm.includes("timestamp") || norm.includes("datetime")) {
+
+    // Código interno (Nombre en SKYNAV ej. CTAP-0214)
+    if (norm === "nombre" || norm.includes("codigointerno") || norm === "unidad") {
+      mapa.codigo_interno = idx;
+    }
+
+    // Fecha / Hora
+    if (norm === "fechatransmision" || norm === "fechahora" || norm === "timestamp" || norm === "datetime") {
       mapa.fecha_hora = idx;
-    } else if (norm.includes("fecha") || norm.includes("date")) {
+    } else if (norm === "fecha" || norm === "date") {
       mapa.fecha = idx;
-    } else if (norm.includes("hora") || norm.includes("time")) {
+    } else if (norm === "hora" || norm === "time") {
       mapa.hora = idx;
     }
 
-    if (norm.includes("latitud") || norm.includes("latitude") || norm === "lat") {
+    // Coordenadas
+    if (norm === "latitud" || norm === "latitude" || norm === "lat") {
       mapa.latitud = idx;
     }
-    if (norm.includes("longitud") || norm.includes("longitude") || norm === "lng" || norm === "lon") {
+    if (norm === "longitud" || norm === "longitude" || norm === "lng" || norm === "lon") {
       mapa.longitud = idx;
     }
-    if (norm.includes("velocidad") || norm.includes("speed") || norm === "vel") {
+
+    // Velocidad (evitar velocidadmaxima)
+    if (norm === "velocidad" || norm === "speed" || norm === "vel") {
       mapa.velocidad = idx;
     }
-    if (norm.includes("rumbo") || norm.includes("heading") || norm.includes("course") || norm.includes("orientacion")) {
+
+    // Rumbo
+    if (norm.includes("rumbo") || norm.includes("heading") || norm.includes("orientacion")) {
       mapa.rumbo = idx;
     }
-    if (norm.includes("evento") || norm.includes("estado") || norm.includes("status")) {
-      mapa.estado = idx;
+
+    // Evento / Estado
+    if (norm === "evento" || norm === "estado" || norm === "status") {
+      mapa.evento = idx;
     }
+
+    // Ignición
     if (norm.includes("ignicion") || norm.includes("motor") || norm.includes("encendido")) {
       mapa.ignicion = idx;
     }
-    if (norm.includes("odometro") || norm.includes("km") || norm.includes("kilometraje")) {
+
+    // Odómetro
+    if (norm.includes("odometro") || norm.includes("kilometraje")) {
       mapa.odometro = idx;
     }
-    if (norm.includes("lugar") || norm.includes("geocerca") || norm.includes("direccion") || norm.includes("ubicacion")) {
-      mapa.lugar = idx;
+
+    // Lugar
+    if (norm === "lugar" || norm === "geocerca" || norm.includes("direccion") || norm.includes("ubicacion")) {
+      if (mapa.lugar === -1 || norm === "lugar") mapa.lugar = idx;
     }
   });
 
@@ -125,7 +179,7 @@ function detectarIndicesColumnas(encabezados) {
 }
 
 /**
- * Parsea fechas en distintos formatos comunes
+ * Parsea fechas en formato dd/MM/yyyy HH:mm:ss o ISO
  */
 function parsearFechaHora(fechaVal, horaVal) {
   if (!fechaVal) return null;
@@ -134,12 +188,13 @@ function parsearFechaHora(fechaVal, horaVal) {
     str += " " + String(horaVal).trim();
   }
 
-  // Si viene en formato dd-MM-yyyy o dd/MM/yyyy HH:mm:ss
+  // Si viene en formato dd/MM/yyyy HH:mm:ss o dd-MM-yyyy HH:mm:ss
   const match = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
   if (match) {
     const [, dd, mm, yyyy, hh, mi, ss] = match;
     const dStr = `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}T${(hh || "00").padStart(2, "0")}:${(mi || "00").padStart(2, "0")}:${(ss || "00").padStart(2, "0")}-03:00`;
-    return new Date(dStr).toISOString();
+    const d = new Date(dStr);
+    if (!isNaN(d.getTime())) return d.toISOString();
   }
 
   const d = new Date(str);
@@ -149,12 +204,19 @@ function parsearFechaHora(fechaVal, horaVal) {
   return null;
 }
 
+/**
+ * Ingesta por streaming con cola de promesas para alta concurrencia
+ */
 async function procesarArchivoCsv(rutaArchivo, mapaFlota) {
+  const nombreBase = path.basename(rutaArchivo);
+  const tamBytes = fs.statSync(rutaArchivo).size;
+  const tamMB = (tamBytes / (1024 * 1024)).toFixed(1);
+
   console.log(`\n======================================================`);
-  console.log(`[CSV INGEST] Procesando archivo: ${path.basename(rutaArchivo)}`);
+  console.log(`[CSV INGEST] Procesando: ${nombreBase} (${tamMB} MB)`);
   console.log(`======================================================`);
 
-  const fileStream = fs.createReadStream(rutaArchivo);
+  const fileStream = fs.createReadStream(rutaArchivo, { encoding: "utf8" });
   const rl = readline.createInterface({
     input: fileStream,
     crlfDelay: Infinity,
@@ -166,29 +228,113 @@ async function procesarArchivoCsv(rutaArchivo, mapaFlota) {
   let lote = [];
   let insertados = 0;
   let errores = 0;
-  const BATCH_SIZE = 500;
+
+  // Lotes optimizados de 1.500 registros con concurrencia máxima de 4 peticiones
+  const BATCH_SIZE = 1500;
+  const CONCURRENCY_MAX = 4;
+  let activeWorkers = 0;
+  const workerQueue = [];
+
+  const argSaltar = process.argv.find((a) => a.startsWith("--saltar="));
+  const lineasASaltar = argSaltar ? parseInt(argSaltar.split("=")[1], 10) : 0;
+  if (lineasASaltar > 0) {
+    console.log(`[CSV RESUME] Saltando las primeras ${lineasASaltar.toLocaleString("es-CL")} líneas para reanudar.`);
+  }
+
   const inicioTiempo = Date.now();
+
+  const ejecutarLote = async (batchParaSubir) => {
+    // 1. Deduplicar dentro del lote para evitar violación de cardinalidad PostgreSQL
+    const vistos = new Set();
+    const batchDeduplicado = [];
+
+    for (const r of batchParaSubir) {
+      const key = `${r.patente}_${r.fecha_hora}_${r.latitud}_${r.longitud}`;
+      if (!vistos.has(key)) {
+        vistos.add(key);
+        batchDeduplicado.push(r);
+      }
+    }
+
+    if (batchDeduplicado.length === 0) return;
+
+    try {
+      const { error } = await supabase
+        .schema("maquinaria")
+        .from("telemetria_posiciones")
+        .upsert(batchDeduplicado, {
+          onConflict: "patente,fecha_hora,latitud,longitud",
+          ignoreDuplicates: true,
+        });
+
+      if (error) {
+        errores += batchDeduplicado.length;
+        if (errores <= 5000) {
+          console.error(`[CSV BATCH ERROR]: ${error.message}`);
+        }
+      } else {
+        insertados += batchDeduplicado.length;
+      }
+    } catch (err) {
+      errores += batchDeduplicado.length;
+    }
+  };
+
+  const procesarLoteConConcurrencia = async (batchParaSubir) => {
+    activeWorkers++;
+    const p = ejecutarLote(batchParaSubir).finally(() => {
+      activeWorkers--;
+      const idx = workerQueue.indexOf(p);
+      if (idx !== -1) workerQueue.splice(idx, 1);
+      if (fileStream.isPaused() && activeWorkers < CONCURRENCY_MAX) {
+        fileStream.resume();
+      }
+    });
+    workerQueue.push(p);
+
+    if (activeWorkers >= CONCURRENCY_MAX) {
+      fileStream.pause();
+    }
+  };
 
   for await (const line of rl) {
     totalLineas++;
     if (!line.trim()) continue;
 
     if (totalLineas === 1) {
-      delimitador = detectarDelimitador(line);
-      const headers = line.split(delimitador).map((h) => h.replace(/['"]+/g, "").trim());
+      const cleanLine = line.replace(/^\uFEFF/, "");
+      delimitador = detectarDelimitador(cleanLine);
+      const headers = parsearLineaCSV(cleanLine, delimitador);
       colIndices = detectarIndicesColumnas(headers);
-      console.log(`[CSV] Delimitador detectado: "${delimitador}"`);
-      console.log(`[CSV] Mapeo de columnas:`, colIndices);
 
-      if (colIndices.patente === -1 || (colIndices.latitud === -1 && colIndices.longitud === -1)) {
-        console.error(`[ERROR] No se encontraron columnas obligatorias (Patente y Coordenadas).`);
+      console.log(`[CSV] Delimitador: "${delimitador}"`);
+      console.log(`[CSV] Columnas detectadas:`, {
+        patente: `${headers[colIndices.patente]} (idx ${colIndices.patente})`,
+        codigo_interno: `${headers[colIndices.codigo_interno]} (idx ${colIndices.codigo_interno})`,
+        fecha_hora: `${headers[colIndices.fecha_hora]} (idx ${colIndices.fecha_hora})`,
+        latitud: `${headers[colIndices.latitud]} (idx ${colIndices.latitud})`,
+        longitud: `${headers[colIndices.longitud]} (idx ${colIndices.longitud})`,
+        velocidad: `${headers[colIndices.velocidad]} (idx ${colIndices.velocidad})`,
+        evento: `${headers[colIndices.evento]} (idx ${colIndices.evento})`,
+        ignicion: `${headers[colIndices.ignicion]} (idx ${colIndices.ignicion})`,
+        lugar: `${headers[colIndices.lugar]} (idx ${colIndices.lugar})`,
+      });
+
+      if (colIndices.patente === -1 || colIndices.latitud === -1 || colIndices.longitud === -1) {
+        console.error(`[ERROR] Faltan columnas críticas obligatorias en el CSV.`);
         return;
       }
       continue;
     }
 
-    // Parsear fila respetando posibles comillas
-    const cols = line.split(delimitador).map((c) => c.replace(/^["']|["']$/g, "").trim());
+    if (lineasASaltar > 0 && totalLineas <= lineasASaltar) {
+      if (totalLineas % 100000 === 0) {
+        console.log(`[CSV SKIP] Saltando línea ${totalLineas.toLocaleString("es-CL")} de ${lineasASaltar.toLocaleString("es-CL")}...`);
+      }
+      continue;
+    }
+
+    const cols = parsearLineaCSV(line, delimitador);
     const rawPatente = cols[colIndices.patente];
     if (!rawPatente) continue;
 
@@ -202,11 +348,28 @@ async function procesarArchivoCsv(rutaArchivo, mapaFlota) {
     if (!fechaHoraISO) continue;
 
     const patNorm = normalizarIdentificador(rawPatente);
-    const eq = mapaFlota.get(patNorm);
+    const rawCodigo = colIndices.codigo_interno !== -1 ? normalizarIdentificador(cols[colIndices.codigo_interno]) : "";
+    const eq = mapaFlota.get(patNorm) || (rawCodigo ? mapaFlota.get(rawCodigo) : null);
 
     const vel = colIndices.velocidad !== -1 ? Number(cols[colIndices.velocidad]?.replace(",", ".")) || 0 : 0;
     const rumbo = colIndices.rumbo !== -1 ? Number(cols[colIndices.rumbo]?.replace(",", ".")) || 0 : 0;
-    const estadoRaw = colIndices.estado !== -1 ? cols[colIndices.estado] : (vel > 2 ? "Viaje" : "Detenido");
+
+    // Estado e Ignición
+    const rawIgn = colIndices.ignicion !== -1 ? String(cols[colIndices.ignicion] || "").toLowerCase() : "";
+    const esIgnicion = rawIgn.startsWith("s") || rawIgn === "true" || rawIgn === "1" || vel > 2;
+
+    const eventoRaw = colIndices.evento !== -1 ? cols[colIndices.evento] : null;
+    let estado = "Viaje";
+    if (eventoRaw && eventoRaw.toLowerCase().includes("ralent")) {
+      estado = "Ralentí";
+    } else if (vel > 2) {
+      estado = "Viaje";
+    } else if (esIgnicion) {
+      estado = "Ralentí";
+    } else {
+      estado = "Detenido";
+    }
+
     const odo = colIndices.odometro !== -1 ? Number(cols[colIndices.odometro]?.replace(",", ".")) || null : null;
     const lugar = colIndices.lugar !== -1 ? cols[colIndices.lugar] : null;
 
@@ -218,66 +381,50 @@ async function procesarArchivoCsv(rutaArchivo, mapaFlota) {
       longitud: lng,
       velocidad: vel,
       rumbo: rumbo,
-      estado: estadoRaw || "Viaje",
+      estado: estado,
+      ignicion: esIgnicion,
       odometro: odo,
       lugar: lugar,
     });
 
     if (lote.length >= BATCH_SIZE) {
-      try {
-        const { error } = await supabase
-          .schema("maquinaria")
-          .from("telemetria_posiciones")
-          .upsert(lote, {
-            onConflict: "patente,fecha_hora,latitud,longitud",
-            ignoreDuplicates: true,
-          });
-
-        if (error) {
-          errores += lote.length;
-          console.error(`[CSV BATCH ERROR]:`, error.message);
-        } else {
-          insertados += lote.length;
-        }
-      } catch (e) {
-        errores += lote.length;
-      }
-
-      if (totalLineas % 10000 === 0) {
-        const segs = Math.round((Date.now() - inicioTiempo) / 1000) || 1;
-        const velProm = Math.round(insertados / segs);
-        console.log(`[CSV PROGRESO] ${totalLineas.toLocaleString("es-CL")} filas leídas | ${insertados.toLocaleString("es-CL")} puntos guardados (${velProm} pts/seg)`);
-      }
-
+      const currentBatch = lote;
       lote = [];
+      await procesarLoteConConcurrencia(currentBatch);
+    }
+
+    // Progreso cada 25.000 líneas
+    if (totalLineas % 25000 === 0) {
+      const segs = Math.max(1, Math.round((Date.now() - inicioTiempo) / 1000));
+      const velProm = Math.round(insertados / segs);
+      const pct = Math.min(100, ((totalLineas / 3264475) * 100)).toFixed(1);
+      const restantes = Math.max(0, 3264475 - totalLineas);
+      const etaMin = velProm > 0 ? (restantes / velProm / 60).toFixed(1) : "--";
+
+      console.log(`[PROGRESO] ${totalLineas.toLocaleString("es-CL")} filas (${pct}%) | ${insertados.toLocaleString("es-CL")} guardados (${velProm} pts/s) | ETA: ~${etaMin} min`);
     }
   }
 
-  // Guardar remanente
+  // Procesar remanente
   if (lote.length > 0) {
-    const { error } = await supabase
-      .schema("maquinaria")
-      .from("telemetria_posiciones")
-      .upsert(lote, {
-        onConflict: "patente,fecha_hora,latitud,longitud",
-        ignoreDuplicates: true,
-      });
-
-    if (!error) insertados += lote.length;
+    await procesarLoteConConcurrencia(lote);
   }
+
+  // Esperar a que todos los workers concurrentes terminen
+  await Promise.all(workerQueue);
 
   const duracionTotal = Math.round((Date.now() - inicioTiempo) / 1000);
   console.log(`\n======================================================`);
-  console.log(`[CSV FINALIZADO] ${path.basename(rutaArchivo)}`);
+  console.log(`[CSV FINALIZADO] ${nombreBase}`);
   console.log(`  - Total líneas leídas: ${totalLineas.toLocaleString("es-CL")}`);
-  console.log(`  - Puntos GPS guardados: ${insertados.toLocaleString("es-CL")}`);
+  console.log(`  - Puntos GPS guardados en Supabase: ${insertados.toLocaleString("es-CL")}`);
   console.log(`  - Errores / Omitidos: ${errores.toLocaleString("es-CL")}`);
-  console.log(`  - Tiempo total: ${duracionTotal} segundos`);
+  console.log(`  - Tiempo total: ${Math.floor(duracionTotal / 60)}m ${duracionTotal % 60}s`);
   console.log(`======================================================\n`);
 }
 
 async function main() {
-  console.log("[INICIO] Cargando flota de maquinaria para matching...");
+  console.log("[INICIO] Conectando a Supabase (esquema maquinaria)...");
   const { data: equipos, error } = await supabase
     .schema("maquinaria")
     .from("equipos")
@@ -293,27 +440,26 @@ async function main() {
     if (eq.patente) mapaFlota.set(normalizarIdentificador(eq.patente), eq);
     if (eq.codigo_interno) mapaFlota.set(normalizarIdentificador(eq.codigo_interno), eq);
   });
-  console.log(`[FLOTA] ${mapaFlota.size} identificadores listos para mapeo.`);
+  console.log(`[FLOTA] ${mapaFlota.size} identificadores de equipos cargados para emparejar.`);
 
-  // Detectar archivos en carpeta telemetria_csv o data_gps
-  const carpetas = [
-    path.resolve(__dirname, "../telemetria_csv"),
-    path.resolve(__dirname, "../data_gps"),
-  ];
-
+  // Detectar archivos en carpeta telemetria_csv
+  const dirCsv = path.resolve(__dirname, "../telemetria_csv");
   let archivosEncontrados = [];
-  for (const c of carpetas) {
-    if (fs.existsSync(c)) {
-      const files = fs.readdirSync(c)
-        .filter((f) => f.toLowerCase().endsWith(".csv"))
-        .map((f) => path.join(c, f));
-      archivosEncontrados.push(...files);
-    }
+
+  // Si se pasa archivo por argumento
+  const argArchivo = process.argv.find((a) => a.startsWith("--archivo="));
+  if (argArchivo) {
+    const p = path.resolve(argArchivo.split("=")[1]);
+    if (fs.existsSync(p)) archivosEncontrados.push(p);
+  } else if (fs.existsSync(dirCsv)) {
+    const files = fs.readdirSync(dirCsv)
+      .filter((f) => f.toLowerCase().endsWith(".csv"))
+      .map((f) => path.join(dirCsv, f));
+    archivosEncontrados.push(...files);
   }
 
   if (archivosEncontrados.length === 0) {
-    console.log(`[AVISO] No se encontraron archivos .csv en telemetria_csv/ ni en data_gps/.`);
-    console.log(`Sube tus archivos a: C:\\Github\\Equipos\\telemetria_csv\\ y vuelve a ejecutar.`);
+    console.log(`[AVISO] No se encontraron archivos .csv en telemetria_csv/.`);
     process.exit(0);
   }
 

@@ -32,3 +32,4 @@ GRANT ALL ON TABLE maquinaria.telemetria_posiciones TO anon, authenticated, serv
 GRANT USAGE, SELECT ON SEQUENCE maquinaria.telemetria_posiciones_id_seq TO anon, authenticated, service_role;
 
 NOTIFY pgrst, 'reload schema';
+

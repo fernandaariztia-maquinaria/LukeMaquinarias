@@ -23,13 +23,14 @@ export default function TelemetriaMapaTab({
   const [viajeSeleccionado, setViajeSeleccionado] = useState(null);
   const [capaMapa, setCapaMapa] = useState("calles"); // "calles" | "satelite"
 
-  // Referencias de Leaflet
+  // Referencias de Leaflet y control de carga
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const polylinesLayerRef = useRef(null);
   const markersLayerRef = useRef(null);
+  const hasFetchedEquiposRef = useRef(false);
 
-  // Cargar lista de equipos si no se suministra
+  // Cargar lista de equipos una sola vez si no se suministra
   useEffect(() => {
     if (patentesDisponibles && patentesDisponibles.length > 0) {
       setListaEquipos(patentesDisponibles);
@@ -37,19 +38,23 @@ export default function TelemetriaMapaTab({
         const first = patentesDisponibles[0];
         setPatenteSeleccionada(typeof first === "string" ? first : first.patente);
       }
-    } else {
-      fetch("/api/admin/telemetria/recorrido?action=lista_equipos")
-        .then((r) => r.json())
-        .then((res) => {
-          if (res.success && res.equipos?.length > 0) {
-            setListaEquipos(res.equipos);
-            if (!patenteSeleccionada) {
-              setPatenteSeleccionada(res.equipos[0].patente);
-            }
-          }
-        })
-        .catch((err) => console.error("[TelemetriaMapaTab] Error al cargar equipos:", err));
+      return;
     }
+
+    if (hasFetchedEquiposRef.current) return;
+    hasFetchedEquiposRef.current = true;
+
+    fetch("/api/admin/telemetria/recorrido?action=lista_equipos")
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.success && res.equipos?.length > 0) {
+          setListaEquipos(res.equipos);
+          if (!patenteSeleccionada) {
+            setPatenteSeleccionada(res.equipos[0].patente);
+          }
+        }
+      })
+      .catch((err) => console.error("[TelemetriaMapaTab] Error al cargar equipos:", err));
   }, [patentesDisponibles]);
 
   // Si cambian las props iniciales desde el padre

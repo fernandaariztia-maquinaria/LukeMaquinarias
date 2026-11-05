@@ -13,3 +13,4 @@ Para iniciar la importacion tras copiar los archivos, ejecuta:
   node scripts/importar-gps-csv.js
 O solicitamelo directamente en el chat para ejecutarlo.
 ========================================================================
+
