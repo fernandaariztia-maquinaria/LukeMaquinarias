@@ -39,13 +39,24 @@ export default async function handler(req, res) {
     }
   }
 
+  if (req.query.migrate === "1") {
+    try {
+      const sql = `CREATE TABLE IF NOT EXISTS maquinaria.historial_fallas_equipos (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), equipo_id UUID NOT NULL REFERENCES maquinaria.equipos(id) ON DELETE CASCADE, reporte_id UUID REFERENCES maquinaria.reportes_diarios(id) ON DELETE SET NULL, operador_id UUID REFERENCES maquinaria.personal(id) ON DELETE SET NULL, hora_inicio TIMESTAMPTZ NOT NULL DEFAULT now(), hora_fin TIMESTAMPTZ, horas_detencion NUMERIC(6,2), motivo_falla TEXT NOT NULL, estado TEXT NOT NULL DEFAULT 'abierta', created_at TIMESTAMPTZ NOT NULL DEFAULT now()); CREATE INDEX IF NOT EXISTS idx_fallas_equipo ON maquinaria.historial_fallas_equipos(equipo_id); CREATE INDEX IF NOT EXISTS idx_fallas_reporte ON maquinaria.historial_fallas_equipos(reporte_id); CREATE INDEX IF NOT EXISTS idx_fallas_estado ON maquinaria.historial_fallas_equipos(estado); ALTER TABLE maquinaria.reportes_diarios ADD COLUMN IF NOT EXISTS observaciones TEXT; ALTER TABLE maquinaria.reportes_diarios ADD COLUMN IF NOT EXISTS horas_detencion NUMERIC(6,2) DEFAULT 0;`;
+      const cmd = `docker exec -i $(docker ps --format "{{.Names}}" | grep -E "supabase.*db|postgres" | head -n 1) psql -U postgres -d postgres -c "${sql}"`;
+      const out = execSync(cmd, { shell: "/bin/bash", timeout: 15000 }).toString();
+      return res.status(200).json({ success: true, out });
+    } catch (e) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  }
+
   if (req.query.logs === "1") {
     try {
-      const pm2Logs = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 logs luke-equipos-prod --lines 40 --nostream 2>/dev/null", {
+      const pm2Logs = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 logs luke-equipos-prod --lines 40 --nostream 2>/dev/null || true", {
         shell: "/bin/bash",
         timeout: 8000,
       }).toString();
-      const bridgeLogs = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 logs wa-bridge-service --lines 40 --nostream 2>/dev/null", {
+      const bridgeLogs = execSync("export PATH=$PATH:~/.nvm/versions/node/v20.20.0/bin; pm2 logs luke-equipos-wa-bridge --lines 40 --nostream 2>/dev/null || true", {
         shell: "/bin/bash",
         timeout: 8000,
       }).toString();
@@ -54,6 +65,8 @@ export default async function handler(req, res) {
       return res.status(500).json({ success: false, error: e.message });
     }
   }
+
+  if (req.query.heal === "1") {
     asegurarEnvSkynavEnServidor();
     const cleaned = [];
     const candidateDirs = new Set([

@@ -185,6 +185,54 @@ export async function handleCierreFlow(ctx, res) {
     updateData.combustible_nivel_porcentaje = combustibleNivelPorcentaje;
   }
 
+  // Cuantificar horas de detención si el equipo cerró estando en Detenido por Falla
+  let horasDetencionCierre = 0;
+  if (reporteActual.equipos?.estado_actual === "Detenido por Falla") {
+    const { data: ultFallaEv } = await supabase
+      .from("eventos_jornada")
+      .select("hora_evento, nota_transcripcion")
+      .eq("reporte_id", sesion.reporte_activo_id)
+      .eq("estado_hito", "Detenido por Falla")
+      .order("hora_evento", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (ultFallaEv?.hora_evento) {
+      const inicioMs = new Date(ultFallaEv.hora_evento).getTime();
+      const ahoraMs = Date.now();
+      horasDetencionCierre = Math.max(0, (ahoraMs - inicioMs) / (1000 * 60 * 60));
+
+      try {
+        await supabase
+          .from("historial_fallas_equipos")
+          .update({
+            hora_fin: new Date().toISOString(),
+            horas_detencion: Number(horasDetencionCierre.toFixed(2)),
+            estado: "resuelta"
+          })
+          .eq("equipo_id", reporteActual.equipo_id)
+          .eq("estado", "abierta");
+      } catch (eHisto) {}
+    }
+  }
+
+  // Acumular total de horas de detención para este reporte
+  let totalHorasDetencion = 0;
+  try {
+    const { data: repPrevData } = await supabase
+      .from("reportes_diarios")
+      .select("horas_detencion, observaciones")
+      .eq("id", sesion.reporte_activo_id)
+      .maybeSingle();
+
+    totalHorasDetencion = Number(repPrevData?.horas_detencion || 0) + Number(horasDetencionCierre.toFixed(2));
+    updateData.horas_detencion = totalHorasDetencion;
+    const obsPrev = repPrevData?.observaciones ? `${repPrevData.observaciones} | ` : "";
+    updateData.observaciones = `${obsPrev}[Cierre]: ${resultado.detalles_texto || ctx.message || "Término de jornada"}`;
+  } catch (eRep) {
+    updateData.observaciones = resultado.detalles_texto || ctx.message || "Término de jornada";
+  }
+
   await supabase
     .from("reportes_diarios")
     .update(updateData)
@@ -230,11 +278,13 @@ export async function handleCierreFlow(ctx, res) {
     nota_transcripcion: `CHECK-OUT: ${observacionCierre}${kmFinal ? ` | Odómetro: ${kmFinal}` : ""}${horometroFinal ? ` | Horómetro: ${horometroFinal}` : ""}${petroleoLitros ? ` | Combustible: ${petroleoLitros} L` : " | Sin carga combustible"}${usaPlataforma ? (platEstado === 'Cargada' ? ` | Plataforma Cargada (${platDetalle || 'sin detalle'})` : ' | Plataforma Limpia') : ''}`,
   });
 
+  const horasDetencionTexto = totalHorasDetencion > 0 ? `\n⚠️ *Horas Detenido por Falla:* ${totalHorasDetencion.toFixed(1)} hrs` : "";
+
   await enviarMensajeWhatsApp(jid, phoneClean,
     `✅ *Indicación de Cierre Registrada*\n` +
-    `📝 *Registro:* _"${observacionCierre}"_\n` +
+    `📝 *Observaciones:* _"${observacionCierre}"_\n` +
     `⏱ *${esVehiculo ? "Odómetro Final" : "Horómetro Final"}:* ${lecturaFinal.toLocaleString("es-CL")} ${unidadLectura}\n` +
-    `⛽ *Combustible:* ${petroleoLitros ? `${petroleoLitros} L` : "Sin carga"}\n\n` +
+    `⛽ *Combustible:* ${petroleoLitros ? `${petroleoLitros} L` : "Sin carga"}${horasDetencionTexto}\n\n` +
     `⏳ *Consolidando tu Reporte Diario de Jornada y generando PDF...*`,
     !!audio,
     geminiKey
@@ -343,15 +393,16 @@ export async function handleCierreFlow(ctx, res) {
         .eq("id", sesion.id);
 
       const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://equipos.lukeapp.cl";
+      const horasDetFinalTxt = totalHorasDetencion > 0 ? `\n⚠️ Horas detenido por falla: ${totalHorasDetencion.toFixed(1)} hrs` : "";
       if (equipo?.tipo_seguimiento === 'vehiculo') {
         const kmFinalCalculado = kmFinal || reporteCompleto.km_final;
         const kmRecorridos = kmFinalCalculado && reporteCompleto.km_inicial ? (kmFinalCalculado - reporteCompleto.km_inicial) : null;
-        const msgText = `✅ *Reporte Diario de Jornada consolidado con éxito.*\n\n🚗 Odómetro: ${reporteCompleto.km_inicial?.toLocaleString("es-CL") || "—"} → ${kmFinalCalculado?.toLocaleString("es-CL") || "—"} km\n${kmRecorridos !== null ? `⏱ Kilómetros recorridos: ${kmRecorridos.toLocaleString("es-CL")} km\n` : ""}\n📄 Descarga tu reporte aquí:\n👉 ${baseUrl}${pdfUrl}\n\n¡Buen término de jornada, ${personal.nombre_completo}! 👷‍♂️`;
+        const msgText = `✅ *Reporte Diario de Jornada consolidado con éxito.*\n\n🚗 Odómetro: ${reporteCompleto.km_inicial?.toLocaleString("es-CL") || "—"} → ${kmFinalCalculado?.toLocaleString("es-CL") || "—"} km\n${kmRecorridos !== null ? `⏱ Kilómetros recorridos: ${kmRecorridos.toLocaleString("es-CL")} km\n` : ""}${horasDetFinalTxt}\n📄 Descarga tu reporte aquí:\n👉 ${baseUrl}${pdfUrl}\n\n¡Buen término de jornada, ${personal.nombre_completo}! 👷‍♂️`;
         
         await guardarMensajeChat(supabase, phoneClean, "model", msgText, "texto", sesion.reporte_activo_id);
         await enviarMensajeWhatsApp(jid, phoneClean, msgText, !!audio, geminiKey);
       } else {
-        const msgText = `✅ *Reporte Diario de Jornada consolidado con éxito.*\n\n📊 Horómetro: ${reporteCompleto.horometro_inicio} → ${horometroFinal || "—"} hrs\n${horometroFinal ? `⏱ Horas trabajadas: ${(horometroFinal - reporteCompleto.horometro_inicio).toFixed(1)} hrs\n` : ""}\n📄 Descarga tu reporte aquí:\n👉 ${baseUrl}${pdfUrl}\n\n¡Buen término de jornada, ${personal.nombre_completo}! 👷‍♂️`;
+        const msgText = `✅ *Reporte Diario de Jornada consolidado con éxito.*\n\n📊 Horómetro: ${reporteCompleto.horometro_inicio} → ${horometroFinal || "—"} hrs\n${horometroFinal ? `⏱ Horas trabajadas: ${(horometroFinal - reporteCompleto.horometro_inicio).toFixed(1)} hrs\n` : ""}${horasDetFinalTxt}\n📄 Descarga tu reporte aquí:\n👉 ${baseUrl}${pdfUrl}\n\n¡Buen término de jornada, ${personal.nombre_completo}! 👷‍♂️`;
         
         await guardarMensajeChat(supabase, phoneClean, "model", msgText, "texto", sesion.reporte_activo_id);
         await enviarMensajeWhatsApp(jid, phoneClean, msgText, !!audio, geminiKey);

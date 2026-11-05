@@ -14,6 +14,47 @@ import { formatFechaHoraChile } from "./timeUtils";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
+/**
+ * Llamada resiliente a Gemini con reintentos automáticos a través de modelos alternativos.
+ */
+export async function callGeminiGenerate(geminiKey, payload) {
+  const models = [
+    process.env.GEMINI_MODEL,
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash"
+  ].filter(Boolean);
+
+  const uniqueModels = Array.from(new Set(models));
+  let lastError = null;
+
+  for (const model of uniqueModels) {
+    try {
+      const res = await fetch(
+        `${GEMINI_BASE}/${model}:generateContent?key=${geminiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (res.ok) {
+        return await res.json();
+      }
+      const errText = await res.text();
+      console.warn(`[Gemini] Modelo ${model} devolvió estado ${res.status}: ${errText.slice(0, 150)}`);
+      lastError = new Error(`HTTP ${res.status}: ${errText}`);
+      if (![404, 429, 500, 502, 503, 504].includes(res.status)) {
+        break;
+      }
+    } catch (err) {
+      console.warn(`[Gemini] Error llamando a ${model}: ${err.message}`);
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("No se pudo obtener respuesta de ningún modelo de Gemini");
+}
+
 // ================================================================
 // FALLBACK DETERMINÍSTICO: Parser local cuando Gemini no está disponible
 // ================================================================
@@ -168,7 +209,7 @@ export function parsearMensajeOperadorFallback(textoRaw = "", listaEspecialidade
 
   const esCierre = /\b(cierre|cerrando|cerrar|termine|terminamos\s+jornada|termino de jornada|termino jornada|termino de turno|fin de jornada|fin de turno|finalizar jornada|horometro final|checkout)\b/.test(lower);
   const esColacion = !saleDeColacion && !(especialidad_id && indicaTrabajando) && /\b(colacion|almuerzo|almorzando)\b/.test(lower);
-  const esFalla = !tieneSinCombustible && !niegaFalla && !(especialidad_id && indicaTrabajando) && /\b(falla|pana|panne|averia|roto|fuera de servicio|desperfecto|fuga)\b/.test(lower);
+  const esFalla = !tieneSinCombustible && !niegaFalla && !(especialidad_id && indicaTrabajando) && /\b(falla|pana|panne|averia|averiado|roto|fuera de servicio|desperfecto|fuga|detenido por falla|detenido por pana|detenido por panne|detenido)\b/.test(lower);
   const esRalenti = !(especialidad_id && indicaTrabajando) && /\b(ralenti|marcha lenta)\b/.test(lower);
   const esDisponible = !(especialidad_id && indicaTrabajando) && /\b(disponible|esperando|en espera|standby)\b/.test(lower);
 
@@ -397,21 +438,7 @@ Responde ÚNICAMENTE con un JSON válido. Esquema:
       },
     };
 
-    const res = await fetch(
-      `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }
-    );
-
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`[Gemini] Error procesando mensaje: ${res.status} - ${err}`);
-    }
-
-    const data = await res.json();
+    const data = await callGeminiGenerate(geminiKey, payload);
     console.log("[Gemini Debug] Objeto data completo:", JSON.stringify(data, null, 2));
     const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "{}";
 
@@ -617,21 +644,7 @@ Esquema de retorno:
   };
 
   try {
-    const res = await fetch(
-      `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }
-    );
-
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`[Gemini] Error procesando audio: ${res.status} - ${err}`);
-    }
-
-    const data = await res.json();
+    const data = await callGeminiGenerate(geminiKey, payload);
     const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
     if (!rawText) throw new Error("[Gemini] Respuesta vacía");
@@ -647,13 +660,21 @@ Esquema de retorno:
     console.warn("[Gemini] ⚠️ Falló procesarAudioOperador directo, intentando transcripción + fallback:", errAudio.message);
     try {
       const textoTranscrito = await transcribirAudioSupervisor(audioBase64, mimeType);
-      if (textoTranscrito) {
-        return parsearMensajeOperadorFallback(textoTranscrito, especialidades, contexto);
+      if (textoTranscrito && textoTranscrito.trim()) {
+        const parsed = parsearMensajeOperadorFallback(textoTranscrito, especialidades, contexto);
+        parsed.detalles_texto = textoTranscrito;
+        return parsed;
       }
     } catch (errTrans) {
       console.warn("[Gemini] ⚠️ Falló también transcribirAudioSupervisor:", errTrans.message);
     }
-    throw errAudio;
+    return {
+      tipo_evento: null,
+      error: true,
+      audio_ininteligible: true,
+      detalles_texto: null,
+      mensaje_conversacional_bot: null
+    };
   }
 }
 
@@ -741,17 +762,7 @@ Respuesta ÚNICAMENTE en JSON válido:
   };
 
   try {
-    const res = await fetch(
-      `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
-    );
-
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`[Gemini] Error procesando audio vehículo: ${res.status} - ${err}`);
-    }
-
-    const data = await res.json();
+    const data = await callGeminiGenerate(geminiKey, payload);
     const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
     if (!rawText) throw new Error("[Gemini] Respuesta vacía en procesarAudioVehiculo");
 
@@ -766,13 +777,21 @@ Respuesta ÚNICAMENTE en JSON válido:
     console.warn("[Gemini] ⚠️ Falló procesarAudioVehiculo directo, intentando transcripción + fallback:", errAudioVeh.message);
     try {
       const textoTranscrito = await transcribirAudioSupervisor(audioBase64, mimeType);
-      if (textoTranscrito) {
-        return parsearTextoVehiculoFallback(textoTranscrito, contexto);
+      if (textoTranscrito && textoTranscrito.trim()) {
+        const parsed = parsearTextoVehiculoFallback(textoTranscrito, contexto);
+        parsed.detalles_texto = textoTranscrito;
+        return parsed;
       }
     } catch (errTrans) {
       console.warn("[Gemini] ⚠️ Falló también transcribirAudioSupervisor en vehículo:", errTrans.message);
     }
-    throw errAudioVeh;
+    return {
+      tipo_evento: null,
+      error: true,
+      audio_ininteligible: true,
+      detalles_texto: null,
+      mensaje_conversacional_bot: null
+    };
   }
 }
 
@@ -1040,21 +1059,7 @@ export async function transcribirAudioSupervisor(audioBase64, mimeType) {
     },
   };
 
-  const res = await fetch(
-    `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }
-  );
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`[Gemini] Error transcribiendo audio de supervisor: ${res.status} - ${err}`);
-  }
-
-  const data = await res.json();
+  const data = await callGeminiGenerate(geminiKey, payload);
   return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
 }
 
