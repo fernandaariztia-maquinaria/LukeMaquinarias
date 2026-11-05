@@ -2,13 +2,12 @@ const BRIDGE_URL = process.env.WA_BRIDGE_URL || "http://localhost:4000/equipos";
 
 export async function enviarMensajeWhatsApp(jid, phoneClean, texto, tieneAudioEntrante = false, geminiKey = null) {
   const cleanDigits = String(phoneClean || "").replace(/[^0-9]/g, "");
-  // Si viene un JID con '@' (@s.whatsapp.net, @lid o @g.us), responder en ese mismo JID para mantener la sesión Signal;
-  // si jid es null (envío proactivo como Finalizar POD), usar <cleanDigits>@s.whatsapp.net.
-  const dest = (jid && typeof jid === "string" && jid.includes("@"))
+  // Priorizar siempre <cleanDigits>@s.whatsapp.net para entrega universal y segura en WhatsApp
+  const dest = (jid && String(jid).endsWith("@g.us"))
     ? jid
     : cleanDigits
       ? `${cleanDigits}@s.whatsapp.net`
-      : `${String(jid || "").replace(/[^0-9]/g, "")}@s.whatsapp.net`;
+      : (jid && String(jid).includes("@s.whatsapp.net") ? jid : `${String(jid || "").replace(/[^0-9]/g, "")}@s.whatsapp.net`);
   let audioBase64ParaEnviar = null;
 
   // Solo sintetizar si el usuario original envió audio y no hay URLs en la respuesta,
@@ -69,7 +68,7 @@ export async function enviarMensajeWhatsApp(jid, phoneClean, texto, tieneAudioEn
   }
 
   try {
-    await fetch(`${BRIDGE_URL}/send`, {
+    const bridgeRes = await fetch(`${BRIDGE_URL}/send`, {
       method: "POST",
       headers: { 
         "Content-Type": "application/json",
@@ -81,6 +80,10 @@ export async function enviarMensajeWhatsApp(jid, phoneClean, texto, tieneAudioEn
         audioBase64: audioBase64ParaEnviar || null,
       }),
     });
+    if (!bridgeRes.ok) {
+      const errBody = await bridgeRes.text();
+      console.error(`[messageService] ❌ Error en ${BRIDGE_URL}/send (${bridgeRes.status}):`, errBody);
+    }
   } catch (err) {
     console.error("[messageService] Error enviando mensaje a través del bridge:", err.message);
   }

@@ -340,6 +340,21 @@ export async function handleJornadaFlow(ctx, res) {
   // ================================================================
   const msgUpperC = (message || "").trim().toUpperCase();
 
+  // Cancelar estados de espera interactivos
+  if (msgUpperC === "CANCELAR" && (sesion.estado_espera?.startsWith("ESPERANDO_CHECKOUT") || sesion.estado_espera === "ESPERANDO_MOTIVO_FALLA")) {
+    await supabase.from("sesiones_whatsapp").update({
+      estado_espera: null,
+      updated_at: new Date().toISOString()
+    }).eq("id", sesion.id);
+
+    await enviarMensajeWhatsApp(jid, phoneClean,
+      `✅ Acción cancelada. Tu jornada sigue abierta y activa.${RECORDATORIO_ESTADOS_OPERADOR}`,
+      !!audio,
+      geminiKey
+    );
+    return res.status(200).json({ success: true, action: "ACCION_CANCELADA" });
+  }
+
   // Guard: Evitar pisar la sesión con un código escaneado diferente
   if (msgUpperC.startsWith("REPORTE:")) {
     const codigoScan = msgUpperC.replace("REPORTE:", "").trim();
@@ -349,6 +364,16 @@ export async function handleJornadaFlow(ctx, res) {
       .eq("id", sesion.reporte_activo_id)
       .maybeSingle();
     const equipoActivo = reporteActivo?.equipos;
+
+    // Si la sesión está pendiente de cierre
+    if (sesion.estado_espera === "ESPERANDO_CHECKOUT_AUDIO" || sesion.estado_espera === "ESPERANDO_CHECKOUT_PLATAFORMA") {
+      await enviarMensajeWhatsApp(jid, phoneClean,
+        `⚠️ *Jornada pendiente de cierre*\n\nHola *${personal.nombre_completo}*, tu jornada para *${equipoActivo?.descripcion_equipo || "Equipo"}* (${equipoActivo ? formatEquipoLabel(equipoActivo) : ""}) está pendiente de término de jornada (Check-out).\n\nPara completarla, por favor indícanos por audio o texto:\n1️⃣ *Horómetro final*\n2️⃣ *Carga de combustible*\n3️⃣ *Observaciones*\n\n_(O escribe *CANCELAR* si deseas continuar operando este equipo)_`,
+        !!audio,
+        geminiKey
+      );
+      return res.status(200).json({ success: true, action: "SESION_PENDIENTE_CHECKOUT" });
+    }
 
     const patenteActiva = (equipoActivo?.patente || "").toUpperCase();
     const codigoActivo = (equipoActivo?.codigo_interno || "").toUpperCase();
@@ -481,53 +506,190 @@ export async function handleJornadaFlow(ctx, res) {
   let resultado;
   const estadoSesionEnv = sesion.estado_espera === "ESPERANDO_CHECKOUT_AUDIO" ? "CIERRE" : "INTERMEDIO";
 
-  if (tipoSeguimiento === 'vehiculo') {
-    if (audio) {
-      resultado = await procesarAudioVehiculo(
-        audio.data, audio.mimeType,
-        {
-          estado_sesion: estadoSesionEnv,
-          km_inicio: reporteActual?.km_inicial,
-          codigo_equipo: reporteActual?.equipos?.codigo_interno,
-          descripcion_equipo: reporteActual?.equipos?.descripcion_equipo
-        }
-      );
+  try {
+    if (tipoSeguimiento === 'vehiculo') {
+      if (audio) {
+        resultado = await procesarAudioVehiculo(
+          audio.data, audio.mimeType,
+          {
+            estado_sesion: estadoSesionEnv,
+            km_inicio: reporteActual?.km_inicial,
+            codigo_equipo: reporteActual?.equipos?.codigo_interno,
+            descripcion_equipo: reporteActual?.equipos?.descripcion_equipo
+          }
+        );
+      } else {
+        resultado = await procesarTextoVehiculo(
+          message.trim(),
+          {
+            estado_sesion: estadoSesionEnv,
+            km_inicio: reporteActual?.km_inicial,
+            codigo_equipo: reporteActual?.equipos?.codigo_interno,
+            descripcion_equipo: reporteActual?.equipos?.descripcion_equipo
+          }
+        );
+      }
     } else {
-      resultado = await procesarTextoVehiculo(
-        message.trim(),
-        {
-          estado_sesion: estadoSesionEnv,
-          km_inicio: reporteActual?.km_inicial,
-          codigo_equipo: reporteActual?.equipos?.codigo_interno,
-          descripcion_equipo: reporteActual?.equipos?.descripcion_equipo
-        }
-      );
+      if (audio) {
+        resultado = await procesarAudioOperador(
+          audio.data, audio.mimeType, especialidades || [],
+          {
+            estado_sesion: estadoSesionEnv,
+            horometro_inicio: reporteActual?.horometro_inicio,
+            seguimiento_completo: seguimientoCompleto,
+            codigo_equipo: reporteActual?.equipos?.codigo_interno,
+            descripcion_equipo: reporteActual?.equipos?.descripcion_equipo
+          }
+        );
+      } else {
+        resultado = await procesarMensajeConContexto(
+          historialC.length > 0 ? historialC : [{ role: "user", parts: [{ text: message.trim() }] }],
+          especialidades || [],
+          {
+            estado_sesion: estadoSesionEnv,
+            horometro_inicio: reporteActual?.horometro_inicio,
+            seguimiento_completo: seguimientoCompleto,
+            codigo_equipo: reporteActual?.equipos?.codigo_interno,
+            descripcion_equipo: reporteActual?.equipos?.descripcion_equipo
+          }
+        );
+      }
     }
-  } else {
-    if (audio) {
-      resultado = await procesarAudioOperador(
-        audio.data, audio.mimeType, especialidades || [],
-        {
-          estado_sesion: estadoSesionEnv,
-          horometro_inicio: reporteActual?.horometro_inicio,
-          seguimiento_completo: seguimientoCompleto,
-          codigo_equipo: reporteActual?.equipos?.codigo_interno,
-          descripcion_equipo: reporteActual?.equipos?.descripcion_equipo
-        }
-      );
-    } else {
-      resultado = await procesarMensajeConContexto(
-        historialC.length > 0 ? historialC : [{ role: "user", parts: [{ text: message.trim() }] }],
-        especialidades || [],
-        {
-          estado_sesion: estadoSesionEnv,
-          horometro_inicio: reporteActual?.horometro_inicio,
-          seguimiento_completo: seguimientoCompleto,
-          codigo_equipo: reporteActual?.equipos?.codigo_interno,
-          descripcion_equipo: reporteActual?.equipos?.descripcion_equipo
-        }
-      );
+  } catch (errMotor) {
+    console.error("[jornadaHandler] Error capturado en motor IA:", errMotor.message);
+    resultado = { error: true, audio_ininteligible: !!audio };
+  }
+
+  // --- CONTROL DE FALLBACK SI EL AUDIO NO SE PUDO ESCUCHAR O PROCESAR ---
+  if (resultado?.audio_ininteligible || resultado?.error) {
+    if (sesion.estado_espera === "ESPERANDO_CHECKOUT_AUDIO") {
+      const msgErrorCheckout =
+        `🎧 *No pudimos entender tu audio de cierre*\n\n` +
+        `Hola *${personal.nombre_completo}*, por favor ingresa los datos de término de jornada en un **mensaje de texto**:\n` +
+        `1️⃣ *Horómetro final* (ej: 12.350)\n` +
+        `2️⃣ *Carga de combustible* (ej: 50 litros o "sin carga")\n` +
+        `3️⃣ *Observaciones* (novedades o estado del equipo)\n\n` +
+        `💡 _Ejemplo: "Horómetro final 12.350, sin carga, equipo operativo sin novedades"_`;
+      await guardarMensajeChat(supabase, phoneClean, "model", msgErrorCheckout, "texto", sesion.reporte_activo_id);
+      await enviarMensajeWhatsApp(jid, phoneClean, msgErrorCheckout, false, geminiKey);
+      return res.status(200).json({ success: true, action: "AUDIO_CHECKOUT_REINTENTO_TEXTO" });
     }
+
+    if (sesion.estado_espera === "ESPERANDO_MOTIVO_FALLA") {
+      const msgErrorFalla =
+        `🎧 *No pudimos entender tu nota de voz*\n\n` +
+        `Por favor escribe el **motivo o detalle de la falla** en un **mensaje de texto** para registrarlo en el historial del equipo.`;
+      await guardarMensajeChat(supabase, phoneClean, "model", msgErrorFalla, "texto", sesion.reporte_activo_id);
+      await enviarMensajeWhatsApp(jid, phoneClean, msgErrorFalla, false, geminiKey);
+      return res.status(200).json({ success: true, action: "AUDIO_FALLA_REINTENTO_TEXTO" });
+    }
+
+    const msgAudioError =
+      `🎧 *No logramos entender con claridad tu audio*\n\n` +
+      `Por favor indícanos tu estado escribiendo por **texto** o enviando un audio más cercano al micrófono.${RECORDATORIO_ESTADOS_OPERADOR}`;
+    await guardarMensajeChat(supabase, phoneClean, "model", msgAudioError, "texto", sesion.reporte_activo_id);
+    await enviarMensajeWhatsApp(jid, phoneClean, msgAudioError, false, geminiKey);
+    return res.status(200).json({ success: true, action: "AUDIO_ININTELIGIBLE" });
+  }
+
+  // --- SUB-FLUJO: CAPTURA DE MOTIVO DE FALLA CUANDO ESTÁ EN ESPERANDO_MOTIVO_FALLA ---
+  if (sesion.estado_espera === "ESPERANDO_MOTIVO_FALLA") {
+    const motivoTexto = (resultado?.detalles_texto || message || "").trim();
+    const motivoFalla = motivoTexto || "Falla técnica indicada por el operador";
+
+    // 1. Guardar evento en eventos_jornada
+    await supabase.from("eventos_jornada").insert({
+      reporte_id: sesion.reporte_activo_id,
+      estado_hito: "Detenido por Falla",
+      hora_evento: new Date().toISOString(),
+      nota_transcripcion: `🔴 Motivo de falla: ${motivoFalla}`
+    });
+
+    // 2. Guardar o actualizar en historial_fallas_equipos
+    try {
+      const { data: fallaExistente } = await supabase
+        .from("historial_fallas_equipos")
+        .select("id")
+        .eq("equipo_id", reporteActual.equipo_id)
+        .eq("reporte_id", sesion.reporte_activo_id)
+        .eq("estado", "abierta")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (fallaExistente?.id) {
+        await supabase
+          .from("historial_fallas_equipos")
+          .update({ motivo_falla: motivoFalla })
+          .eq("id", fallaExistente.id);
+      } else {
+        await supabase.from("historial_fallas_equipos").insert({
+          equipo_id: reporteActual.equipo_id,
+          reporte_id: sesion.reporte_activo_id,
+          operador_id: personal.id,
+          hora_inicio: new Date().toISOString(),
+          motivo_falla: motivoFalla,
+          estado: "abierta"
+        });
+      }
+    } catch (eHisto) {
+      console.warn("[jornadaHandler] Error guardando historial_fallas_equipos:", eHisto.message);
+    }
+
+    // 3. Registrar en reportes_diarios.observaciones
+    try {
+      const { data: repPrev } = await supabase
+        .from("reportes_diarios")
+        .select("observaciones")
+        .eq("id", sesion.reporte_activo_id)
+        .maybeSingle();
+      const obsPrev = repPrev?.observaciones ? `${repPrev.observaciones} | ` : "";
+      await supabase
+        .from("reportes_diarios")
+        .update({
+          observaciones: `${obsPrev}[Falla ${formatFechaHoraChile()}]: ${motivoFalla}`
+        })
+        .eq("id", sesion.reporte_activo_id);
+    } catch (eObs) {
+      console.warn("[jornadaHandler] Error guardando observaciones:", eObs.message);
+    }
+
+    // 4. Actualizar estado del equipo
+    await supabase.from("equipos").update({
+      estado_actual: "Detenido por Falla"
+    }).eq("id", reporteActual.equipo_id);
+
+    // 5. Restablecer estado de sesión
+    await supabase.from("sesiones_whatsapp").update({
+      estado_espera: null,
+      updated_at: new Date().toISOString()
+    }).eq("id", sesion.id);
+
+    // 6. Notificar supervisor
+    if (reporteActual.supervisor_id) {
+      const textoAlerta =
+        `🚨 *ALERTA: EQUIPO DETENIDO POR FALLA* 🚨\n\n` +
+        `🚜 *Equipo:* ${reporteActual.equipos?.descripcion_equipo || "Equipo"} (${formatEquipoLabel(reporteActual.equipos)})\n` +
+        `👷‍♂️ *Operador:* ${personal.nombre_completo}\n` +
+        `⚠️ *Motivo:* ${motivoFalla}\n` +
+        `⏱️ *Hora:* ${formatFechaHoraChile()}\n\n` +
+        `_El equipo ha sido marcado fuera de servicio. Se inició la cuantificación automática de horas de detención._`;
+      await notificarSupervisor(supabase, reporteActual.supervisor_id, textoAlerta, geminiKey);
+    }
+
+    // 7. Responder al operador
+    const msgConfirmacionFalla =
+      `🔴 *Falla Registrada en el Historial del Equipo* ⚠️\n\n` +
+      `🛠️ *Motivo:* _"${motivoFalla}"_\n\n` +
+      `Se ha notificado a tu supervisor y al área de mantención.\n` +
+      `Las **horas de detención** se están cuantificando automáticamente a partir de este momento.\n\n` +
+      `📌 *Cuando el equipo vuelva a estar operativo, avísanos indicando:*\n` +
+      `• 🟢 *"Trabajando con [Especialidad]"*\n` +
+      `• 🔵 *"Disponible"*`;
+
+    await guardarMensajeChat(supabase, phoneClean, "model", msgConfirmacionFalla, "texto", sesion.reporte_activo_id);
+    await enviarMensajeWhatsApp(jid, phoneClean, msgConfirmacionFalla, false, geminiKey);
+    return res.status(200).json({ success: true, action: "MOTIVO_FALLA_REGISTRADO" });
   }
 
   console.log("[jornadaHandler] Gemini hito:", JSON.stringify(resultado));
@@ -611,6 +773,23 @@ export async function handleJornadaFlow(ctx, res) {
     }
   }
 
+  // Si el operador envía un hito intermedio mientras estaba en ESPERANDO_CHECKOUT_AUDIO, sacarlo de espera
+  const esIntermedioExplicito = !intentoCierre && (
+    resultado.tipo_evento === "Trabajando" ||
+    resultado.tipo_evento === "En Colacion" ||
+    resultado.tipo_evento === "Detenido por Falla" ||
+    resultado.tipo_evento === "Disponible" ||
+    resultado.especialidad_id != null
+  );
+
+  if (esIntermedioExplicito && sesion.estado_espera === "ESPERANDO_CHECKOUT_AUDIO") {
+    await supabase.from("sesiones_whatsapp").update({
+      estado_espera: null,
+      updated_at: new Date().toISOString()
+    }).eq("id", sesion.id);
+    sesion.estado_espera = null;
+  }
+
   // Si ya tenemos el horómetro final o estamos en checkout confirmado, llamamos a cierreHandler
   if (intentoCierre || sesion.estado_espera === "ESPERANDO_CHECKOUT_AUDIO" || sesion.estado_espera === "ESPERANDO_CHECKOUT_PLATAFORMA" || sesion.estado_espera === "ESPERANDO_CHECKOUT_PLATAFORMA_DETALLE" || sesion.estado_espera === "ESPERANDO_CONFIRMACION_TURNO_LARGO") {
     const contextCierre = {
@@ -641,6 +820,117 @@ export async function handleJornadaFlow(ctx, res) {
 
   const indicacionTexto = (resultado.detalles_texto || message || "Hito registrado").trim();
   let hitoInsertado = false;
+
+  // --- FLUJO DEDICADO: DETENIDO POR FALLA ---
+  if (estadoHito === "Detenido por Falla") {
+    const rawTexto = (resultado.detalles_texto || message || "").trim();
+    const sinKeywords = rawTexto
+      .replace(/\b(detenido\s+por\s+falla|detenido\s+por\s+pana|detenido\s+por\s+panne|en\s+panne|en\s+pana|falla\s+mecanica|falla\s+electrica|falla|panne|pana|averia|averiado|detenido)\b/gi, "")
+      .replace(/^[,\s.:;-]+|[,\s.:;-]+$/g, "")
+      .trim();
+
+    const tieneMotivoExplicito = sinKeywords.length >= 6;
+
+    if (!tieneMotivoExplicito) {
+      await supabase.from("sesiones_whatsapp").update({
+        estado_espera: "ESPERANDO_MOTIVO_FALLA",
+        updated_at: new Date().toISOString()
+      }).eq("id", sesion.id);
+
+      await supabase.from("equipos").update({
+        estado_actual: "Detenido por Falla"
+      }).eq("id", reporteActual.equipo_id);
+
+      await supabase.from("eventos_jornada").insert({
+        reporte_id: sesion.reporte_activo_id,
+        estado_hito: "Detenido por Falla",
+        hora_evento: new Date().toISOString(),
+        nota_transcripcion: "🔴 Equipo marcado como Detenido por Falla (solicitando motivo al operador)"
+      });
+
+      try {
+        await supabase.from("historial_fallas_equipos").insert({
+          equipo_id: reporteActual.equipo_id,
+          reporte_id: sesion.reporte_activo_id,
+          operador_id: personal.id,
+          hora_inicio: new Date().toISOString(),
+          motivo_falla: "Pendiente de detalle del operador",
+          estado: "abierta"
+        });
+      } catch (eHisto) {}
+
+      const msgPedirMotivo =
+        `🔴 *Equipo marcado como Detenido por Falla* ⚠️\n\n` +
+        `Hola *${personal.nombre_completo}*, por favor indícanos por *audio o texto* el **motivo o detalle de la falla** que presenta el equipo (ej: manguera hidráulica cortada, recalentamiento, fuga de aire, alarma en tablero, etc.).\n\n` +
+        `Esto quedará registrado en la hoja de vida del equipo y se alertará de inmediato a tu supervisor y a mantención.`;
+
+      await guardarMensajeChat(supabase, phoneClean, "model", msgPedirMotivo, "texto", sesion.reporte_activo_id);
+      await enviarMensajeWhatsApp(jid, phoneClean, msgPedirMotivo, false, geminiKey);
+      return res.status(200).json({ success: true, action: "ESPERANDO_MOTIVO_FALLA" });
+    } else {
+      const motivoFalla = sinKeywords;
+
+      await supabase.from("eventos_jornada").insert({
+        reporte_id: sesion.reporte_activo_id,
+        estado_hito: "Detenido por Falla",
+        hora_evento: new Date().toISOString(),
+        nota_transcripcion: `🔴 Falla reportada: ${motivoFalla}`
+      });
+
+      try {
+        await supabase.from("historial_fallas_equipos").insert({
+          equipo_id: reporteActual.equipo_id,
+          reporte_id: sesion.reporte_activo_id,
+          operador_id: personal.id,
+          hora_inicio: new Date().toISOString(),
+          motivo_falla: motivoFalla,
+          estado: "abierta"
+        });
+      } catch (eHisto) {}
+
+      try {
+        const { data: repPrev } = await supabase
+          .from("reportes_diarios")
+          .select("observaciones")
+          .eq("id", sesion.reporte_activo_id)
+          .maybeSingle();
+        const obsPrev = repPrev?.observaciones ? `${repPrev.observaciones} | ` : "";
+        await supabase
+          .from("reportes_diarios")
+          .update({
+            observaciones: `${obsPrev}[Falla ${formatFechaHoraChile()}]: ${motivoFalla}`
+          })
+          .eq("id", sesion.reporte_activo_id);
+      } catch (eObs) {}
+
+      await supabase.from("equipos").update({
+        estado_actual: "Detenido por Falla"
+      }).eq("id", reporteActual.equipo_id);
+
+      if (reporteActual.supervisor_id) {
+        const textoAlerta =
+          `🚨 *ALERTA: EQUIPO DETENIDO POR FALLA* 🚨\n\n` +
+          `🚜 *Equipo:* ${reporteActual.equipos?.descripcion_equipo || "Equipo"} (${formatEquipoLabel(reporteActual.equipos)})\n` +
+          `👷‍♂️ *Operador:* ${personal.nombre_completo}\n` +
+          `⚠️ *Motivo:* ${motivoFalla}\n` +
+          `⏱️ *Hora:* ${formatFechaHoraChile()}\n\n` +
+          `_El equipo ha sido marcado fuera de servicio. Se inició la cuantificación automática de horas de detención._`;
+        await notificarSupervisor(supabase, reporteActual.supervisor_id, textoAlerta, geminiKey);
+      }
+
+      const msgConfirmacion =
+        `🔴 *Falla Registrada en el Historial del Equipo* ⚠️\n\n` +
+        `🛠️ *Motivo:* _"${motivoFalla}"_\n\n` +
+        `Se ha alertado a tu supervisor y a mantención. Las horas de detención se están cuantificando automáticamente.\n\n` +
+        `📌 *Cuando el equipo esté reparado y operativo nuevamente, avísanos indicando:*\n` +
+        `• 🟢 *"Trabajando con [Especialidad]"*\n` +
+        `• 🔵 *"Disponible"*`;
+
+      await guardarMensajeChat(supabase, phoneClean, "model", msgConfirmacion, "texto", sesion.reporte_activo_id);
+      await enviarMensajeWhatsApp(jid, phoneClean, msgConfirmacion, false, geminiKey);
+      return res.status(200).json({ success: true, action: "FALLA_REGISTRADA_CON_MOTIVO" });
+    }
+  }
 
   if (estadoHito === "Trabajando" && resultado.especialidad_id) {
     const nowSantiago = new Date().toLocaleTimeString("sv-SE", { timeZone: "America/Santiago" });
@@ -779,6 +1069,63 @@ export async function handleJornadaFlow(ctx, res) {
     });
   }
 
+  // Cuantificar horas de detención si el equipo saliendo de Detenido por Falla
+  let textoDetencionCuantificada = "";
+  if (reporteActual.equipos?.estado_actual === "Detenido por Falla") {
+    const { data: ultFallaEv } = await supabase
+      .from("eventos_jornada")
+      .select("hora_evento, nota_transcripcion")
+      .eq("reporte_id", sesion.reporte_activo_id)
+      .eq("estado_hito", "Detenido por Falla")
+      .order("hora_evento", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (ultFallaEv?.hora_evento) {
+      const inicioMs = new Date(ultFallaEv.hora_evento).getTime();
+      const ahoraMs = Date.now();
+      const diffHoras = Math.max(0, (ahoraMs - inicioMs) / (1000 * 60 * 60));
+      const horasNum = Number(diffHoras.toFixed(2));
+      const tiempoTexto = diffHoras < 1
+        ? `${Math.max(1, Math.round(diffHoras * 60))} minutos`
+        : `${diffHoras.toFixed(1)} horas`;
+
+      textoDetencionCuantificada = `\n\n⏱️ *Fin de detención:* El equipo estuvo detenido *${tiempoTexto}* por falla. Horas registradas en el reporte diario.`;
+
+      try {
+        await supabase
+          .from("historial_fallas_equipos")
+          .update({
+            hora_fin: new Date().toISOString(),
+            horas_detencion: horasNum,
+            estado: "resuelta"
+          })
+          .eq("equipo_id", reporteActual.equipo_id)
+          .eq("estado", "abierta");
+      } catch (eHisto) {}
+
+      try {
+        const { data: repPrev } = await supabase
+          .from("reportes_diarios")
+          .select("horas_detencion, observaciones")
+          .eq("id", sesion.reporte_activo_id)
+          .maybeSingle();
+
+        const horasPrev = Number(repPrev?.horas_detencion || 0);
+        const obsPrev = repPrev?.observaciones ? `${repPrev.observaciones} | ` : "";
+        updatesReporte.horas_detencion = Number((horasPrev + horasNum).toFixed(2));
+        updatesReporte.observaciones = `${obsPrev}[Detención superada]: ${tiempoTexto} detenido`;
+      } catch (eRep) {}
+
+      await supabase.from("eventos_jornada").insert({
+        reporte_id: sesion.reporte_activo_id,
+        estado_hito: estadoHito,
+        hora_evento: new Date().toISOString(),
+        nota_transcripcion: `🟢 Fin de detención por falla tras ${tiempoTexto} (${horasNum} hrs). Equipo operativo.`
+      });
+    }
+  }
+
   // Actualizar combustible si se mencionó
   const updatesReporte = {};
   if (resultado.petroleo_litros) updatesReporte.petroleo_litros = resultado.petroleo_litros;
@@ -843,8 +1190,8 @@ export async function handleJornadaFlow(ctx, res) {
     estadoHito;
 
   const tagEspecialidad = resultado.especialidad_detectada ? ` — *${resultado.especialidad_detectada}*` : "";
-  const baseConfirmacion = resultado.mensaje_conversacional_bot
-    || `✅ *Indicación Registrada*\n${iconosEstado[estadoHito] || "⚪"} *Estado:* ${labelEstadoMostrar}${tagEspecialidad}\n📝 *Registro:* _"${indicacionTexto}"_`;
+  const baseConfirmacion = (resultado.mensaje_conversacional_bot
+    || `✅ *Indicación Registrada*\n${iconosEstado[estadoHito] || "⚪"} *Estado:* ${labelEstadoMostrar}${tagEspecialidad}\n📝 *Registro:* _"${indicacionTexto}"_`) + textoDetencionCuantificada;
 
   const confirmacion = baseConfirmacion.includes("Recuerda informar")
     ? baseConfirmacion
