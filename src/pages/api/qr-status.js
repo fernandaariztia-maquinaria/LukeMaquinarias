@@ -152,51 +152,52 @@ export default async function handler(req, res) {
   }`
           );
 
-          // 2. Inyectar __createHealedSocket y __sentMsgCache de forma global e incondicional
-          if (!updated.includes("__sentMsgCacheGlobalDef")) {
-            const globalPrefix = [
-              "/* __sentMsgCacheGlobalDef */",
-              "global.__sentMsgCache = global.__sentMsgCache || new Map();",
-              "global.__lastTextHolder = global.__lastTextHolder || { text: '' };",
-              "var __sentMsgCache = global.__sentMsgCache;",
-              "var __lastTextHolder = global.__lastTextHolder;",
-              "function __createHealedSocket(makeFn, cfg) {",
-              "  const _s = makeFn({",
-              "    ...cfg,",
-              "    getMessage: async (key) => {",
-              "      const cached = key?.id ? (global.__sentMsgCache ? global.__sentMsgCache.get(key.id) : null) : null;",
-              "      if (cached) return cached;",
-              "      return { conversation: (global.__lastTextHolder ? global.__lastTextHolder.text : '') || 'Mensaje LukeEquipos' };",
-              "    },",
-              "  });",
-              "  const _orig = _s.sendMessage.bind(_s);",
-              "  _s.sendMessage = async (...a) => {",
-              "    if (a[1] && typeof a[1].text === 'string' && global.__lastTextHolder) global.__lastTextHolder.text = a[1].text;",
-              "    const r = await _orig(...a);",
-              "    if (r?.key?.id && global.__sentMsgCache) {",
-              "      const msgProto = r.message || (typeof a[1]?.text === 'string' ? { conversation: a[1].text } : a[1]);",
-              "      if (msgProto) {",
-              "        global.__sentMsgCache.set(r.key.id, msgProto);",
-              "        if (global.__sentMsgCache.size > 2000) {",
-              "          const fk = global.__sentMsgCache.keys().next().value;",
-              "          global.__sentMsgCache.delete(fk);",
-              "        }",
-              "      }",
-              "    }",
-              "    return r;",
-              "  };",
-              "  return _s;",
-              "}",
-              "",
-            ].join("\n");
+          // Limpiar implementaciones previas para evitar duplicados
+          updated = updated.replace(/\/\* __sentMsgCacheGlobalDef \*\/[\s\S]*?return _s;\s*\}\s*/g, "");
+          updated = updated.replace(/const __sentMsgCache = new Map\(\);\n?/g, "");
+          updated = updated.replace(/const __lastTextHolder\s*=\s*\{[^}]*\};\n?/g, "");
+          updated = updated.replace(/var __lastTextHolder\s*=[^;]*;\n?/g, "");
+          updated = updated.replace(/var __sentMsgCache\s*=[^;]*;\n?/g, "");
+          updated = updated.replace(/function __createHealedSocket[\s\S]*?return _s;\s*\}\n?/g, "");
+          updated = updated.replace(/__createHealedSocket\(makeWASocket/g, "makeWASocket");
 
-            // Limpiar implementaciones previas para evitar duplicados
-            updated = updated.replace(/const __sentMsgCache = new Map\(\);\n?/g, "");
-            updated = updated.replace(/function __createHealedSocket[\s\S]*?return _s;\s*\}\n?/g, "");
-            updated = updated.replace(/__createHealedSocket\(makeWASocket/g, "makeWASocket");
+          const globalPrefix = [
+            "/* __sentMsgCacheGlobalDef */",
+            "global.__sentMsgCache = global.__sentMsgCache || new Map();",
+            "global.__lastTextHolder = global.__lastTextHolder || { text: '' };",
+            "var __sentMsgCache = global.__sentMsgCache;",
+            "var __lastTextHolder = global.__lastTextHolder;",
+            "function __createHealedSocket(makeFn, cfg) {",
+            "  const _s = makeFn({",
+            "    ...cfg,",
+            "    getMessage: async (key) => {",
+            "      const cached = key?.id ? (global.__sentMsgCache ? global.__sentMsgCache.get(key.id) : null) : null;",
+            "      if (cached) return cached;",
+            "      return { conversation: (global.__lastTextHolder ? global.__lastTextHolder.text : '') || 'Mensaje LukeEquipos' };",
+            "    },",
+            "  });",
+            "  const _orig = _s.sendMessage.bind(_s);",
+            "  _s.sendMessage = async (...a) => {",
+            "    if (a[1] && typeof a[1].text === 'string' && global.__lastTextHolder) global.__lastTextHolder.text = a[1].text;",
+            "    const r = await _orig(...a);",
+            "    if (r?.key?.id && global.__sentMsgCache) {",
+            "      const msgProto = r.message || (typeof a[1]?.text === 'string' ? { conversation: a[1].text } : a[1]);",
+            "      if (msgProto) {",
+            "        global.__sentMsgCache.set(r.key.id, msgProto);",
+            "        if (global.__sentMsgCache.size > 2000) {",
+            "          const fk = global.__sentMsgCache.keys().next().value;",
+            "          global.__sentMsgCache.delete(fk);",
+            "        }",
+            "      }",
+            "    }",
+            "    return r;",
+            "  };",
+            "  return _s;",
+            "}",
+            "",
+          ].join("\n");
 
-            updated = globalPrefix + updated.replace("makeWASocket({", "__createHealedSocket(makeWASocket, {");
-          }
+          updated = globalPrefix + updated.replace("makeWASocket({", "__createHealedSocket(makeWASocket, {");
 
           if (updated !== content) {
             fs.writeFileSync(fp, updated, "utf8");
