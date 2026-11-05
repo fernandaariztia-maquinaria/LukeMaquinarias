@@ -57,15 +57,14 @@ export default async function handler(req, res) {
       const p = "/home/cristian/wa-bridge-service/src/session.js";
       let content = fs.readFileSync(p, "utf8");
       
-      // Eliminar cualquier bloque previo de __sentMsgCacheGlobalDef
       content = content.replace(/\/\* __sentMsgCacheGlobalDef \*\/[\s\S]*?return _s;\s*\}\n?/g, "");
-      // Eliminar cualquier declaración previa de __lastTextHolder o __sentMsgCache
       content = content.replace(/const __lastTextHolder\s*=\s*\{[^}]*\};\n?/g, "");
       content = content.replace(/var __lastTextHolder\s*=[^;]*;\n?/g, "");
       content = content.replace(/const __sentMsgCache\s*=[^;]*;\n?/g, "");
       content = content.replace(/var __sentMsgCache\s*=[^;]*;\n?/g, "");
       content = content.replace(/function __createHealedSocket[\s\S]*?return _s;\s*\}\n?/g, "");
-      content = content.replace(/__createHealedSocket\(makeWASocket/g, "makeWASocket");
+      content = content.replace(/__createHealedSocket\(makeWASocket,\s*/g, "makeWASocket(");
+      content = content.replace(/makeWASocket,\s*\{/g, "makeWASocket({");
 
       const header = [
         "/* __sentMsgCacheGlobalDef */",
@@ -103,7 +102,7 @@ export default async function handler(req, res) {
         "",
       ].join("\n");
 
-      content = header + content.replace("makeWASocket({", "__createHealedSocket(makeWASocket, {");
+      content = header + content.replace(/makeWASocket\(\{/g, "__createHealedSocket(makeWASocket, {");
       fs.writeFileSync(p, content, "utf8");
 
       let restartOut = "";
