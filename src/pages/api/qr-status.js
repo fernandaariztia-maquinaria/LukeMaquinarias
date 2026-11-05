@@ -52,6 +52,7 @@ export default async function handler(req, res) {
       return res.status(500).json({ success: false, error: e.message });
     }
   }
+  if (req.query.cat === "session") {
     try {
       const p = "/home/cristian/wa-bridge-service/src/session.js";
       return res.status(200).json({ success: true, content: fs.readFileSync(p, "utf8") });
