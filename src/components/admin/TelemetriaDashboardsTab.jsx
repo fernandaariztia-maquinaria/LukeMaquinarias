@@ -5,7 +5,7 @@ import {
   CheckCircle2, Award, ArrowUpRight, Flame, Layers, Sliders,
   Info, ChevronRight, FileSpreadsheet
 } from "lucide-react";
-import { formatearPatente, clasificarTipoEquipo, TIPOS_EQUIPO_FILTROS } from "../../lib/telemetriaUtils";
+import { formatearPatente, normalizarPatente, clasificarTipoEquipo, TIPOS_EQUIPO_FILTROS } from "../../lib/telemetriaUtils";
 
 export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
   // 1. Verificación de Administrador
@@ -48,7 +48,13 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
     }
   }, [esAdmin, userProyectoId]);
 
-  // Cargar datos desde la API
+  // Etiqueta legible del tipo de equipo activo
+  const labelTipoActivo = useMemo(() => {
+    const f = TIPOS_EQUIPO_FILTROS.find((t) => t.key === tipoEquipoFiltro);
+    return f ? f.label : "Equipos";
+  }, [tipoEquipoFiltro]);
+
+  // Cargar datos desde la API (incluyendo tipo_equipo para recálculo exacto en backend)
   const cargarDashboards = useCallback(async () => {
     setCargando(true);
     setErrorMsg(null);
@@ -59,6 +65,9 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
       if (proyectoFiltro) params.set("proyecto_id", proyectoFiltro);
       if (patenteFiltro) params.set("patente", patenteFiltro);
       if (conductorFiltro) params.set("conductor", conductorFiltro);
+      if (tipoEquipoFiltro && tipoEquipoFiltro !== "todos") {
+        params.set("tipo_equipo", tipoEquipoFiltro);
+      }
       params.set("user_rol", currentUser?.rol || "");
       params.set("user_proyecto_id", userProyectoId);
 
@@ -75,7 +84,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
     } finally {
       setCargando(false);
     }
-  }, [desde, hasta, proyectoFiltro, patenteFiltro, conductorFiltro, currentUser?.rol, userProyectoId]);
+  }, [desde, hasta, proyectoFiltro, patenteFiltro, conductorFiltro, tipoEquipoFiltro, currentUser?.rol, userProyectoId]);
 
   useEffect(() => {
     cargarDashboards();
@@ -114,6 +123,81 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
     if (tipoEquipoFiltro === "todos") return list;
     return list.filter((e) => (e.tipo_clasificado || clasificarTipoEquipo(e)) === tipoEquipoFiltro);
   }, [dashData?.rankings?.top_ralenti, tipoEquipoFiltro]);
+
+  // KPIs globales dinámicos que se actualizan inmediatamente al cambiar el filtro de tipo de equipo
+  const kpisDinamicos = useMemo(() => {
+    if (!dashData?.kpis_globales) return null;
+    if (tipoEquipoFiltro === "todos") return dashData.kpis_globales;
+
+    // Calcular KPIs instantáneos (0ms de latencia) a partir de los equipos filtrados
+    const totalVehiculos = topHorasFiltradas.length;
+    const totalHoras =
+      Math.round(
+        topHorasFiltradas.reduce((acc, e) => acc + (Number(e.horas_totales) || 0), 0) * 10
+      ) / 10;
+    const horasEfectivas =
+      Math.round(
+        topHorasFiltradas.reduce((acc, e) => acc + (Number(e.horas_efectivas) || 0), 0) * 10
+      ) / 10;
+    const horasRalenti =
+      Math.round(
+        topHorasFiltradas.reduce((acc, e) => acc + (Number(e.horas_ralenti) || 0), 0) * 10
+      ) / 10;
+    const pctRalenti =
+      totalHoras > 0 ? Math.round((horasRalenti / totalHoras) * 1000) / 10 : 0;
+    const totalLitros =
+      Math.round(
+        topHorasFiltradas.reduce((acc, e) => acc + (Number(e.litros_totales) || 0), 0) * 10
+      ) / 10;
+    const litrosCan =
+      Math.round(
+        topHorasFiltradas.reduce((acc, e) => acc + (Number(e.litros_can) || 0), 0) * 10
+      ) / 10;
+    const litrosGps =
+      Math.round(
+        topHorasFiltradas.reduce((acc, e) => acc + (Number(e.litros_gps) || 0), 0) * 10
+      ) / 10;
+    const totalKm =
+      Math.round(
+        topHorasFiltradas.reduce((acc, e) => acc + (Number(e.km_totales) || 0), 0) * 10
+      ) / 10;
+    const totalViajes = topHorasFiltradas.reduce(
+      (acc, e) => acc + (Number(e.viajes_totales) || 0),
+      0
+    );
+    const rendProm =
+      totalLitros > 0 ? Math.round((totalKm / totalLitros) * 10) / 10 : null;
+
+    return {
+      total_vehiculos_activos: totalVehiculos,
+      total_viajes: totalViajes,
+      total_horas: totalHoras,
+      horas_efectivas: horasEfectivas,
+      horas_ralenti: horasRalenti,
+      pct_ralenti: pctRalenti,
+      total_km: totalKm,
+      total_litros: totalLitros,
+      litros_can: litrosCan,
+      litros_gps: litrosGps,
+      rendimiento_promedio: rendProm,
+    };
+  }, [dashData?.kpis_globales, tipoEquipoFiltro, topHorasFiltradas]);
+
+  // Conductores filtrados por tipo de equipo (muestra choferes que operaron el tipo de vehículo seleccionado)
+  const topConductoresFiltrados = useMemo(() => {
+    const list = dashData?.rankings?.top_conductores || [];
+    if (tipoEquipoFiltro === "todos") return list;
+
+    // Patentes de vehículos correspondientes al tipo de equipo filtrado
+    const patentesTipoSet = new Set(
+      topHorasFiltradas.map((e) => normalizarPatente(e.patente))
+    );
+
+    return list.filter((cond) => {
+      if (!cond.vehiculos || cond.vehiculos.length === 0) return false;
+      return cond.vehiculos.some((v) => patentesTipoSet.has(normalizarPatente(v)));
+    });
+  }, [dashData?.rankings?.top_conductores, tipoEquipoFiltro, topHorasFiltradas]);
 
   // Enriquecer la lista de horas de uso con los porcentajes dinámicos de utilización
   const equiposConUtilizacion = useMemo(() => {
@@ -559,8 +643,8 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
         </div>
       </div>
 
-      {/* ── TARJETAS KPIS GLOBALES DE LA FLOTA ─────────────────────────────────── */}
-      {dashData && dashData.kpis_globales && (
+      {/* ── TARJETAS KPIS GLOBALES DE LA FLOTA (ACTUALIZADAS DINÁMICAMENTE POR TIPO) ── */}
+      {kpisDinamicos && (
         <div style={{
           display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
           gap: "14px",
@@ -571,34 +655,36 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
             border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.03)",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-              <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>Horas de Motor (Uso Flota)</span>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>
+                Horas de Motor ({tipoEquipoFiltro === "todos" ? "Uso Flota" : labelTipoActivo})
+              </span>
               <div style={{ backgroundColor: "#eff6ff", color: "#2563eb", padding: "6px", borderRadius: "8px" }}>
                 <Clock size={18} />
               </div>
             </div>
             <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
-              {dashData.kpis_globales.total_horas.toLocaleString("es-CL")} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>hrs</span>
+              {kpisDinamicos.total_horas.toLocaleString("es-CL")} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>hrs</span>
             </div>
             {/* Barra apilada: Efectiva vs Ralentí */}
             <div style={{ width: "100%", height: "8px", backgroundColor: "#f1f5f9", borderRadius: "4px", overflow: "hidden", display: "flex", margin: "10px 0 6px" }}>
               <div
                 style={{
-                  width: `${100 - (dashData.kpis_globales.pct_ralenti || 0)}%`,
+                  width: `${100 - (kpisDinamicos.pct_ralenti || 0)}%`,
                   backgroundColor: "#0284c7",
                 }}
-                title={`Horas Efectivas: ${dashData.kpis_globales.horas_efectivas} hrs (${100 - (dashData.kpis_globales.pct_ralenti || 0)}%)`}
+                title={`Horas Efectivas: ${kpisDinamicos.horas_efectivas} hrs (${100 - (kpisDinamicos.pct_ralenti || 0)}%)`}
               />
               <div
                 style={{
-                  width: `${dashData.kpis_globales.pct_ralenti || 0}%`,
+                  width: `${kpisDinamicos.pct_ralenti || 0}%`,
                   backgroundColor: "#f97316",
                 }}
-                title={`Ralentí: ${dashData.kpis_globales.horas_ralenti} hrs (${dashData.kpis_globales.pct_ralenti}%)`}
+                title={`Ralentí: ${kpisDinamicos.horas_ralenti} hrs (${kpisDinamicos.pct_ralenti}%)`}
               />
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#475569" }}>
-              <span>Efectiva: <strong>{dashData.kpis_globales.horas_efectivas} hrs</strong></span>
-              <span style={{ color: "#c2410c" }}>Ralentí: <strong>{dashData.kpis_globales.horas_ralenti} hrs ({dashData.kpis_globales.pct_ralenti}%)</strong></span>
+              <span>Efectiva: <strong>{kpisDinamicos.horas_efectivas} hrs</strong></span>
+              <span style={{ color: "#c2410c" }}>Ralentí: <strong>{kpisDinamicos.horas_ralenti} hrs ({kpisDinamicos.pct_ralenti}%)</strong></span>
             </div>
           </div>
 
@@ -608,21 +694,23 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
             border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.03)",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-              <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>Combustible Consumido</span>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>
+                Combustible Consumido ({tipoEquipoFiltro === "todos" ? "Total Flota" : labelTipoActivo})
+              </span>
               <div style={{ backgroundColor: "#fef2f2", color: "#dc2626", padding: "6px", borderRadius: "8px" }}>
                 <Fuel size={18} />
               </div>
             </div>
             <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
-              {dashData.kpis_globales.total_litros.toLocaleString("es-CL")} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>Lts</span>
+              {kpisDinamicos.total_litros.toLocaleString("es-CL")} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>Lts</span>
             </div>
             <div style={{ display: "flex", gap: "10px", fontSize: "11px", color: "#64748b", marginTop: "10px" }}>
-              <span>CAN Bus: <strong>{dashData.kpis_globales.litros_can} L</strong></span>
+              <span>CAN Bus: <strong>{kpisDinamicos.litros_can} L</strong></span>
               <span>•</span>
-              <span>GPS: <strong>{dashData.kpis_globales.litros_gps} L</strong></span>
+              <span>GPS: <strong>{kpisDinamicos.litros_gps} L</strong></span>
             </div>
             <div style={{ fontSize: "11px", color: "#0369a1", marginTop: "4px", fontWeight: 600 }}>
-              Rendimiento Flota: {dashData.kpis_globales.rendimiento_promedio ? `${dashData.kpis_globales.rendimiento_promedio} km/L` : "Calculando..."}
+              Rendimiento: {kpisDinamicos.rendimiento_promedio ? `${kpisDinamicos.rendimiento_promedio} km/L` : "Calculando..."}
             </div>
           </div>
 
@@ -632,19 +720,21 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
             border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.03)",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-              <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>Distancia Total Recorrida</span>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>
+                Distancia Total Recorrida ({tipoEquipoFiltro === "todos" ? "Total Flota" : labelTipoActivo})
+              </span>
               <div style={{ backgroundColor: "#f0fdf4", color: "#16a34a", padding: "6px", borderRadius: "8px" }}>
                 <Gauge size={18} />
               </div>
             </div>
             <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
-              {dashData.kpis_globales.total_km.toLocaleString("es-CL")} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>km</span>
+              {kpisDinamicos.total_km.toLocaleString("es-CL")} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>km</span>
             </div>
             <div style={{ fontSize: "11px", color: "#64748b", marginTop: "10px" }}>
-              Total Viajes: <strong>{dashData.kpis_globales.total_viajes?.toLocaleString("es-CL")}</strong>
+              Total Viajes: <strong>{kpisDinamicos.total_viajes?.toLocaleString("es-CL")}</strong>
             </div>
             <div style={{ fontSize: "11px", color: "#15803d", marginTop: "4px", fontWeight: 600 }}>
-              Promedio por viaje: {dashData.kpis_globales.total_viajes > 0 ? `${(Math.round((dashData.kpis_globales.total_km / dashData.kpis_globales.total_viajes) * 10) / 10)} km` : "0 km"}
+              Promedio por viaje: {kpisDinamicos.total_viajes > 0 ? `${(Math.round((kpisDinamicos.total_km / kpisDinamicos.total_viajes) * 10) / 10)} km` : "0 km"}
             </div>
           </div>
 
@@ -654,13 +744,15 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
             border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.03)",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-              <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>Equipos Activos</span>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>
+                Equipos Activos ({labelTipoActivo})
+              </span>
               <div style={{ backgroundColor: "#fdf4ff", color: "#a855f7", padding: "6px", borderRadius: "8px" }}>
                 <Car size={18} />
               </div>
             </div>
             <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
-              {dashData.kpis_globales.total_vehiculos_activos} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>unidades</span>
+              {kpisDinamicos.total_vehiculos_activos} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>unidades</span>
             </div>
             <div style={{ fontSize: "11px", color: "#64748b", marginTop: "10px" }}>
               Días con actividad: <strong>{dashData.periodo?.dias_con_actividad || 0} de {diasPeriodo} días</strong>
@@ -815,50 +907,65 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {topHorasFiltradas.slice(0, 5).map((eq, idx) => (
-                  <div key={eq.patente} style={{
-                    padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
-                    border: "1px solid #e2e8f0",
+                {topHorasFiltradas.length === 0 ? (
+                  <div style={{
+                    padding: "24px 16px", textAlign: "center", backgroundColor: "#f8fafc",
+                    borderRadius: "8px", border: "1px dashed #cbd5e1", color: "#64748b",
                   }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <span style={{
-                          width: "22px", height: "22px", borderRadius: "50%",
-                          backgroundColor: idx === 0 ? "#fbbf24" : idx === 1 ? "#94a3b8" : idx === 2 ? "#d97706" : "#e2e8f0",
-                          color: idx === 0 || idx === 2 ? "#ffffff" : "#0f172a",
-                          fontSize: "11px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
-                        }}>
-                          {idx + 1}
-                        </span>
-                        <strong style={{ fontSize: "13px", color: "#0f172a" }}>{formatearPatente(eq.patente)}</strong>
-                        {eq.codigo_interno && (
-                          <span style={{ fontSize: "11px", backgroundColor: "#e2e8f0", padding: "1px 6px", borderRadius: "4px", color: "#475569" }}>
-                            {eq.codigo_interno}
-                          </span>
-                        )}
-                        <span style={{ fontSize: "11px", color: "#64748b" }}>{eq.proyecto_nombre}</span>
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <strong style={{ fontSize: "14px", color: "#0f172a" }}>{eq.horas_totales} hrs</strong>
-                      </div>
+                    <Clock size={24} style={{ margin: "0 auto 6px", opacity: 0.4 }} />
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
+                      Sin registros de horas para {labelTipoActivo.toLowerCase()}
                     </div>
-                    {/* Barra visual apilada */}
-                    <div style={{ width: "100%", height: "6px", backgroundColor: "#e2e8f0", borderRadius: "3px", overflow: "hidden", display: "flex" }}>
-                      <div
-                        style={{ width: `${maxHoras > 0 ? (eq.horas_efectivas / maxHoras) * 100 : 0}%`, backgroundColor: "#0284c7" }}
-                        title={`Efectiva: ${eq.horas_efectivas} hrs`}
-                      />
-                      <div
-                        style={{ width: `${maxHoras > 0 ? (eq.horas_ralenti / maxHoras) * 100 : 0}%`, backgroundColor: "#f97316" }}
-                        title={`Ralentí: ${eq.horas_ralenti} hrs`}
-                      />
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "#64748b", marginTop: "4px" }}>
-                      <span>Efectiva: <strong>{eq.horas_efectivas} hrs</strong></span>
-                      <span style={{ color: "#ea580c" }}>Ralentí: <strong>{eq.horas_ralenti} hrs ({eq.pct_ralenti}%)</strong></span>
+                    <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                      No se encontraron equipos de esta categoría con actividad en el período.
                     </div>
                   </div>
-                ))}
+                ) : (
+                  topHorasFiltradas.slice(0, 5).map((eq, idx) => (
+                    <div key={eq.patente} style={{
+                      padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span style={{
+                            width: "22px", height: "22px", borderRadius: "50%",
+                            backgroundColor: idx === 0 ? "#fbbf24" : idx === 1 ? "#94a3b8" : idx === 2 ? "#d97706" : "#e2e8f0",
+                            color: idx === 0 || idx === 2 ? "#ffffff" : "#0f172a",
+                            fontSize: "11px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
+                          }}>
+                            {idx + 1}
+                          </span>
+                          <strong style={{ fontSize: "13px", color: "#0f172a" }}>{formatearPatente(eq.patente)}</strong>
+                          {eq.codigo_interno && (
+                            <span style={{ fontSize: "11px", backgroundColor: "#e2e8f0", padding: "1px 6px", borderRadius: "4px", color: "#475569" }}>
+                              {eq.codigo_interno}
+                            </span>
+                          )}
+                          <span style={{ fontSize: "11px", color: "#64748b" }}>{eq.proyecto_nombre}</span>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <strong style={{ fontSize: "14px", color: "#0f172a" }}>{eq.horas_totales} hrs</strong>
+                        </div>
+                      </div>
+                      {/* Barra visual apilada */}
+                      <div style={{ width: "100%", height: "6px", backgroundColor: "#e2e8f0", borderRadius: "3px", overflow: "hidden", display: "flex" }}>
+                        <div
+                          style={{ width: `${maxHoras > 0 ? (eq.horas_efectivas / maxHoras) * 100 : 0}%`, backgroundColor: "#0284c7" }}
+                          title={`Efectiva: ${eq.horas_efectivas} hrs`}
+                        />
+                        <div
+                          style={{ width: `${maxHoras > 0 ? (eq.horas_ralenti / maxHoras) * 100 : 0}%`, backgroundColor: "#f97316" }}
+                          title={`Ralentí: ${eq.horas_ralenti} hrs`}
+                        />
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "#64748b", marginTop: "4px" }}>
+                        <span>Efectiva: <strong>{eq.horas_efectivas} hrs</strong></span>
+                        <span style={{ color: "#ea580c" }}>Ralentí: <strong>{eq.horas_ralenti} hrs ({eq.pct_ralenti}%)</strong></span>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
@@ -871,7 +978,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 <div>
                   <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                     <Fuel size={16} color="#dc2626" />
-                    Top Consumo de Combustible (Mayor a Menor)
+                    Top Consumo de Combustible {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
                   </h3>
                   <span style={{ fontSize: "11px", color: "#64748b" }}>Litros consumidos y rendimiento estimado</span>
                 </div>
@@ -887,48 +994,63 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {topCombustibleFiltrado.slice(0, 5).map((eq, idx) => (
-                  <div key={eq.patente} style={{
-                    padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
-                    border: "1px solid #e2e8f0",
+                {topCombustibleFiltrado.length === 0 ? (
+                  <div style={{
+                    padding: "24px 16px", textAlign: "center", backgroundColor: "#f8fafc",
+                    borderRadius: "8px", border: "1px dashed #cbd5e1", color: "#64748b",
                   }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <span style={{
-                          width: "22px", height: "22px", borderRadius: "50%",
-                          backgroundColor: idx === 0 ? "#ef4444" : "#fee2e2",
-                          color: idx === 0 ? "#ffffff" : "#b91c1c",
-                          fontSize: "11px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
-                        }}>
-                          {idx + 1}
-                        </span>
-                        <strong style={{ fontSize: "13px", color: "#0f172a" }}>{formatearPatente(eq.patente)}</strong>
-                        {eq.codigo_interno && (
-                          <span style={{ fontSize: "11px", backgroundColor: "#e2e8f0", padding: "1px 6px", borderRadius: "4px", color: "#475569" }}>
-                            {eq.codigo_interno}
-                          </span>
-                        )}
-                        <span style={{ fontSize: "11px", color: "#64748b" }}>{eq.proyecto_nombre}</span>
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <strong style={{ fontSize: "14px", color: "#b91c1c" }}>{eq.litros_totales} L</strong>
-                      </div>
+                    <Fuel size={24} style={{ margin: "0 auto 6px", opacity: 0.4 }} />
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
+                      Sin consumo registrado para {labelTipoActivo.toLowerCase()}
                     </div>
-                    {/* Barra de progreso de consumo proporcional */}
-                    <div style={{ width: "100%", height: "6px", backgroundColor: "#e2e8f0", borderRadius: "3px", overflow: "hidden" }}>
-                      <div
-                        style={{
-                          width: `${maxLitros > 0 ? (eq.litros_totales / maxLitros) * 100 : 0}%`,
-                          backgroundColor: "#ef4444", height: "100%",
-                        }}
-                      />
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "#64748b", marginTop: "4px" }}>
-                      <span>Distancia: <strong>{eq.km_totales} km</strong></span>
-                      <span>Rendimiento: <strong>{eq.rendimiento_kml ? `${eq.rendimiento_kml} km/L` : "N/D"}</strong></span>
+                    <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                      No se registraron litros consumidos para este tipo de equipo en el período.
                     </div>
                   </div>
-                ))}
+                ) : (
+                  topCombustibleFiltrado.slice(0, 5).map((eq, idx) => (
+                    <div key={eq.patente} style={{
+                      padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span style={{
+                            width: "22px", height: "22px", borderRadius: "50%",
+                            backgroundColor: idx === 0 ? "#ef4444" : "#fee2e2",
+                            color: idx === 0 ? "#ffffff" : "#b91c1c",
+                            fontSize: "11px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
+                          }}>
+                            {idx + 1}
+                          </span>
+                          <strong style={{ fontSize: "13px", color: "#0f172a" }}>{formatearPatente(eq.patente)}</strong>
+                          {eq.codigo_interno && (
+                            <span style={{ fontSize: "11px", backgroundColor: "#e2e8f0", padding: "1px 6px", borderRadius: "4px", color: "#475569" }}>
+                              {eq.codigo_interno}
+                            </span>
+                          )}
+                          <span style={{ fontSize: "11px", color: "#64748b" }}>{eq.proyecto_nombre}</span>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <strong style={{ fontSize: "14px", color: "#b91c1c" }}>{eq.litros_totales} L</strong>
+                        </div>
+                      </div>
+                      {/* Barra de progreso de consumo proporcional */}
+                      <div style={{ width: "100%", height: "6px", backgroundColor: "#e2e8f0", borderRadius: "3px", overflow: "hidden" }}>
+                        <div
+                          style={{
+                            width: `${maxLitros > 0 ? (eq.litros_totales / maxLitros) * 100 : 0}%`,
+                            backgroundColor: "#ef4444", height: "100%",
+                          }}
+                        />
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "#64748b", marginTop: "4px" }}>
+                        <span>Distancia: <strong>{eq.km_totales} km</strong></span>
+                        <span>Rendimiento: <strong>{eq.rendimiento_kml ? `${eq.rendimiento_kml} km/L` : "N/D"}</strong></span>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -944,7 +1066,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 <div>
                   <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                     <TrendingUp size={16} color="#16a34a" />
-                    % de Utilización por Equipo (Meta: {horasMetaCalculadas} hrs)
+                    % de Utilización {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "por Equipo"} (Meta: {horasMetaCalculadas} hrs)
                   </h3>
                   <span style={{ fontSize: "11px", color: "#64748b" }}>Actualizado con la meta digitada en el panel superior</span>
                 </div>
@@ -960,47 +1082,62 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {equiposConUtilizacion.slice(0, 5).map((eq, idx) => (
-                  <div key={eq.patente} style={{
-                    padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
-                    border: "1px solid #e2e8f0",
+                {equiposConUtilizacion.length === 0 ? (
+                  <div style={{
+                    padding: "24px 16px", textAlign: "center", backgroundColor: "#f8fafc",
+                    borderRadius: "8px", border: "1px dashed #cbd5e1", color: "#64748b",
                   }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <strong style={{ fontSize: "13px", color: "#0f172a" }}>{eq.patente}</strong>
-                        {eq.codigo_interno && (
-                          <span style={{ fontSize: "11px", backgroundColor: "#e2e8f0", padding: "1px 6px", borderRadius: "4px", color: "#475569" }}>
-                            {eq.codigo_interno}
-                          </span>
-                        )}
-                        <span style={{
-                          fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px",
-                          backgroundColor: `${eq.color_utilizacion}15`, color: eq.color_utilizacion,
-                          border: `1px solid ${eq.color_utilizacion}30`,
-                        }}>
-                          {eq.etiqueta_utilizacion}
-                        </span>
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <strong style={{ fontSize: "14px", color: eq.color_utilizacion }}>{eq.pct_utilizacion}%</strong>
-                      </div>
+                    <TrendingUp size={24} style={{ margin: "0 auto 6px", opacity: 0.4 }} />
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
+                      Sin datos de utilización para {labelTipoActivo.toLowerCase()}
                     </div>
-                    {/* Barra de progreso de cumplimiento de meta */}
-                    <div style={{ width: "100%", height: "6px", backgroundColor: "#e2e8f0", borderRadius: "3px", overflow: "hidden" }}>
-                      <div
-                        style={{
-                          width: `${Math.min(100, eq.pct_utilizacion)}%`,
-                          backgroundColor: eq.color_utilizacion, height: "100%",
-                        }}
-                      />
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "#64748b", marginTop: "4px" }}>
-                      <span>Reales: <strong>{eq.horas_totales} hrs</strong></span>
-                      <span>Meta: <strong>{horasMetaCalculadas} hrs</strong></span>
-                      <span>Días activos: <strong>{eq.dias_activos} días</strong></span>
+                    <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                      No hay equipos registrados de esta categoría en el período consultado.
                     </div>
                   </div>
-                ))}
+                ) : (
+                  equiposConUtilizacion.slice(0, 5).map((eq, idx) => (
+                    <div key={eq.patente} style={{
+                      padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <strong style={{ fontSize: "13px", color: "#0f172a" }}>{eq.patente}</strong>
+                          {eq.codigo_interno && (
+                            <span style={{ fontSize: "11px", backgroundColor: "#e2e8f0", padding: "1px 6px", borderRadius: "4px", color: "#475569" }}>
+                              {eq.codigo_interno}
+                            </span>
+                          )}
+                          <span style={{
+                            fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px",
+                            backgroundColor: `${eq.color_utilizacion}15`, color: eq.color_utilizacion,
+                            border: `1px solid ${eq.color_utilizacion}30`,
+                          }}>
+                            {eq.etiqueta_utilizacion}
+                          </span>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <strong style={{ fontSize: "14px", color: eq.color_utilizacion }}>{eq.pct_utilizacion}%</strong>
+                        </div>
+                      </div>
+                      {/* Barra de progreso de cumplimiento de meta */}
+                      <div style={{ width: "100%", height: "6px", backgroundColor: "#e2e8f0", borderRadius: "3px", overflow: "hidden" }}>
+                        <div
+                          style={{
+                            width: `${Math.min(100, eq.pct_utilizacion)}%`,
+                            backgroundColor: eq.color_utilizacion, height: "100%",
+                          }}
+                        />
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "#64748b", marginTop: "4px" }}>
+                        <span>Reales: <strong>{eq.horas_totales} hrs</strong></span>
+                        <span>Meta: <strong>{horasMetaCalculadas} hrs</strong></span>
+                        <span>Días activos: <strong>{eq.dias_activos} días</strong></span>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
@@ -1013,9 +1150,9 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 <div>
                   <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                     <User size={16} color="#f59e0b" />
-                    Top Conductores Más Activos (Mayor a Menor)
+                    Top Conductores Más Activos {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : ""}
                   </h3>
-                  <span style={{ fontSize: "11px", color: "#64748b" }}>Choferes con mayor tiempo al volante</span>
+                  <span style={{ fontSize: "11px", color: "#64748b" }}>Choferes y operadores al volante</span>
                 </div>
                 <button
                   onClick={() => setSeccionActiva("conductores")}
@@ -1029,37 +1166,52 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {(dashData?.rankings?.top_conductores || []).slice(0, 5).map((cond, idx) => (
-                  <div key={cond.nombre} style={{
-                    padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
-                    border: "1px solid #e2e8f0",
+                {topConductoresFiltrados.length === 0 ? (
+                  <div style={{
+                    padding: "24px 16px", textAlign: "center", backgroundColor: "#f8fafc",
+                    borderRadius: "8px", border: "1px dashed #cbd5e1", color: "#64748b",
                   }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <span style={{
-                          width: "22px", height: "22px", borderRadius: "50%",
-                          backgroundColor: idx === 0 ? "#f59e0b" : "#fef3c7",
-                          color: idx === 0 ? "#ffffff" : "#b45309",
-                          fontSize: "11px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
-                        }}>
-                          {idx + 1}
-                        </span>
-                        <div>
-                          <strong style={{ fontSize: "12px", color: "#0f172a", display: "block" }}>{cond.nombre}</strong>
-                          <span style={{ fontSize: "10px", color: "#64748b" }}>RUT: {cond.rut}</span>
-                        </div>
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <strong style={{ fontSize: "14px", color: "#0f172a" }}>{cond.horas_conducidas} hrs</strong>
-                        <div style={{ fontSize: "10px", color: "#64748b" }}>{cond.km_totales} km</div>
-                      </div>
+                    <User size={24} style={{ margin: "0 auto 6px", opacity: 0.4 }} />
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
+                      Sin registros de choferes para {labelTipoActivo.toLowerCase()}
                     </div>
-                    <div style={{ fontSize: "10px", color: "#64748b", marginTop: "4px" }}>
-                      Vehículos operados: <strong>{cond.vehiculos?.slice(0, 3).map(formatearPatente).join(", ") || "S/R"}</strong>
-                      {cond.vehiculos?.length > 3 ? ` (+${cond.vehiculos.length - 3})` : ""}
+                    <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                      No se encontraron viajes con conductor registrado para este tipo de equipo en el período.
                     </div>
                   </div>
-                ))}
+                ) : (
+                  topConductoresFiltrados.slice(0, 5).map((cond, idx) => (
+                    <div key={cond.nombre} style={{
+                      padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span style={{
+                            width: "22px", height: "22px", borderRadius: "50%",
+                            backgroundColor: idx === 0 ? "#f59e0b" : "#fef3c7",
+                            color: idx === 0 ? "#ffffff" : "#b45309",
+                            fontSize: "11px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
+                          }}>
+                            {idx + 1}
+                          </span>
+                          <div>
+                            <strong style={{ fontSize: "12px", color: "#0f172a", display: "block" }}>{cond.nombre}</strong>
+                            <span style={{ fontSize: "10px", color: "#64748b" }}>RUT: {cond.rut}</span>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <strong style={{ fontSize: "14px", color: "#0f172a" }}>{cond.horas_conducidas} hrs</strong>
+                          <div style={{ fontSize: "10px", color: "#64748b" }}>{cond.km_totales} km</div>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: "10px", color: "#64748b", marginTop: "4px" }}>
+                        Vehículos operados: <strong>{cond.vehiculos?.slice(0, 3).map(formatearPatente).join(", ") || "S/R"}</strong>
+                        {cond.vehiculos?.length > 3 ? ` (+${cond.vehiculos.length - 3})` : ""}
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -1078,7 +1230,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
             <div>
               <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                 <Clock size={18} color="#0284c7" />
-                Ranking Completo: Top Horas de Uso (Mayor a Menor)
+                Ranking Completo: Top Horas de Uso {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
               </h3>
               <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
                 Identifica qué equipos tienen mayor operación y qué proporción corresponde a tiempo productivo vs ralentí (detenido con motor encendido).
@@ -1112,7 +1264,20 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 </tr>
               </thead>
               <tbody>
-                {topHorasFiltradas.map((eq, idx) => (
+                {topHorasFiltradas.length === 0 ? (
+                  <tr>
+                    <td colSpan="9" style={{ padding: "36px 16px", textAlign: "center", color: "#64748b" }}>
+                      <Clock size={30} style={{ margin: "0 auto 8px", opacity: 0.4 }} />
+                      <div style={{ fontSize: "14px", fontWeight: 700, color: "#334155" }}>
+                        Sin registros de horas para {labelTipoActivo.toLowerCase()}
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px" }}>
+                        No se encontraron equipos de esta categoría con actividad en el período seleccionado.
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  topHorasFiltradas.map((eq, idx) => (
                   <tr key={eq.patente} style={{ borderBottom: "1px solid #f1f5f9" }}>
                     <td style={{ padding: "10px 12px", fontWeight: 800 }}>
                       <span style={{
@@ -1169,7 +1334,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                       {eq.conductor_principal}
                     </td>
                   </tr>
-                ))}
+                )))}
               </tbody>
             </table>
           </div>
@@ -1188,7 +1353,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
             <div>
               <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                 <Fuel size={18} color="#dc2626" />
-                Ranking Completo: Top Consumo de Combustible (Mayor a Menor)
+                Ranking Completo: Top Consumo de Combustible {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
               </h3>
               <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
                 Monitorea el gasto en litros acumulado en el período, desglosando CAN Bus vs telemetría GPS y rendimiento medio.
@@ -1212,7 +1377,20 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 </tr>
               </thead>
               <tbody>
-                {topCombustibleFiltrado.map((eq, idx) => (
+                {topCombustibleFiltrado.length === 0 ? (
+                  <tr>
+                    <td colSpan="9" style={{ padding: "36px 16px", textAlign: "center", color: "#64748b" }}>
+                      <Fuel size={30} style={{ margin: "0 auto 8px", opacity: 0.4 }} />
+                      <div style={{ fontSize: "14px", fontWeight: 700, color: "#334155" }}>
+                        Sin registros de combustible para {labelTipoActivo.toLowerCase()}
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px" }}>
+                        No se registran litros consumidos por esta categoría en el período seleccionado.
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  topCombustibleFiltrado.map((eq, idx) => (
                   <tr key={eq.patente} style={{ borderBottom: "1px solid #f1f5f9" }}>
                     <td style={{ padding: "10px 12px", fontWeight: 800 }}>
                       <span style={{
@@ -1263,7 +1441,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                       </span>
                     </td>
                   </tr>
-                ))}
+                )))}
               </tbody>
             </table>
           </div>
@@ -1354,7 +1532,20 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 </tr>
               </thead>
               <tbody>
-                {equiposUtilizacionFiltrados.map((eq, idx) => (
+                {equiposUtilizacionFiltrados.length === 0 ? (
+                  <tr>
+                    <td colSpan="9" style={{ padding: "36px 16px", textAlign: "center", color: "#64748b" }}>
+                      <TrendingUp size={30} style={{ margin: "0 auto 8px", opacity: 0.4 }} />
+                      <div style={{ fontSize: "14px", fontWeight: 700, color: "#334155" }}>
+                        Sin equipos que coincidan con los filtros
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px" }}>
+                        No se encontraron equipos para {labelTipoActivo.toLowerCase()} con el criterio de utilización seleccionado.
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  equiposUtilizacionFiltrados.map((eq, idx) => (
                   <tr key={eq.patente} style={{ borderBottom: "1px solid #f1f5f9" }}>
                     <td style={{ padding: "10px 12px", fontWeight: 800 }}>
                       #{idx + 1}
@@ -1402,7 +1593,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                       {eq.dias_activos} / {diasPeriodo}
                     </td>
                   </tr>
-                ))}
+                )))}
               </tbody>
             </table>
           </div>
@@ -1421,7 +1612,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
             <div>
               <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                 <Gauge size={18} color="#8b5cf6" />
-                Ranking Completo: Top Kilometraje Recorrido (Mayor a Menor)
+                Ranking Completo: Top Kilometraje Recorrido {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
               </h3>
               <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
                 Equipos con mayor recorrido en carretera y desplazamientos entre faenas y campamentos.
@@ -1444,7 +1635,20 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 </tr>
               </thead>
               <tbody>
-                {topKmFiltrado.map((eq, idx) => (
+                {topKmFiltrado.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" style={{ padding: "36px 16px", textAlign: "center", color: "#64748b" }}>
+                      <Gauge size={30} style={{ margin: "0 auto 8px", opacity: 0.4 }} />
+                      <div style={{ fontSize: "14px", fontWeight: 700, color: "#334155" }}>
+                        Sin registros de kilometraje para {labelTipoActivo.toLowerCase()}
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px" }}>
+                        No se registraron desplazamientos de esta categoría en el período seleccionado.
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  topKmFiltrado.map((eq, idx) => (
                   <tr key={eq.patente} style={{ borderBottom: "1px solid #f1f5f9" }}>
                     <td style={{ padding: "10px 12px", fontWeight: 800 }}>
                       <span style={{
@@ -1490,7 +1694,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                       {eq.conductor_principal}
                     </td>
                   </tr>
-                ))}
+                )))}
               </tbody>
             </table>
           </div>
@@ -1509,7 +1713,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
             <div>
               <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                 <User size={18} color="#f59e0b" />
-                Ranking Completo: Top Conductores Más Activos (Mayor a Menor)
+                Ranking Completo: Top Conductores Más Activos {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
               </h3>
               <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
                 Histórico de horas al volante, kilometraje acumulado y vehículos operados por chofer.
@@ -1531,7 +1735,20 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 </tr>
               </thead>
               <tbody>
-                {(dashData?.rankings?.top_conductores || []).map((cond, idx) => (
+                {topConductoresFiltrados.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" style={{ padding: "36px 16px", textAlign: "center", color: "#64748b" }}>
+                      <User size={30} style={{ margin: "0 auto 8px", opacity: 0.4 }} />
+                      <div style={{ fontSize: "14px", fontWeight: 700, color: "#334155" }}>
+                        Sin registros de conductores para {labelTipoActivo.toLowerCase()}
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px" }}>
+                        No se registraron choferes u operadores asociados a este tipo de equipo en el período seleccionado.
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  topConductoresFiltrados.map((cond, idx) => (
                   <tr key={cond.nombre} style={{ borderBottom: "1px solid #f1f5f9" }}>
                     <td style={{ padding: "10px 12px", fontWeight: 800 }}>
                       <span style={{
@@ -1571,7 +1788,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                       </div>
                     </td>
                   </tr>
-                ))}
+                )))}
               </tbody>
             </table>
           </div>

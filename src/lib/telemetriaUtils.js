@@ -45,15 +45,24 @@ export function clasificarTipoEquipo(obj) {
   if (!obj) return "otros";
   const tipo = String(obj.tipo || obj.subtipo_skynav || "").toUpperCase();
   const cat = String(obj.categoria || obj.tipo_skynav || "").toUpperCase();
-  const desc = String(obj.descripcion_equipo || obj.descripcion || "").toUpperCase();
+  const desc = String(
+    obj.descripcion_equipo ||
+      obj.descripcion ||
+      obj.nombre_skynav ||
+      obj.nombre_equipo ||
+      ""
+  ).toUpperCase();
   const all = `${tipo} ${cat} ${desc}`;
 
-  if (all.includes("CAMIONETA")) return "camionetas";
+  if (all.includes("CAMIONETA") || all.includes("PICKUP")) return "camionetas";
   if (
     all.includes("GRUA") ||
     all.includes("GRÚA") ||
     all.includes("PLUMA") ||
-    all.includes("HORQUILLA")
+    all.includes("HORQUILLA") ||
+    all.includes("ALZA HOMBRE") ||
+    all.includes("MANLIFT") ||
+    all.includes("HIDROELEVADOR")
   ) {
     return "gruas";
   }
@@ -62,7 +71,9 @@ export function clasificarTipoEquipo(obj) {
     all.includes("CAMIÓN") ||
     all.includes("TRACTO") ||
     all.includes("TOLVA") ||
-    all.includes("ALJIBE")
+    all.includes("ALJIBE") ||
+    all.includes("AMPLIROLL") ||
+    all.includes("BATEA")
   ) {
     return "camiones";
   }
@@ -73,15 +84,20 @@ export function clasificarTipoEquipo(obj) {
     all.includes("BULLDOZER") ||
     all.includes("MANIPULADOR") ||
     all.includes("PESADA") ||
-    all.includes("SEMIPESADA")
+    all.includes("SEMIPESADA") ||
+    all.includes("RODILLO") ||
+    all.includes("MOTONIVELADORA") ||
+    all.includes("MINICARGADOR")
   ) {
     return "maquinaria";
   }
   if (
     all.includes("BUS") ||
     all.includes("MINIBUS") ||
+    all.includes("MINIBÚS") ||
     all.includes("FURGON") ||
-    all.includes("FURGÓN")
+    all.includes("FURGÓN") ||
+    all.includes("VAN")
   ) {
     return "buses";
   }
@@ -97,3 +113,4 @@ export const TIPOS_EQUIPO_FILTROS = [
   { key: "buses", label: "Buses / Minibuses" },
   { key: "otros", label: "Otros Equipos" },
 ];
+

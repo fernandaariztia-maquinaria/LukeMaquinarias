@@ -177,6 +177,12 @@ export default async function handler(req, res) {
         if (!pertenece) continue;
       }
 
+      // Si hay filtro por tipo de equipo, descartar viajes de equipos que no correspondan
+      const tipoV = clasificarTipoEquipo(eqMatched || v);
+      if (tipo_equipo && tipo_equipo !== "todos" && tipoV !== tipo_equipo) {
+        continue;
+      }
+
       globalTotalViajes++;
       if (v.fecha) fechasActivasSet.add(v.fecha);
 
