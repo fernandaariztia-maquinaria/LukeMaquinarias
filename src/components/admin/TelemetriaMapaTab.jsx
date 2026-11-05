@@ -167,18 +167,95 @@ export default function TelemetriaMapaTab({
     }
   };
 
-  // Dibujar puntos y trazas en el mapa cuando cambian los datos
+  // Dibujar puntos y trazas en el mapa cuando cambian los datos o el viaje seleccionado
   useEffect(() => {
     if (!mapInstanceRef.current || !polylinesLayerRef.current || !markersLayerRef.current) return;
 
     polylinesLayerRef.current.clearLayers();
     markersLayerRef.current.clearLayers();
 
-    const puntos = datosRecorrido?.puntos || [];
-    if (puntos.length === 0) return;
-
     const render = async () => {
       const L = (await import("leaflet")).default;
+
+      // ── CASO A: HAY UN VIAJE / TRAMO ESPECÍFICO SELECCIONADO ──────────
+      if (viajeSeleccionado && viajeSeleccionado.puntos_gps && viajeSeleccionado.puntos_gps.length > 0) {
+        const ptsViaje = viajeSeleccionado.puntos_gps;
+        const coordsViaje = ptsViaje.map((p) => [p.lat, p.lng]);
+
+        // Dibujar traza tenue de fondo con todos los demás puntos del día para dar contexto geográfico
+        if (datosRecorrido?.puntos?.length > 0) {
+          const allCoords = datosRecorrido.puntos.map((p) => [p.lat, p.lng]);
+          L.polyline(allCoords, {
+            color: "#94a3b8",
+            weight: 2,
+            opacity: 0.35,
+            dashArray: "4, 6",
+          }).addTo(polylinesLayerRef.current);
+        }
+
+        // Trazar el viaje seleccionado en azul intenso con alta fidelidad
+        const polylineViaje = L.polyline(coordsViaje, {
+          color: "#0284c7",
+          weight: 5,
+          opacity: 0.95,
+          smoothFactor: 1,
+        }).addTo(polylinesLayerRef.current);
+
+        // Marcador A (Inicio de este tramo)
+        const ini = ptsViaje[0];
+        const iconIni = L.divIcon({
+          className: "custom-pin",
+          html: `<div style="background-color:#16a34a;color:white;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2.5px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.35);font-size:12px;font-weight:bold;">A</div>`,
+          iconSize: [30, 30],
+          iconAnchor: [15, 15],
+        });
+        L.marker([ini.lat, ini.lng], { icon: iconIni })
+          .bindPopup(`<strong>Inicio del Tramo</strong><br/>${viajeSeleccionado.lugar_inicio || ini.lugar || "Origen"}<br/>Hora: <strong>${viajeSeleccionado.hora_inicio || ini.hora?.slice(11, 19) || "--:--"}</strong><br/>Chofer: ${viajeSeleccionado.nombre_conductor || "No informado"}`)
+          .openPopup()
+          .addTo(markersLayerRef.current);
+
+        // Marcador B (Fin de este tramo)
+        if (ptsViaje.length > 1) {
+          const fin = ptsViaje[ptsViaje.length - 1];
+          const iconFin = L.divIcon({
+            className: "custom-pin",
+            html: `<div style="background-color:#dc2626;color:white;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2.5px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.35);font-size:12px;font-weight:bold;">B</div>`,
+            iconSize: [30, 30],
+            iconAnchor: [15, 15],
+          });
+          L.marker([fin.lat, fin.lng], { icon: iconFin })
+            .bindPopup(`<strong>Fin del Tramo</strong><br/>${viajeSeleccionado.lugar_fin || fin.lugar || "Destino"}<br/>Hora: <strong>${viajeSeleccionado.hora_fin || fin.hora?.slice(11, 19) || "--:--"}</strong><br/>Distancia: <strong>${viajeSeleccionado.km_recorridos || 0} km</strong>`)
+            .addTo(markersLayerRef.current);
+        }
+
+        // Muestreo inteligente de puntos GPS interactivos a lo largo de la ruta
+        if (ptsViaje.length > 2) {
+          const step = Math.max(1, Math.floor(ptsViaje.length / 45));
+          for (let i = step; i < ptsViaje.length - 1; i += step) {
+            const pt = ptsViaje[i];
+            const circleColor = pt.velocidad > 80 ? "#dc2626" : pt.velocidad > 35 ? "#0284c7" : "#f59e0b";
+            L.circleMarker([pt.lat, pt.lng], {
+              radius: 4,
+              fillColor: circleColor,
+              color: "#ffffff",
+              weight: 1,
+              fillOpacity: 0.9,
+            })
+              .bindPopup(`<strong>Punto GPS #${i + 1}</strong><br/>Hora: ${pt.hora?.slice(11, 19) || ""}<br/>Velocidad: <strong>${pt.velocidad} km/h</strong><br/>Estado: ${pt.estado}<br/>${pt.lugar ? `<small style="color:#64748b;">${pt.lugar}</small>` : ""}`)
+              .addTo(markersLayerRef.current);
+          }
+        }
+
+        try {
+          mapInstanceRef.current.fitBounds(polylineViaje.getBounds(), { padding: [50, 50] });
+        } catch (e) {}
+        return;
+      }
+
+      // ── CASO B: VISTA GENERAL DE TODO EL DÍA ──────────────────────────
+      const puntos = datosRecorrido?.puntos || [];
+      if (puntos.length === 0) return;
+
       const coords = puntos.map((p) => [p.lat, p.lng]);
 
       // Trazar línea de recorrido principal (Polyline)
@@ -189,7 +266,7 @@ export default function TelemetriaMapaTab({
         smoothFactor: 1,
       }).addTo(polylinesLayerRef.current);
 
-      // Ícono de Inicio (Verde)
+      // Ícono de Inicio del día (Verde)
       const inicio = puntos[0];
       const startIcon = L.divIcon({
         className: "custom-pin",
@@ -199,10 +276,10 @@ export default function TelemetriaMapaTab({
       });
 
       L.marker([inicio.lat, inicio.lng], { icon: startIcon })
-        .bindPopup(`<strong>Punto de Inicio</strong><br/>${inicio.lugar || "Origen"}<br/>Hora: ${inicio.hora?.slice(11, 16) || "--:--"}`)
+        .bindPopup(`<strong>Inicio del Día</strong><br/>${inicio.lugar || "Origen"}<br/>Hora: ${inicio.hora?.slice(11, 16) || "--:--"}`)
         .addTo(markersLayerRef.current);
 
-      // Ícono de Fin (Rojo)
+      // Ícono de Fin del día (Rojo)
       if (puntos.length > 1) {
         const fin = puntos[puntos.length - 1];
         const endIcon = L.divIcon({
@@ -213,22 +290,22 @@ export default function TelemetriaMapaTab({
         });
 
         L.marker([fin.lat, fin.lng], { icon: endIcon })
-          .bindPopup(`<strong>Destino Final</strong><br/>${fin.lugar || "Destino"}<br/>Hora: ${fin.hora?.slice(11, 16) || "--:--"}`)
+          .bindPopup(`<strong>Destino Final del Día</strong><br/>${fin.lugar || "Destino"}<br/>Hora: ${fin.hora?.slice(11, 16) || "--:--"}`)
           .addTo(markersLayerRef.current);
       }
 
-      // Paradas o cambios de viaje
+      // Paradas o cambios de viaje numerados
       (datosRecorrido?.viajes || []).forEach((v, idx) => {
         if (v.latitud_inicio && v.longitud_inicio && idx > 0) {
           const stopIcon = L.divIcon({
             className: "custom-pin",
-            html: `<div style="background-color:#0284c7;color:white;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1.5px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.25);font-size:10px;font-weight:bold;">${idx + 1}</div>`,
-            iconSize: [20, 20],
-            iconAnchor: [10, 10],
+            html: `<div style="background-color:#0284c7;color:white;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1.5px solid white;box-shadow:0 2px 5px rgba(0,0,0,0.25);font-size:10px;font-weight:bold;">${idx + 1}</div>`,
+            iconSize: [22, 22],
+            iconAnchor: [11, 11],
           });
 
           L.marker([v.latitud_inicio, v.longitud_inicio], { icon: stopIcon })
-            .bindPopup(`<strong>Viaje ${idx + 1}</strong><br/>Inicio: ${v.hora_inicio || "--:--"}<br/>${v.lugar_inicio || ""}`)
+            .bindPopup(`<strong>Viaje ${idx + 1}</strong><br/>Inicio: ${v.hora_inicio || "--:--"}<br/>${v.lugar_inicio || ""}<br/>Puntos GPS: ${v.total_puntos_gps || 0}`)
             .addTo(markersLayerRef.current);
         }
       });
@@ -240,20 +317,25 @@ export default function TelemetriaMapaTab({
     };
 
     render();
-  }, [datosRecorrido]);
+  }, [datosRecorrido, viajeSeleccionado]);
 
-  // Enfocar un viaje específico en el mapa
-  const enfocarViaje = async (viaje) => {
-    setViajeSeleccionado(viaje);
-    if (!mapInstanceRef.current) return;
+  // Enfocar o alternar un viaje específico en el mapa
+  const enfocarViaje = (viaje) => {
+    if (viajeSeleccionado?.id === viaje.id) {
+      setViajeSeleccionado(null); // Deseleccionar para volver al día completo
+    } else {
+      setViajeSeleccionado(viaje);
+    }
+  };
 
-    if (viaje.latitud_inicio && viaje.longitud_inicio && viaje.latitud_fin && viaje.longitud_fin) {
-      const L = (await import("leaflet")).default;
-      const bounds = L.latLngBounds(
-        [viaje.latitud_inicio, viaje.longitud_inicio],
-        [viaje.latitud_fin, viaje.longitud_fin]
-      );
-      mapInstanceRef.current.flyToBounds(bounds, { padding: [80, 80], maxZoom: 15 });
+  // Clic en la barra de tiempo superior
+  const handleClickTimelineBloque = (bloque) => {
+    if (!datosRecorrido?.viajes) return;
+    const match = datosRecorrido.viajes.find(
+      (v) => v.hora_inicio?.slice(0, 5) === bloque.hora_inicio?.slice(0, 5)
+    );
+    if (match) {
+      enfocarViaje(match);
     }
   };
 
@@ -362,6 +444,70 @@ export default function TelemetriaMapaTab({
         </div>
       </div>
 
+      {/* ── BANNER DE ESTADO DE COBERTURA GPS / CSV ────────────────── */}
+      {datosRecorrido && (
+        datosRecorrido.fuente === "CSV_POSICIONES" ? (
+          <div style={{
+            backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0",
+            color: "#166534", padding: "10px 16px", borderRadius: "8px",
+            fontSize: "12px", display: "flex", alignItems: "center",
+            justifyContent: "space-between", flexWrap: "wrap", gap: "8px",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <CheckCircle2 size={18} color="#16a34a" style={{ flexShrink: 0 }} />
+              <span>
+                <strong>Trazado GPS de Alta Fidelidad:</strong> Vinculados <strong>{datosRecorrido.puntos.length.toLocaleString("es-CL")} puntos GPS</strong> del archivo CSV para el día {fechaFiltro}.
+                {viajeSeleccionado && (
+                  <span style={{ marginLeft: "8px", color: "#0284c7", fontWeight: 700 }}>
+                    • Enfocando Tramo: {viajeSeleccionado.hora_inicio} → {viajeSeleccionado.hora_fin} ({viajeSeleccionado.total_puntos_gps || 0} puntos GPS)
+                  </span>
+                )}
+              </span>
+            </div>
+            {viajeSeleccionado && (
+              <button
+                onClick={() => setViajeSeleccionado(null)}
+                style={{
+                  backgroundColor: "#0284c7", color: "#ffffff", border: "none",
+                  padding: "4px 10px", borderRadius: "5px", fontSize: "11px",
+                  fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                Ver todos los viajes del día
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={{
+            backgroundColor: "#fef3c7", border: "1px solid #fde68a",
+            color: "#92400e", padding: "10px 16px", borderRadius: "8px",
+            fontSize: "12px", display: "flex", alignItems: "center",
+            justifyContent: "space-between", flexWrap: "wrap", gap: "8px",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <AlertCircle size={18} color="#d97706" style={{ flexShrink: 0 }} />
+              <span>
+                <strong>Modo Preliminar (Sin archivo CSV para el {fechaFiltro}):</strong> Mostrando trazo entre punto de inicio y fin. El archivo CSV cargado en <code style={{ backgroundColor: "#fde68a", padding: "1px 4px", borderRadius: "3px" }}>telemetria_csv/</code> contiene los registros del <strong>01 al 15 de Octubre de 2026</strong>.
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                const fTarget = datosRecorrido?.cobertura_csv?.fecha_min || "2026-10-02";
+                setFechaFiltro(fTarget);
+              }}
+              style={{
+                backgroundColor: "#d97706", color: "#ffffff", border: "none",
+                padding: "6px 12px", borderRadius: "6px", fontSize: "11px",
+                fontWeight: 700, cursor: "pointer", display: "inline-flex",
+                alignItems: "center", gap: "6px",
+              }}
+            >
+              Ver fecha con GPS ({datosRecorrido?.cobertura_csv?.fecha_min || "02/10/2026"}) →
+            </button>
+          </div>
+        )
+      )}
+
       {/* ── LÍNEA DE TIEMPO SUPERIOR (24 HORAS DEL DÍA) ─────────────── */}
       <div style={{
         backgroundColor: "#ffffff", padding: "14px 18px", borderRadius: "10px",
@@ -371,6 +517,9 @@ export default function TelemetriaMapaTab({
           <div style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "flex", alignItems: "center", gap: "6px" }}>
             <Clock size={15} color="#0284c7" />
             Línea de Tiempo del Día: {fechaFiltro}
+            <span style={{ fontSize: "11px", fontWeight: 400, color: "#64748b" }}>
+              (Haz clic en cualquier bloque para enfocar ese viaje)
+            </span>
           </div>
           {/* Leyenda de Estados */}
           <div style={{ display: "flex", alignItems: "center", gap: "12px", fontSize: "11px", color: "#64748b", flexWrap: "wrap" }}>
@@ -407,7 +556,8 @@ export default function TelemetriaMapaTab({
             return (
               <div
                 key={idx}
-                title={`${b.label}\nHorario: ${b.hora_inicio} a ${b.hora_fin} (${b.duracion_min} min)\nChofer: ${b.conductor || "Sin chofer"}`}
+                onClick={() => handleClickTimelineBloque(b)}
+                title={`${b.label}\nHorario: ${b.hora_inicio} a ${b.hora_fin} (${b.duracion_min} min)\nChofer: ${b.conductor || "Sin chofer"}\n(Haz clic para enfocar este tramo en el mapa)`}
                 style={{
                   position: "absolute",
                   left: `${leftPct}%`,
@@ -416,10 +566,16 @@ export default function TelemetriaMapaTab({
                   bottom: 0,
                   backgroundColor: b.color,
                   cursor: "pointer",
-                  transition: "opacity 0.2s",
+                  transition: "all 0.15s ease",
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.75")}
-                onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.opacity = "0.75";
+                  e.currentTarget.style.filter = "brightness(1.15)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.opacity = "1";
+                  e.currentTarget.style.filter = "none";
+                }}
               />
             );
           })}
@@ -576,8 +732,21 @@ export default function TelemetriaMapaTab({
 
           {/* Listado de Viajes / Tramos */}
           <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-            <div style={{ fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "8px", textTransform: "uppercase" }}>
-              Tramos del Día ({datosRecorrido?.viajes?.length || 0})
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <div style={{ fontSize: "12px", fontWeight: 700, color: "#475569", textTransform: "uppercase" }}>
+                Tramos del Día ({datosRecorrido?.viajes?.length || 0})
+              </div>
+              {viajeSeleccionado && (
+                <button
+                  onClick={() => setViajeSeleccionado(null)}
+                  style={{
+                    fontSize: "11px", color: "#0284c7", background: "none",
+                    border: "none", cursor: "pointer", fontWeight: 600, textDecoration: "underline",
+                  }}
+                >
+                  Ver todos los tramos
+                </button>
+              )}
             </div>
 
             {(!datosRecorrido?.viajes || datosRecorrido.viajes.length === 0) ? (
@@ -594,19 +763,46 @@ export default function TelemetriaMapaTab({
                       key={viaje.id || idx}
                       onClick={() => enfocarViaje(viaje)}
                       style={{
-                        padding: "10px 12px", borderRadius: "6px",
-                        border: `1px solid ${esSeleccionado ? "#0284c7" : "#e2e8f0"}`,
+                        padding: "10px 12px", borderRadius: "8px",
+                        border: `2px solid ${esSeleccionado ? "#0284c7" : "#e2e8f0"}`,
                         backgroundColor: esSeleccionado ? "#f0f9ff" : "#ffffff",
-                        cursor: "pointer", transition: "all 0.15s",
+                        cursor: "pointer", transition: "all 0.15s ease",
+                        boxShadow: esSeleccionado ? "0 2px 6px rgba(2, 132, 199, 0.15)" : "none",
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                        <span style={{ fontSize: "12px", fontWeight: 700, color: "#0f172a" }}>
+                        <span style={{ fontSize: "12px", fontWeight: 700, color: esSeleccionado ? "#0369a1" : "#0f172a" }}>
                           Viaje {idx + 1}: {viaje.hora_inicio || "--:--"} → {viaje.hora_fin || "--:--"}
                         </span>
-                        <span style={{ fontSize: "11px", fontWeight: 600, color: "#0284c7" }}>
+                        <span style={{ fontSize: "11px", fontWeight: 700, color: "#0284c7" }}>
                           {viaje.km_recorridos} km
                         </span>
+                      </div>
+
+                      {/* Badges de seguimiento GPS y velocidad */}
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px", flexWrap: "wrap" }}>
+                        {viaje.tiene_gps_detallado ? (
+                          <span style={{
+                            backgroundColor: "#dcfce7", color: "#166534",
+                            fontSize: "10px", fontWeight: 700, padding: "2px 6px",
+                            borderRadius: "4px", display: "inline-flex", alignItems: "center", gap: "3px",
+                          }}>
+                            ✓ {viaje.total_puntos_gps.toLocaleString("es-CL")} puntos GPS
+                          </span>
+                        ) : (
+                          <span style={{
+                            backgroundColor: "#f1f5f9", color: "#64748b",
+                            fontSize: "10px", padding: "2px 6px", borderRadius: "4px",
+                          }}>
+                            2 puntos (Origen - Fin)
+                          </span>
+                        )}
+
+                        {viaje.velocidad_maxima_gps > 0 && (
+                          <span style={{ fontSize: "10px", color: "#475569", fontWeight: 500 }}>
+                            Máx: <strong>{viaje.velocidad_maxima_gps} km/h</strong> (Prom: {viaje.velocidad_promedio_gps} km/h)
+                          </span>
+                        )}
                       </div>
 
                       <div style={{ fontSize: "11px", color: "#64748b", display: "flex", alignItems: "center", gap: "4px", marginBottom: "4px" }}>
@@ -627,6 +823,17 @@ export default function TelemetriaMapaTab({
                           </span>
                         </div>
                       </div>
+
+                      {esSeleccionado && (
+                        <div style={{
+                          marginTop: "8px", paddingTop: "6px", borderTop: "1px solid #bae6fd",
+                          fontSize: "11px", fontWeight: 700, color: "#0284c7",
+                          display: "flex", alignItems: "center", justifyContent: "space-between",
+                        }}>
+                          <span>🎯 Tramo enfocado en el mapa</span>
+                          <span style={{ fontSize: "10px", fontWeight: 600, color: "#0369a1" }}>Ver día completo ✕</span>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

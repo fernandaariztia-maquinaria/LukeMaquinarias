@@ -263,8 +263,8 @@ export default function TelemetriaTab({ currentUser }) {
       {/* RENDERIZADO CONDICIONAL DE SUB-APARTADOS */}
       {subTab === "mapa" ? (
         <TelemetriaMapaTab
-          fechaInicial={mapaFecha || fechaMaxima || hoyISO}
-          patenteInicial={mapaPatente}
+          fechaInicial={mapaFecha || "2026-10-02"}
+          patenteInicial={mapaPatente || "PGXT-19"}
         />
       ) : (
         <>

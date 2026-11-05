@@ -74,6 +74,27 @@ export default async function handler(req, res) {
       .order("fecha", { ascending: true })
       .order("hora_inicio", { ascending: true });
 
+    // 3.1 Consultar rango de fechas con datos GPS en CSV para esta patente
+    const { data: posMin } = await supabase
+      .schema("maquinaria")
+      .from("telemetria_posiciones")
+      .select("fecha_hora")
+      .eq("patente", patNorm)
+      .order("fecha_hora", { ascending: true })
+      .limit(1);
+
+    const { data: posMax } = await supabase
+      .schema("maquinaria")
+      .from("telemetria_posiciones")
+      .select("fecha_hora")
+      .eq("patente", patNorm)
+      .order("fecha_hora", { ascending: false })
+      .limit(1);
+
+    const tieneGpsCsv = Boolean(posMin && posMin.length > 0);
+    const fechaMinCsv = posMin?.[0]?.fecha_hora ? posMin[0].fecha_hora.slice(0, 10) : null;
+    const fechaMaxCsv = posMax?.[0]?.fecha_hora ? posMax[0].fecha_hora.slice(0, 10) : null;
+
     let puntos = [];
     let fuentePuntos = "CSV_POSICIONES";
 
@@ -83,19 +104,21 @@ export default async function handler(req, res) {
         lng: Number(p.longitud),
         hora: p.fecha_hora,
         velocidad: Number(p.velocidad) || 0,
+        rumbo: Number(p.rumbo) || 0,
         estado: p.estado || "Viaje",
+        odometro: Number(p.odometro) || null,
         lugar: p.lugar || "",
       }));
-    } else if (viajesRaw && viajesRaw.length > 0) {
-      // Si aún no se suben CSV de alta resolución, construir el recorrido preliminar desde los puntos de inicio y fin de cada viaje
+    } else {
       fuentePuntos = "RESUMEN_VIAJES";
-      viajesRaw.forEach((v) => {
+      // Si no hay CSV de alta resolución para esta fecha, generar puntos inicial y final
+      (viajesRaw || []).forEach((v) => {
         if (v.latitud_inicio && v.longitud_inicio) {
           puntos.push({
             lat: Number(v.latitud_inicio),
             lng: Number(v.longitud_inicio),
             hora: `${v.fecha}T${v.hora_inicio || "00:00:00"}-03:00`,
-            velocidad: 35,
+            velocidad: 0,
             estado: "Inicio Viaje",
             lugar: v.lugar_inicio || "Origen",
             viaje_id: v.id,
@@ -114,6 +137,76 @@ export default async function handler(req, res) {
         }
       });
     }
+
+    // 3.2 Vincular y relacionar cada viaje con sus posiciones GPS exactas
+    const viajesConPuntos = (viajesRaw || []).map((v) => {
+      const hIniStr = v.hora_inicio || "00:00:00";
+      const hFinStr = v.hora_fin || "23:59:59";
+      const tIni = new Date(`${v.fecha}T${hIniStr}-03:00`).getTime();
+      const tFin = new Date(`${v.fecha}T${hFinStr}-03:00`).getTime();
+
+      let ptsViaje = [];
+
+      if (puntosRaw && puntosRaw.length > 0) {
+        ptsViaje = puntosRaw
+          .filter((p) => {
+            const pt = new Date(p.fecha_hora).getTime();
+            return pt >= tIni && pt <= tFin;
+          })
+          .map((p) => ({
+            lat: Number(p.latitud),
+            lng: Number(p.longitud),
+            hora: p.fecha_hora,
+            velocidad: Number(p.velocidad) || 0,
+            rumbo: Number(p.rumbo) || 0,
+            estado: p.estado || "Viaje",
+            odometro: Number(p.odometro) || null,
+            lugar: p.lugar || "",
+            viaje_id: v.id,
+          }));
+      }
+
+      // Si no hubo puntos del CSV en este rango horario, trazar al menos inicio y fin
+      const tieneCsvDetallado = ptsViaje.length > 2;
+      if (ptsViaje.length === 0) {
+        if (v.latitud_inicio && v.longitud_inicio) {
+          ptsViaje.push({
+            lat: Number(v.latitud_inicio),
+            lng: Number(v.longitud_inicio),
+            hora: `${v.fecha}T${hIniStr}-03:00`,
+            velocidad: 0,
+            estado: "Inicio Viaje",
+            lugar: v.lugar_inicio || "Origen",
+            viaje_id: v.id,
+          });
+        }
+        if (v.latitud_fin && v.longitud_fin) {
+          ptsViaje.push({
+            lat: Number(v.latitud_fin),
+            lng: Number(v.longitud_fin),
+            hora: `${v.fecha}T${hFinStr}-03:00`,
+            velocidad: 0,
+            estado: "Fin Viaje",
+            lugar: v.lugar_fin || "Destino",
+            viaje_id: v.id,
+          });
+        }
+      }
+
+      const velMax = ptsViaje.reduce((m, p) => Math.max(m, p.velocidad), 0);
+      const velProm = ptsViaje.length > 0
+        ? Math.round(ptsViaje.reduce((s, p) => s + p.velocidad, 0) / ptsViaje.length)
+        : 0;
+
+      return {
+        ...v,
+        puntos_gps: ptsViaje,
+        total_puntos_gps: ptsViaje.length,
+        tiene_gps_detallado: tieneCsvDetallado,
+        velocidad_maxima_gps: velMax,
+        velocidad_promedio_gps: velProm,
+      };
+    });
 
     // 4. Construir bloques para la Línea de Tiempo Superior (24 Horas)
     // Clasificados en: En Viaje, En Ralentí, Encendido/Trabajando, Estacionado
@@ -270,8 +363,13 @@ export default async function handler(req, res) {
         total_combustible: Math.round(totalCombustible * 10) / 10,
       },
       timeline_bloques: timelineBloques,
-      viajes: viajesRaw || [],
+      viajes: viajesConPuntos,
       puntos: puntos,
+      cobertura_csv: {
+        tiene_datos: tieneGpsCsv,
+        fecha_min: fechaMinCsv,
+        fecha_max: fechaMaxCsv,
+      },
     });
   } catch (err) {
     console.error("[API telemetria/recorrido Error]:", err);
