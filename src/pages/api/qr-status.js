@@ -76,30 +76,59 @@ export default async function handler(req, res) {
         console.warn("[api/qr-status] Error leyendo pm2 jlist:", e.message);
       }
 
-      // Parchear session.js en wa-bridge-service si no tiene getMessage cache ni normalización @lid -> @s.whatsapp.net
+      // Parchear session.js en wa-bridge-service con __createHealedSocket (interceptor de sendMessage + getMessage retry cache)
       for (const [fp, content] of Object.entries(bridgeFiles)) {
         if ((fp.endsWith("session.js") || fp.endsWith("session-manager.js")) && content.includes("makeWASocket")) {
           let updated = content;
-          // 1. Si tiene formatJid que conserva @lid, normalizar dígitos a @s.whatsapp.net
-          if (updated.includes("@lid") && !updated.includes("// [HEALED_JID_NORMALIZATION]")) {
-            updated = updated.replace(
-              /if\s*\(\s*jid\.endsWith\(["']@s\.whatsapp\.net["']\)\s*\|\|\s*jid\.endsWith\(["']@lid["']\)\s*\)\s*return\s+jid\s*;/g,
-              '// [HEALED_JID_NORMALIZATION]\n    if (jid.endsWith("@s.whatsapp.net")) return jid;\n    if (jid.endsWith("@lid")) { const d = jid.split("@")[0].split(":")[0].replace(/\\D/g, ""); if (d.length >= 10 && d.length <= 13 && d.startsWith("56")) return `${d}@s.whatsapp.net`; return jid; }'
-            );
+
+          // 1. Revertir cualquier normalización forzada de @lid -> @s.whatsapp.net para respetar el JID nativo (@lid o @s.whatsapp.net)
+          updated = updated.replace(
+            /\/\/ \[HEALED_JID_NORMALIZATION\]\s*\n\s*if \(jid\.endsWith\("@s\.whatsapp\.net"\)\) return jid;\s*\n\s*if \(jid\.endsWith\("@lid"\)\) \{[^}]+\}/g,
+            'if (jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid")) return jid;'
+          );
+
+          // 2. Limpiar inyección previa incompleta de __sentMsgCache si existía
+          updated = updated.replace(/^const __sentMsgCache = new Map\(\);\r?\n/m, "");
+          updated = updated.replace(/\n\s*getMessage:\s*async\s*\(key\)\s*=>\s*__sentMsgCache\.get\(key\?\.id\)\s*\|\|\s*undefined,/g, "");
+
+          // 3. Inyectar __createHealedSocket para interceptar TODOS los sock.sendMessage y responder retry receipts en getMessage
+          if (!updated.includes("__createHealedSocket")) {
+            const helperCode = [
+              "const __sentMsgCache = new Map();",
+              "const __lastTextHolder = { text: '' };",
+              "function __createHealedSocket(makeFn, cfg) {",
+              "  const _s = makeFn({",
+              "    ...cfg,",
+              "    getMessage: async (key) => {",
+              "      const cached = key?.id ? __sentMsgCache.get(key.id) : null;",
+              "      if (cached) return cached;",
+              "      return { conversation: __lastTextHolder.text || 'Mensaje LukeEquipos' };",
+              "    },",
+              "  });",
+              "  const _orig = _s.sendMessage.bind(_s);",
+              "  _s.sendMessage = async (...a) => {",
+              "    if (a[1] && typeof a[1].text === 'string') __lastTextHolder.text = a[1].text;",
+              "    const r = await _orig(...a);",
+              "    if (r?.key?.id) {",
+              "      const msgProto = r.message || (typeof a[1]?.text === 'string' ? { conversation: a[1].text } : a[1]);",
+              "      if (msgProto) {",
+              "        __sentMsgCache.set(r.key.id, msgProto);",
+              "        if (__sentMsgCache.size > 2000) {",
+              "          const fk = __sentMsgCache.keys().next().value;",
+              "          __sentMsgCache.delete(fk);",
+              "        }",
+              "      }",
+              "    }",
+              "    return r;",
+              "  };",
+              "  return _s;",
+              "}",
+              "",
+            ].join("\n");
+
+            updated = helperCode + updated.replace("makeWASocket({", "__createHealedSocket(makeWASocket, {");
           }
-          // 2. Si makeWASocket no tiene getMessage, inyectar caché en memoria para reintentos Signal ("Esperando mensaje...")
-          if (!updated.includes("getMessage:") && updated.includes("makeWASocket({")) {
-            updated =
-              `const __sentMsgCache = new Map();\n` +
-              updated.replace(
-                "makeWASocket({",
-                `makeWASocket({\n      getMessage: async (key) => __sentMsgCache.get(key?.id) || undefined,`
-              );
-            updated = updated.replace(
-              /const\s+sent\s*=\s*await\s+this\.sock\.sendMessage\(([^;]+)\);/g,
-              "const sent = await this.sock.sendMessage($1); if (sent?.key?.id && sent?.message) { __sentMsgCache.set(sent.key.id, sent.message); }"
-            );
-          }
+
           if (updated !== content) {
             fs.writeFileSync(fp, updated, "utf8");
             patchedSessionJs = true;
@@ -108,21 +137,24 @@ export default async function handler(req, res) {
         }
       }
 
-      for (const dir of candidateDirs) {
-        if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
-          // Solo limpiar dentro de la sesión de equipos (o auth_info_baileys) para no tocar otros bots si hubiera
-          const isEquiposOrLocal =
-            dir.includes("equipos") || dir.includes("auth_info_baileys") || dir.endsWith("sessions");
-          if (!isEquiposOrLocal) continue;
+      // IMPORTANTE: NO borrar session-*.json por defecto porque destruye el ratchet Signal activo con el teléfono.
+      // Solo borrar si se pide explícitamente ?heal=1&reset_sessions=1
+      if (req.query.reset_sessions === "1") {
+        for (const dir of candidateDirs) {
+          if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+            const isEquiposOrLocal =
+              dir.includes("equipos") || dir.includes("auth_info_baileys") || dir.endsWith("sessions");
+            if (!isEquiposOrLocal) continue;
 
-          const files = fs.readdirSync(dir);
-          for (const f of files) {
-            if (
-              (f.startsWith("session-") || f.startsWith("device-list-") || f.startsWith("lid-mapping-")) &&
-              f.endsWith(".json")
-            ) {
-              fs.unlinkSync(path.join(dir, f));
-              cleaned.push(`${dir}/${f}`);
+            const files = fs.readdirSync(dir);
+            for (const f of files) {
+              if (
+                (f.startsWith("session-") || f.startsWith("device-list-") || f.startsWith("lid-mapping-")) &&
+                f.endsWith(".json")
+              ) {
+                fs.unlinkSync(path.join(dir, f));
+                cleaned.push(`${dir}/${f}`);
+              }
             }
           }
         }

@@ -28,46 +28,60 @@ import {
   obtenerCacheLocal
 } from "../../lib/offlineSync";
 
-// Catálogo de disciplinas y subactividades según especificación de faena (Imagen adjunta)
+// Catálogo de disciplinas y subactividades según especificación de faena (Imagen de Producción)
 const DISCIPLINAS_ESTANDAR = [
   {
     key: "OOCC",
     label: "OOCC",
-    subactividades: ["Moldaje", "Fierro", "Hormigón", "Prefabricados Hormigón"]
+    defaultUnit: "m3",
+    subactividades: ["Moldaje", "Fierro", "Hormigón", "Prefabricados Hormigón", "Línea OOCC Adicional"]
   },
   {
     key: "Estructura",
     label: "Estructura",
-    subactividades: ["Mont Estructura", "Revestimiento"]
+    defaultUnit: "Ton",
+    subactividades: ["Mont Estructura", "Revestimiento", "Línea Estructura Adicional"]
   },
   {
     key: "Piping",
     label: "Piping",
-    subactividades: ["Soportes", "Spools/ductos"]
+    defaultUnit: "ml",
+    subactividades: ["Soportes", "Spools/ductos", "Montaje Cañería HDPE / Acero"]
   },
   {
     key: "Mecanica",
     label: "Mecánica",
-    subactividades: ["Equipos Mecánicos"]
+    defaultUnit: "Ton",
+    subactividades: ["Equipos Mecánicos", "Alineamiento / Montaje Mecánico"]
   },
   {
     key: "Caldereria",
     label: "Calderería",
-    subactividades: ["Componentes Calderería"]
+    defaultUnit: "Ton",
+    subactividades: ["Componentes Calderería", "Estanques / Chutes"]
   },
   {
     key: "Electrico",
     label: "Eléctrico",
-    subactividades: ["Equipos Eléctricos"]
+    defaultUnit: "ml",
+    subactividades: ["Equipos Eléctricos", "Canalizaciones / Escalerillas", "Tendido de Cables"]
+  },
+  {
+    key: "MovimientoTierra",
+    label: "Movimiento de Tierra",
+    defaultUnit: "m3",
+    subactividades: ["Excavación / Relleno", "Carguío y Transporte", "Perfilado y Compactación"]
   },
   {
     key: "Aislacion",
     label: "Aislación",
+    defaultUnit: "m2",
     subactividades: ["Aislación Térmica", "Aislación Acústica", "Recubrimientos / Lana"]
   },
   {
     key: "Andamios",
     label: "Andamios",
+    defaultUnit: "Kg",
     subactividades: ["Montaje Andamio", "Desarme Andamio", "Modificación Andamio"]
   }
 ];
@@ -100,6 +114,7 @@ export default function ActividadesSupervisorPage() {
     Mecanica: false,
     Caldereria: false,
     Electrico: false,
+    MovimientoTierra: false,
     Aislacion: false,
     Andamios: false,
   });
@@ -294,8 +309,10 @@ export default function ActividadesSupervisorPage() {
   };
 
   const toggleSubactividad = (subName, discLabel) => {
+    const discObj = DISCIPLINAS_ESTANDAR.find(d => d.label === discLabel);
+    const defaultUnit = discObj?.defaultUnit || "Ton";
     setSubactividadesData(prev => {
-      const current = prev[subName] || { checked: false, id_3wl: "", cantidad: "", unidad: "Ton", izajes: "", horometro: "" };
+      const current = prev[subName] || { checked: false, id_3wl: "", cantidad: "", unidad: defaultUnit, izajes: "", horometro: "" };
       return {
         ...prev,
         [subName]: {
@@ -832,13 +849,14 @@ export default function ActividadesSupervisorPage() {
                                         className="input-cell number-cell"
                                       />
                                       <select
-                                        value={subData.unidad || "Ton"}
+                                        value={subData.unidad || disc.defaultUnit || "Ton"}
                                         onChange={(e) => updateSubactividad(subName, "unidad", e.target.value)}
                                         className="select-cell"
                                       >
                                         <option value="Ton">Ton</option>
                                         <option value="m3">m3</option>
                                         <option value="m2">m2</option>
+                                        <option value="Kg">Kg</option>
                                         <option value="un">un</option>
                                         <option value="ml">ml</option>
                                       </select>

@@ -2,12 +2,13 @@ const BRIDGE_URL = process.env.WA_BRIDGE_URL || "http://localhost:4000/equipos";
 
 export async function enviarMensajeWhatsApp(jid, phoneClean, texto, tieneAudioEntrante = false, geminiKey = null) {
   const cleanDigits = String(phoneClean || "").replace(/[^0-9]/g, "");
-  // CRÍTICO: Evitar enviar a JIDs @lid en mensajes directos 1:1 (causa "Esperando mensaje. Esto puede tomar tiempo.")
-  const dest = (jid && String(jid).endsWith("@g.us"))
+  // Si viene un JID con '@' (@s.whatsapp.net, @lid o @g.us), responder en ese mismo JID para mantener la sesión Signal;
+  // si jid es null (envío proactivo como Finalizar POD), usar <cleanDigits>@s.whatsapp.net.
+  const dest = (jid && typeof jid === "string" && jid.includes("@"))
     ? jid
     : cleanDigits
       ? `${cleanDigits}@s.whatsapp.net`
-      : (jid && String(jid).includes("@s.whatsapp.net") ? jid : `${String(jid || "").replace(/[^0-9]/g, "")}@s.whatsapp.net`);
+      : `${String(jid || "").replace(/[^0-9]/g, "")}@s.whatsapp.net`;
   let audioBase64ParaEnviar = null;
 
   // Solo sintetizar si el usuario original envió audio y no hay URLs en la respuesta,

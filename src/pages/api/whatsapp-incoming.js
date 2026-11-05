@@ -47,8 +47,8 @@ export default async function handler(req, res) {
     `[whatsapp-incoming] De: ${phoneClean} | ${audio ? "🎤 Audio" : image ? "📷 Imagen" : `💬 "${message}"`}`
   );
 
-  // Normalizar JID de destino a @s.whatsapp.net para evitar errores de cifrado Signal con @lid
-  const safeJid = (jid && typeof jid === "string" && jid.endsWith("@g.us"))
+  // Preservar el JID entrante (@s.whatsapp.net, @lid o @g.us) para responder en el mismo canal Signal del teléfono
+  const safeJid = (jid && typeof jid === "string" && jid.includes("@"))
     ? jid
     : `${phoneClean}@s.whatsapp.net`;
 

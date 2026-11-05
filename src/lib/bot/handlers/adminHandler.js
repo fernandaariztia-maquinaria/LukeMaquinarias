@@ -1,10 +1,105 @@
 import { enviarMensajeWhatsApp, guardarMensajeChat, cargarHistorialGemini } from "../services/messageService";
+import { iniciarRegistroProduccionSupervisor } from "../services/podConsultaService";
 import { formatFechaHoraChile } from "../../timeUtils";
+
+let __metaToolsSeeded = false;
+const META_TOOLS_BASE = [
+  {
+    nombre_funcion: "meta_consultar_tabla_universal",
+    descripcion: "Meta-herramienta universal para consultar cualquier tabla del esquema maquinaria (equipos, personal, proyectos, especialidades, tareas_programadas, planificacion_bloques_pod, actividades, reportes_diarios, eventos_jornada, telemetria_viajes, mantenciones_ejecutadas) con filtros dinámicos.",
+    esquema_json: {
+      type: "OBJECT",
+      properties: {
+        tabla: { type: "STRING", description: "Nombre de la tabla en maquinaria." },
+        select_cols: { type: "STRING", description: "Columnas o joins de Supabase (por defecto '*')." },
+        filtro_columna: { type: "STRING", description: "Columna opcional para filtrar con ilike o eq." },
+        filtro_valor: { type: "STRING", description: "Valor a buscar." },
+        limite: { type: "NUMBER", description: "Máximo de filas a retornar (default 20)." }
+      },
+      required: ["tabla"]
+    },
+    codigo_javascript: `
+      const { tabla, select_cols = "*", filtro_columna, filtro_valor, limite = 20 } = args;
+      let q = supabase.from(tabla).select(select_cols).limit(Math.min(Number(limite) || 20, 50));
+      if (filtro_columna && filtro_valor !== undefined && filtro_valor !== null && String(filtro_valor) !== "") {
+        if (/^[0-9a-f-]{36}$/i.test(String(filtro_valor)) || /^\\d{4}-\\d{2}-\\d{2}$/.test(String(filtro_valor))) {
+          q = q.eq(filtro_columna, filtro_valor);
+        } else {
+          q = q.ilike(filtro_columna, \`%\${filtro_valor}%\`);
+        }
+      }
+      const { data, error } = await q;
+      if (error) throw error;
+      return data;
+    `
+  },
+  {
+    nombre_funcion: "obtener_telemetria_skynav",
+    descripcion: "Obtiene los viajes, telemetría GPS/CANBUS (combustible, km recorridos, horas de conducción, ralentí, velocidad máxima, chofer y coordenadas) desde telemetria_viajes y equipos.",
+    esquema_json: {
+      type: "OBJECT",
+      properties: {
+        busqueda_equipo: { type: "STRING", description: "Código interno o patente opcional (ej: GRCA-0011, VZVR-71)." },
+        limite: { type: "NUMBER", description: "Cantidad de registros a retornar (default 15)." }
+      }
+    },
+    codigo_javascript: `
+      const { busqueda_equipo, limite = 15 } = args || {};
+      let q = supabase.from("telemetria_viajes").select("patente, fecha, hora_inicio, hora_fin, duracion_conduccion_segundos, ralent_segundos, distancia_km, velocidad_maxima_kmh, combustible_consumido_litros, nombre_conductor, direccion_inicio, direccion_fin, lat_fin, lng_fin, equipos(codigo_interno, descripcion_equipo, patente, proyecto_actual_id)").order("fecha", { ascending: false }).limit(Number(limite) || 15);
+      if (busqueda_equipo) {
+        q = q.ilike("patente", \`%\${busqueda_equipo}%\`);
+      }
+      const { data, error } = await q;
+      if (error) throw error;
+      return data;
+    `
+  },
+  {
+    nombre_funcion: "obtener_produccion_actividades_3wl",
+    descripcion: "Consulta todas las líneas de producción y actividades registradas (Id 3WL, disciplina, cantidad ejecutada, unidad, izajes/movimientos y horómetro en horas).",
+    esquema_json: {
+      type: "OBJECT",
+      properties: {
+        fecha: { type: "STRING", description: "Fecha YYYY-MM-DD opcional." },
+        disciplina: { type: "STRING", description: "Disciplina opcional (OOCC, Estructura, Piping, Mecánica, Calderería, Eléctrico, Movimiento de Tierra, Aislación, Andamios, Carga/Descarga)." }
+      }
+    },
+    codigo_javascript: `
+      const { fecha, disciplina } = args || {};
+      let q = supabase.from("actividades").select("id, fecha, id_3wl, categoria_disciplina, subactividad, descripcion, cantidad_ejecutada, unidad, izajes, horometro_horas, programada, especialidades(nombre_oficial)").order("fecha", { ascending: false }).limit(25);
+      if (fecha) q = q.eq("fecha", fecha);
+      if (disciplina) q = q.ilike("categoria_disciplina", \`%\${disciplina}%\`);
+      const { data, error } = await q;
+      if (error) throw error;
+      return data;
+    `
+  }
+];
+
+async function asegurarMetaToolsEnDB(supabase) {
+  if (__metaToolsSeeded) return;
+  try {
+    await supabase.from("bot_tools_dinamicas").upsert(META_TOOLS_BASE, { onConflict: "nombre_funcion" });
+    __metaToolsSeeded = true;
+  } catch (e) {
+    console.warn("[adminHandler] Aviso sembrando meta-tools:", e.message);
+  }
+}
 
 export async function handleAdminFlow(ctx, res) {
   const { supabase, personal, phoneClean, jid, message, audio, geminiKey } = ctx;
 
   console.log(`[adminHandler] 👑 Interacción de Administrador/Supervisor (${personal.nombre_completo})`);
+
+  await asegurarMetaToolsEnDB(supabase);
+
+  // Atajo directo: si el supervisor solicita registrar producción / actividades / izajes / líneas
+  const msgNorm = String(message || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (/\b(registrar|reportar|ingresar|anotar|cargar|agregar)\s+(?:mi\s+|la\s+|las\s+|toda\s+mi\s+|nuevas?\s+)?(?:produccion|actividad|actividades|avance|izajes|movimientos|linea|lineas|horometro|3wl)\b/.test(msgNorm)) {
+    await guardarMensajeChat(supabase, phoneClean, "user", message || "[Solicitud de registro de producción]", audio ? "audio" : "texto");
+    const resInit = await iniciarRegistroProduccionSupervisor(supabase, personal, { jid, phoneClean, geminiKey });
+    return res.status(200).json({ success: true, action: "INICIAR_REGISTRO_PRODUCCION", ...resInit });
+  }
 
   // 1. Cargar herramientas dinámicas desde Supabase (esquema maquinaria)
   let dbTools = [];
@@ -507,6 +602,20 @@ Directrices al programar 'codigo_javascript' para "crear_herramienta_dinamica":
   }
 }
 
+async function ejecutarMetaToolRegistrada(supabase, nombreFuncion, args = {}) {
+  const { data: toolRow } = await supabase
+    .from("bot_tools_dinamicas")
+    .select("codigo_javascript")
+    .eq("nombre_funcion", nombreFuncion)
+    .maybeSingle();
+
+  const code = toolRow?.codigo_javascript || META_TOOLS_BASE.find(t => t.nombre_funcion === nombreFuncion)?.codigo_javascript;
+  if (!code) return null;
+
+  const fn = new Function("supabase", "args", `return (async () => { ${code} })();`);
+  return await fn(supabase, args);
+}
+
 async function responderConsultaSupervisorFallback(supabase, personal, rawMessage = "") {
   const texto = String(rawMessage || "").trim();
   const lower = texto.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -515,6 +624,7 @@ async function responderConsultaSupervisorFallback(supabase, personal, rawMessag
   const hoyChile = hoyDate.toLocaleDateString("sv-SE", { timeZone: "America/Santiago" });
   const mananaDate = new Date(hoyDate.getTime() + 24 * 60 * 60 * 1000);
   const mananaChile = mananaDate.toLocaleDateString("sv-SE", { timeZone: "America/Santiago" });
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://equipos.lukeapp.cl";
 
   const fmtDMY = (iso) => {
     if (!iso) return "";
@@ -522,36 +632,253 @@ async function responderConsultaSupervisorFallback(supabase, personal, rawMessag
     return `${d}/${m}/${y}`;
   };
 
-  // 1. Consulta sobre qué puede preguntar / ayuda / menú
-  if (/\b(que mas te puedo|que te puedo preguntar|que puedes hacer|ayuda|menu|comandos|funciones)\b/.test(lower)) {
+  // 1. Consulta sobre qué puede preguntar / ayuda / menú / metatools
+  if (/\b(que mas te puedo|que te puedo preguntar|que puedes hacer|ayuda|menu|comandos|funciones|metatools|herramientas)\b/.test(lower)) {
+    const { data: toolsCat } = await supabase.from("bot_tools_dinamicas").select("nombre_funcion");
+    const totalTools = (toolsCat || []).length;
     return [
-      `👋 ¡Hola *${personal.nombre_completo}*! Soy *jAIme*, tu asistente virtual de LukeEquipos.`,
+      `👋 ¡Hola *${personal.nombre_completo}*! Soy *jAIme*, tu asistente virtual de LukeEquipos (${totalTools} meta-tools activas).`,
       ``,
-      `Como *${personal.rol}*, puedes consultarme en cualquier momento por texto o audio:`,
+      `Como *${personal.rol}*, puedes consultarme o registrar información en toda la base de datos:`,
       ``,
-      `📅 *1. Tus tareas y equipos del día (Sala POD):*`,
-      `• _"¿Qué tareas tengo hoy?"_`,
-      `• _"¿Qué equipos tengo asignados mañana?"_`,
+      `📅 *1. Sala POD y Tareas 3WL:*`,
+      `• _"¿Tengo equipos hoy?"_ / _"¿Qué equipos tengo mañana?"_`,
+      `• _"¿Qué tareas 3WL tengo en mi especialidad?"_`,
       ``,
-      `🚜 *2. Estado de la flota y disponibilidad:*`,
+      `📊 *2. Registro y Consulta de Producción (Id 3WL, Cantidad, Izajes, Horómetro):*`,
+      `• Escribe *"REGISTRAR PRODUCCIÓN"* para reportar todas tus actividades del turno, cantidades (m3, m2, Kg, Ton, ml, un), izajes/movimientos y horómetro.`,
+      `• _"¿Cuál es la producción / actividades registradas hoy?"_`,
+      ``,
+      `🛰️ *3. Telemetría SKYNAV, Viajes, GPS y Combustible:*`,
+      `• _"Telemetría de hoy"_ / _"Viajes y combustible"_`,
+      `• _"¿Dónde está el equipo GRCA-0011?"_ o por patente _"Info de VZVR-71"_`,
+      ``,
+      `🚜 *4. Flota, Mantenciones (PM1–PM4), Personal y Reportes:*`,
       `• _"¿Cuál es el estado de los equipos?"_`,
-      `• _"¿Qué equipos están disponibles o en panne?"_`,
-      ``,
-      `👷 *3. Operadores y jornadas en curso:*`,
       `• _"¿Quiénes están trabajando hoy?"_`,
-      `• _"Resumen de reportes de hoy"_`,
+      `• _"Mantenciones ejecutadas"_ / _"Lista de supervisores y operadores"_`,
       ``,
-      `📋 *4. Catálogo de tareas de tu especialidad:*`,
-      `• _"¿Qué tareas programadas tengo en mi especialidad?"_`,
-      ``,
-      `🌐 *Vista pública en vivo (sin login):*`,
-      `https://equipos.lukeapp.cl/pod-publico`,
+      `🌐 *Formulario de Producción:* ${baseUrl}/supervisor/actividades?supervisor_id=${personal.id}`,
+      `🌐 *Sala POD en vivo:* ${baseUrl}/pod-publico`,
     ].join("\n");
   }
 
-  // 2. Consulta de estado de equipos / flota
+  // 2. Detectar si menciona un código de equipo o patente específica (ej. GRCA-0011, CTAP-0266, CAPL-0029, VZVR-71, VZJL-16)
+  const matchCodigo = texto.match(/\b([A-Z]{3,5}-\d{3,4}|[A-Z]{2,4}-?\d{2,4})\b/i);
+  if (matchCodigo || /\b(donde esta|ubicacion de|ficha de|info de|datos del equipo|buscar equipo|patente)\b/.test(lower)) {
+    const token = matchCodigo
+      ? matchCodigo[1].toUpperCase()
+      : texto.replace(/.*?\b(?:donde esta|ubicacion de|ficha de|info de|datos del equipo|buscar equipo|patente)\s+/i, "").replace(/[?.,!]/g, "").trim();
+
+    if (token && token.length >= 2) {
+      const { data: eqList } = await supabase
+        .from("equipos")
+        .select("*, proyectos(codigo_cc, nombre_proyecto)")
+        .or(`codigo_interno.ilike.%${token}%,patente.ilike.%${token}%,descripcion_equipo.ilike.%${token}%`)
+        .limit(5);
+
+      if (eqList && eqList.length > 0) {
+        const e = eqList[0];
+        const [{ data: viajesEq }, { data: bloquesEq }] = await Promise.all([
+          supabase
+            .from("telemetria_viajes")
+            .select("fecha, hora_inicio, hora_fin, distancia_km, velocidad_maxima_kmh, combustible_consumido_litros, nombre_conductor, direccion_fin")
+            .eq("equipo_id", e.id)
+            .order("fecha", { ascending: false })
+            .limit(3),
+          supabase
+            .from("planificacion_bloques_pod")
+            .select("fecha, hora_inicio, hora_fin, actividad_especifica, especialidades(nombre_oficial), supervisor:supervisor_id(nombre_completo)")
+            .eq("equipo_id", e.id)
+            .gte("fecha", hoyChile)
+            .order("fecha", { ascending: true })
+            .order("hora_inicio", { ascending: true })
+            .limit(4),
+        ]);
+
+        const lines = [
+          `🚜 *Ficha en Tiempo Real — ${e.codigo_interno}* ${e.patente ? `(${e.patente})` : ""}`,
+          `• *Descripción:* ${e.descripcion_equipo || "—"}`,
+          `• *Estado actual:* ${e.estado_actual || "Disponible"}`,
+          `• *Proyecto:* ${e.proyectos ? `${e.proyectos.codigo_cc} — ${e.proyectos.nombre_proyecto}` : "Sin asignar"}`,
+          `• *Categoría / Marca:* ${e.categoria || "—"} · ${e.marca || ""} ${e.modelo || ""}`.trim(),
+          `• *Horómetro / Odómetro:* ${e.ultimo_horometro ?? "—"} hrs · ${e.ultimo_odometro ?? "—"} km`,
+          `• *Combustible:* ${e.combustible_nivel_porcentaje != null ? `${e.combustible_nivel_porcentaje}%` : "Sin reporte"}`,
+        ];
+
+        if (e.pauta_preventiva_activa) {
+          lines.push(`• ⚠️ *Pauta activa:* ${e.pauta_preventiva_activa}`);
+        }
+
+        if (e.latitud_actual && e.longitud_actual) {
+          lines.push(
+            `• 📍 *Ubicación GPS SKYNAV:* ${Number(e.latitud_actual).toFixed(5)}, ${Number(e.longitud_actual).toFixed(5)}`,
+            `  🗺️ https://www.google.com/maps?q=${e.latitud_actual},${e.longitud_actual}`
+          );
+        }
+
+        if (viajesEq && viajesEq.length > 0) {
+          lines.push(``, `🛰️ *Últimos viajes SKYNAV:*`);
+          for (const v of viajesEq) {
+            lines.push(
+              `• ${fmtDMY(v.fecha)} (${v.hora_inicio?.slice(0, 5) || "--"}-${v.hora_fin?.slice(0, 5) || "--"}): *${v.distancia_km ?? 0} km* · Vel máx: ${v.velocidad_maxima_kmh ?? 0} km/h${v.combustible_consumido_litros ? ` · Comb: ${v.combustible_consumido_litros} L` : ""}${v.nombre_conductor ? ` · Cond: ${v.nombre_conductor}` : ""}`
+            );
+          }
+        }
+
+        if (bloquesEq && bloquesEq.length > 0) {
+          lines.push(``, `📅 *Bloques POD programados:*`);
+          for (const b of bloquesEq) {
+            lines.push(
+              `• ${fmtDMY(b.fecha)} ${b.hora_inicio?.slice(0, 5)}-${b.hora_fin?.slice(0, 5)} | ${b.especialidades?.nombre_oficial || ""} (${b.supervisor?.nombre_completo || "Supervisor"}) — _${b.actividad_especifica || "Pendiente"}_`
+            );
+          }
+        }
+
+        return lines.join("\n");
+      }
+    }
+  }
+
+  // 3. Consulta de Telemetría SKYNAV / Viajes / Combustible / Velocidad / GPS
+  if (/\b(telemetria|skynav|viajes|gps|combustible|velocidad|ralenti|conduccion|kilometros|conductores|mapa)\b/.test(lower)) {
+    const viajes = (await ejecutarMetaToolRegistrada(supabase, "obtener_telemetria_skynav", { limite: 12 })) || [];
+    const { count: eqConGps } = await supabase
+      .from("equipos")
+      .select("id", { count: "exact", head: true })
+      .not("latitud_actual", "is", null);
+
+    if (!viajes || viajes.length === 0) {
+      return `🛰️ *Telemetría SKYNAV*\n• Equipos con posicionamiento GPS activo en Mapa Faena: *${eqConGps || 0}*\n• No se encontraron viajes recientes con ese filtro.`;
+    }
+
+    const totalKm = viajes.reduce((acc, v) => acc + (Number(v.distancia_km) || 0), 0);
+    const totalComb = viajes.reduce((acc, v) => acc + (Number(v.combustible_consumido_litros) || 0), 0);
+
+    const lines = [
+      `🛰️ *Resumen de Telemetría SKYNAV y Viajes*`,
+      `• Equipos posicionados con GPS en Mapa Faena: *${eqConGps || 0}*`,
+      `• Últimos viajes analizados: *${viajes.length}* (*${totalKm.toFixed(1)} km* acumulados · *${totalComb.toFixed(1)} L* comb.)`,
+      ``,
+      `*Detalle de actividad reciente:*`,
+    ];
+
+    for (const v of viajes.slice(0, 8)) {
+      const cod = v.equipos?.codigo_interno || v.patente || "Equipo";
+      const hrsCond = ((Number(v.duracion_conduccion_segundos) || 0) / 3600).toFixed(1);
+      lines.push(
+        `• *${cod}* (${v.patente || ""}) — ${fmtDMY(v.fecha)}`,
+        `  🛣️ ${v.distancia_km ?? 0} km · ⏱️ ${hrsCond} hrs · 🚀 Máx ${v.velocidad_maxima_kmh ?? 0} km/h${v.combustible_consumido_litros ? ` · ⛽ ${v.combustible_consumido_litros} L` : ""}${v.nombre_conductor ? ` · 👤 ${v.nombre_conductor}` : ""}`
+      );
+    }
+
+    lines.push(``, `💬 _Puedes consultar un equipo específico escribiendo por ejemplo: "¿Dónde está GRCA-0011?" o "Info de VZVR-71"._`);
+    return lines.join("\n");
+  }
+
+  // 4. Consulta de Producción / Actividades 3WL / Izajes / Cantidades / Horómetros
+  if (/\b(produccion|actividades registradas|avance|izajes|movimientos realizados|3wl|lineas de produccion)\b/.test(lower)) {
+    const acts = (await ejecutarMetaToolRegistrada(supabase, "obtener_produccion_actividades_3wl", {})) || [];
+    const lines = [
+      `📊 *Producción y Actividades 3WL Registradas*`,
+    ];
+
+    if (acts.length === 0) {
+      lines.push(``, `Aún no hay líneas de producción registradas para el filtro consultado.`);
+    } else {
+      for (const a of acts.slice(0, 10)) {
+        const disc = a.categoria_disciplina || a.especialidades?.nombre_oficial || "General";
+        const wl = a.id_3wl ? `[3WL: ${a.id_3wl}] ` : "";
+        const cant = a.cantidad_ejecutada != null ? `Cant: *${a.cantidad_ejecutada} ${a.unidad || ""}*` : "";
+        const iz = a.izajes != null ? ` · Izajes/Mov: *${a.izajes}*` : "";
+        const hor = a.horometro_horas != null ? ` · Horómetro: *${a.horometro_horas} hrs*` : "";
+        lines.push(
+          `• 📅 ${fmtDMY(a.fecha)} | *${disc}* — ${wl}${a.descripcion || a.subactividad || "Actividad"}`,
+          `  ${cant}${iz}${hor}`.trim()
+        );
+      }
+    }
+
+    lines.push(
+      ``,
+      `➕ *¿Deseas registrar tu producción ahora?*`,
+      `• Escribe *"REGISTRAR PRODUCCIÓN"* aquí en WhatsApp para reportar cada actividad con su *Id 3WL*, *Cantidad (m3, m2, Kg, Ton, ml, un)*, *Izajes/Movimientos* y *Horómetro (hrs)*.`,
+      `• O usa la planilla web multicelda: ${baseUrl}/supervisor/actividades?supervisor_id=${personal.id}`
+    );
+    return lines.join("\n");
+  }
+
+  // 5. Consulta de Mantenciones / PM1-PM4 / Pautas Preventivas
+  if (/\b(mantencion|mantenciones|mantenimiento|pm1|pm2|pm3|pm4|pauta|preventiva)\b/.test(lower)) {
+    const [{ data: mants }, { data: eqPautas }] = await Promise.all([
+      supabase
+        .from("mantenciones_ejecutadas")
+        .select("tipo_pm, fecha, lectura_al_momento, notas, equipos(codigo_interno, descripcion_equipo), personal(nombre_completo)")
+        .order("fecha", { ascending: false })
+        .limit(8),
+      supabase
+        .from("equipos")
+        .select("codigo_interno, descripcion_equipo, pauta_preventiva_activa, ultimo_horometro, pm1_umbral")
+        .not("pauta_preventiva_activa", "is", null)
+        .limit(8),
+    ]);
+
+    const lines = [`🔧 *Control de Mantenimiento y Pautas Preventivas*`];
+    if (mants && mants.length > 0) {
+      lines.push(``, `*Últimas PM ejecutadas:*`);
+      for (const m of mants) {
+        lines.push(`• *${m.equipos?.codigo_interno || "Equipo"}* — *${m.tipo_pm}* (${fmtDMY(m.fecha)}) a las ${m.lectura_al_momento ?? "-"} hrs/km`);
+      }
+    } else {
+      lines.push(``, `• Sin mantenciones PM registradas recientemente.`);
+    }
+
+    if (eqPautas && eqPautas.length > 0) {
+      lines.push(``, `*Equipos con Pauta Preventiva Activa:*`);
+      for (const ep of eqPautas) {
+        lines.push(`• *${ep.codigo_interno}*: _${ep.pauta_preventiva_activa}_`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  // 6. Consulta de Personal / Supervisores / Operadores / Especialidades / Proyectos
+  if (/\b(personal|supervisores|lista de operadores|especialidades| disciplinas|proyectos|obras|contratos)\b/.test(lower)) {
+    const [{ data: persList }, { data: proys }] = await Promise.all([
+      supabase
+        .from("personal")
+        .select("nombre_completo, rol, turno_tipo, jornada_tipo, especialidades(nombre_oficial), proyectos(codigo_cc)")
+        .eq("activo", true)
+        .order("rol")
+        .order("nombre_completo")
+        .limit(25),
+      supabase
+        .from("proyectos")
+        .select("codigo_cc, nombre_proyecto, ubicacion")
+        .eq("activa", true),
+    ]);
+
+    const lines = [`👥 *Personal Activo y Proyectos en Faena*`];
+    if (proys && proys.length > 0) {
+      lines.push(``, `*Proyectos activos:*`);
+      for (const p of proys) {
+        lines.push(`• 🏗️ *${p.codigo_cc}* — ${p.nombre_proyecto} (${p.ubicacion || ""})`);
+      }
+    }
+    if (persList && persList.length > 0) {
+      lines.push(``, `*Dotación registrada (${persList.length}):*`);
+      for (const u of persList.slice(0, 15)) {
+        const esp = u.especialidades?.nombre_oficial ? ` · ${u.especialidades.nombre_oficial}` : "";
+        const cc = u.proyectos?.codigo_cc ? ` [${u.proyectos.codigo_cc}]` : "";
+        lines.push(`• *${u.nombre_completo}* — ${u.rol}${esp}${cc}`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  // 7. Consulta de estado de equipos / flota
   if (/\b(estado\s+de\s+(?:los\s+|la\s+)?(?:equipos|flota|maquinas|maquinaria)|equipos\s+(?:disponibles|operativos|en\s+panne|en\s+falla)|flota|disponibilidad\s+de\s+(?:los\s+)?equipos)\b/.test(lower)) {
-    let qEq = supabase.from("equipos").select("codigo_interno, descripcion_equipo, patente, estado_actual");
+    let qEq = supabase.from("equipos").select("codigo_interno, descripcion_equipo, patente, estado_actual, combustible_nivel_porcentaje, ultimo_horometro");
     if (personal.proyecto_actual_id) {
       qEq = qEq.eq("proyecto_actual_id", personal.proyecto_actual_id);
     }
@@ -571,6 +898,13 @@ async function responderConsultaSupervisorFallback(supabase, personal, rawMessag
       `• 🔴 Detenidos por Falla / Panne: *${falla.length}*`,
     ];
 
+    if (operativos.length > 0) {
+      lines.push(``, `*Equipos Operativos en este momento:*`);
+      for (const op of operativos.slice(0, 6)) {
+        lines.push(`• 🟢 *${op.codigo_interno}* (${op.patente || "S/P"}) — ${op.descripcion_equipo}`);
+      }
+    }
+
     if (falla.length > 0) {
       lines.push(``, `*Equipos en Falla/Panne:*`);
       for (const f of falla.slice(0, 8)) {
@@ -578,15 +912,15 @@ async function responderConsultaSupervisorFallback(supabase, personal, rawMessag
       }
     }
 
-    lines.push(``, `🌐 *Ver detalle completo en vivo:* https://equipos.lukeapp.cl/pod-publico`);
+    lines.push(``, `🌐 *Ver detalle completo en vivo:* ${baseUrl}/pod-publico`);
     return lines.join("\n");
   }
 
-  // 3. Consulta de operadores / jornadas activas hoy
+  // 8. Consulta de operadores / jornadas activas hoy
   if (/\b(quien esta trabajando|quienes estan trabajando|operadores activos|reportes de hoy|jornadas de hoy)\b/.test(lower)) {
     const { data: reps } = await supabase
       .from("reportes_diarios")
-      .select("horometro_inicio, horometro_final, estado_final, equipos(codigo_interno, descripcion_equipo), personal!reportes_diarios_operador_id_fkey(nombre_completo)")
+      .select("horometro_inicio, horometro_final, horas_trabajadas, estado_final, pdf_url, equipos(codigo_interno, descripcion_equipo), personal!reportes_diarios_operador_id_fkey(nombre_completo)")
       .eq("fecha", hoyChile)
       .order("created_at", { ascending: false });
 
@@ -596,13 +930,13 @@ async function responderConsultaSupervisorFallback(supabase, personal, rawMessag
 
     const lines = [`👷 *Jornadas Registradas Hoy (${fmtDMY(hoyChile)}):*\n`];
     for (const r of reps.slice(0, 12)) {
-      const estado = r.estado_final === "Cerrado" ? "🏁 Cerrado" : "🟢 En turno";
+      const estado = r.estado_final === "Cerrado" ? `🏁 Cerrado (${r.horas_trabajadas ?? "-"} hrs)` : "🟢 En turno";
       lines.push(`• *${r.equipos?.codigo_interno || "Equipo"}* (${r.equipos?.descripcion_equipo || ""})\n  👤 ${r.personal?.nombre_completo || "Operador"} — ${estado}`);
     }
     return lines.join("\n");
   }
 
-  // 4. Consulta de tareas / bloques asignados de hoy o mañana (o saludo general)
+  // 9. Consulta de tareas / bloques asignados de hoy o mañana (o saludo general)
   const pideManana = /\b(manana)\b/.test(lower);
   const fechaConsulta = pideManana ? mananaChile : hoyChile;
   const labelDia = pideManana ? `mañana (${fmtDMY(mananaChile)})` : `hoy (${fmtDMY(hoyChile)})`;
@@ -627,7 +961,7 @@ async function responderConsultaSupervisorFallback(supabase, personal, rawMessag
   if (personal.especialidad_id) {
     const { data: tCat } = await supabase
       .from("tareas_programadas")
-      .select("orden, nombre")
+      .select("orden, codigo, nombre")
       .eq("especialidad_id", personal.especialidad_id)
       .eq("activa", true)
       .order("orden", { ascending: true });
@@ -637,7 +971,7 @@ async function responderConsultaSupervisorFallback(supabase, personal, rawMessag
   const lines = [
     `👋 ¡Hola *${personal.nombre_completo}*!`,
     ``,
-    `📅 *Tu planificación y tareas para ${labelDia}:*`,
+    `📅 *Tu planificación y equipos asignados para ${labelDia}:*`,
   ];
 
   if (!bloques || bloques.length === 0) {
@@ -647,26 +981,33 @@ async function responderConsultaSupervisorFallback(supabase, personal, rawMessag
       const ini = b.hora_inicio?.slice(0, 5) || "--:--";
       const fin = b.hora_fin?.slice(0, 5) || "--:--";
       const eqCodigo = b.equipos?.codigo_interno || "Equipo";
+      const eqPatente = b.equipos?.patente ? ` - ${b.equipos.patente}` : "";
       const eqDesc = b.equipos?.descripcion_equipo || "";
       const esp = b.especialidades?.nombre_oficial || "";
-      const act = b.actividad_especifica || "Pendiente de definir al iniciar turno";
+      const act = b.actividad_especifica || "Pendiente de registrar producción";
+      const linkProd = `${baseUrl}/supervisor/actividades?bloque_id=${b.id}`;
       lines.push(
         ``,
-        `🔧 *${ini}–${fin}* | *${eqCodigo}*`,
+        `🔧 *${ini}–${fin}* | *${eqCodigo}${eqPatente}*`,
         `   🚜 ${eqDesc}`,
         `   🏗️ Especialidad: *${esp}*`,
-        `   📌 Tarea: _${act}_`
+        `   📌 Actividad/Producción: _${act}_`,
+        `   📲 Cargar producción (+ líneas): ${linkProd}`
       );
     }
   }
 
   if (tareasCatalogo.length > 0) {
-    lines.push(``, `📋 *Tareas programadas de tu especialidad:*`);
-    tareasCatalogo.slice(0, 10).forEach((t, idx) => {
-      lines.push(`   ${t.orden > 0 ? t.orden : idx + 1}. ${t.nombre}`);
+    lines.push(``, `📋 *Tareas 3WL de tu especialidad:*`);
+    tareasCatalogo.slice(0, 8).forEach((t, idx) => {
+      lines.push(`   ${t.orden > 0 ? t.orden : idx + 1}. ${t.codigo ? `[${t.codigo}] ` : ""}${t.nombre}`);
     });
   }
 
-  lines.push(``, `💬 _Puedes preguntarme "¿Qué equipos tengo mañana?", "¿Cuál es el estado de los equipos?" o "¿Quiénes están trabajando hoy?"._`);
+  lines.push(
+    ``,
+    `📊 *¿Quieres registrar toda tu actividad, cantidades, izajes/movimientos y horómetro por WhatsApp?*`,
+    `👉 Responde *"REGISTRAR PRODUCCIÓN"* y te guiaré línea por línea para cada equipo.`
+  );
   return lines.join("\n");
 }
