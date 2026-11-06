@@ -10,7 +10,69 @@ import {
   procesarMensajeConContexto
 } from "../../gemini";
 import { formatEquipoLabel } from "../../equipoLabel";
-import { crearConsultaPendiente } from "../services/podConsultaService";
+import { crearConsultaPendiente, parseMetricasFallback } from "../services/podConsultaService";
+import { convertirPalabrasANumeros } from "../../gemini";
+
+export async function buscarEquipoPorTexto(supabase, codigoRaw) {
+  const codigoLimpio = (codigoRaw || "").trim();
+  if (!codigoLimpio) return { equipo: null, equiposAmbiguos: null };
+
+  // 1. Coincidencia exacta por codigo_interno
+  const { data: porCodigo } = await supabase
+    .from("equipos")
+    .select("*, proyectos(*)")
+    .ilike("codigo_interno", codigoLimpio)
+    .maybeSingle();
+  if (porCodigo) return { equipo: porCodigo, equiposAmbiguos: null };
+
+  // 2. Coincidencia exacta por patente
+  const { data: porPatente } = await supabase
+    .from("equipos")
+    .select("*, proyectos(*)")
+    .ilike("patente", codigoLimpio)
+    .maybeSingle();
+  if (porPatente) return { equipo: porPatente, equiposAmbiguos: null };
+
+  // 3. Subpartes compuestas (ej: "RTEX-0006 - LPPX-47" o "GRPH-0042 (CAPL-0040)")
+  const subpartes = codigoLimpio.split(/\s*[-–—]\s{1,}|\s{1,}[-–—]\s*|\s*[/|]\s*|\s*\(/).map(p => p.replace(/[()]/g, "").trim()).filter(Boolean);
+  for (const p of subpartes) {
+    if (p.length < 2) continue;
+    const { data: pEq } = await supabase
+      .from("equipos")
+      .select("*, proyectos(*)")
+      .or(`codigo_interno.ilike.%${p}%,patente.ilike.%${p}%`)
+      .limit(1)
+      .maybeSingle();
+    if (pEq) return { equipo: pEq, equiposAmbiguos: null };
+  }
+
+  // 4. Búsqueda por contención
+  const { data: porContencion } = await supabase
+    .from("equipos")
+    .select("*, proyectos(*)")
+    .or(`codigo_interno.ilike.%${codigoLimpio}%,patente.ilike.%${codigoLimpio}%`);
+
+  if (porContencion && porContencion.length === 1) {
+    return { equipo: porContencion[0], equiposAmbiguos: null };
+  } else if (porContencion && porContencion.length > 1) {
+    return { equipo: null, equiposAmbiguos: porContencion };
+  }
+
+  // 5. Sufijo de patente (2 a 4 caracteres)
+  if (codigoLimpio.length >= 2 && codigoLimpio.length <= 4) {
+    const { data: porSufijo } = await supabase
+      .from("equipos")
+      .select("*, proyectos(*)")
+      .ilike("patente", `%${codigoLimpio}`);
+    if (porSufijo && porSufijo.length === 1) {
+      return { equipo: porSufijo[0], equiposAmbiguos: null };
+    } else if (porSufijo && porSufijo.length > 1) {
+      return { equipo: null, equiposAmbiguos: porSufijo };
+    }
+  }
+
+  return { equipo: null, equiposAmbiguos: null };
+}
 
 const RECORDATORIO_ESTADOS_OPERADOR =
   `\n\n📌 *Recuerda informar cada cambio de estado durante tu jornada:*\n` +
@@ -116,72 +178,7 @@ export async function handleJornadaFlow(ctx, res) {
     }
 
     const codigoEquipo = msgUpper.replace("REPORTE:", "").trim();
-
-    // Buscar equipo: código interno exacto -> patente exacta -> partes compuestas -> sufijo de patente
-    let equipo = null;
-    let equiposAmbiguos = null;
-
-    // 1. Coincidencia exacta por codigo_interno
-    const { data: porCodigo } = await supabase
-      .from("equipos")
-      .select("*, proyectos(*)")
-      .ilike("codigo_interno", codigoEquipo)
-      .maybeSingle();
-    equipo = porCodigo;
-
-    // 2. Coincidencia exacta por patente
-    if (!equipo) {
-      const { data: porPatente } = await supabase
-        .from("equipos")
-        .select("*, proyectos(*)")
-        .ilike("patente", codigoEquipo)
-        .maybeSingle();
-      equipo = porPatente;
-    }
-
-    // 3. Si viene con formato compuesto (ej: "RTEX-0006 - LPPX-47"), buscar por sus subpartes
-    if (!equipo) {
-      const subpartes = codigoEquipo.split(/\s*[-–—]\s{1,}|\s{1,}[-–—]\s*|\s*[/|]\s*/).map(p => p.trim()).filter(Boolean);
-      for (const p of subpartes) {
-        if (p.length < 2) continue;
-        const { data: pEq } = await supabase
-          .from("equipos")
-          .select("*, proyectos(*)")
-          .or(`codigo_interno.ilike.${p},patente.ilike.${p}`)
-          .maybeSingle();
-        if (pEq) {
-          equipo = pEq;
-          break;
-        }
-      }
-    }
-
-    // 4. Búsqueda por contención (cuando en la BD dice "RTEX-0007 - LPPX-46" y el operador ingresa "RTEX-0007" o "LPPX-46")
-    if (!equipo) {
-      const { data: porContencion } = await supabase
-        .from("equipos")
-        .select("*, proyectos(*)")
-        .or(`codigo_interno.ilike.%${codigoEquipo}%,patente.ilike.%${codigoEquipo}%`);
-
-      if (porContencion && porContencion.length === 1) {
-        equipo = porContencion[0];
-      } else if (porContencion && porContencion.length > 1) {
-        equiposAmbiguos = porContencion;
-      }
-    }
-
-    // 5. Sufijo de patente (2 a 4 caracteres)
-    if (!equipo && !equiposAmbiguos && codigoEquipo.length >= 2 && codigoEquipo.length <= 4) {
-      const { data: porSufijo } = await supabase
-        .from("equipos")
-        .select("*, proyectos(*)")
-        .ilike("patente", `%${codigoEquipo}`);
-      if (porSufijo && porSufijo.length === 1) {
-        equipo = porSufijo[0];
-      } else if (porSufijo && porSufijo.length > 1) {
-        equiposAmbiguos = porSufijo;
-      }
-    }
+    const { equipo, equiposAmbiguos } = await buscarEquipoPorTexto(supabase, codigoEquipo);
 
     if (equiposAmbiguos) {
       const listado = equiposAmbiguos.map(e => `• ${formatEquipoLabel(e)} — ${e.descripcion_equipo}`).join("\n");
@@ -341,14 +338,14 @@ export async function handleJornadaFlow(ctx, res) {
   const msgUpperC = (message || "").trim().toUpperCase();
 
   // Cancelar estados de espera interactivos
-  if (msgUpperC === "CANCELAR" && (sesion.estado_espera?.startsWith("ESPERANDO_CHECKOUT") || sesion.estado_espera === "ESPERANDO_MOTIVO_FALLA")) {
+  if (msgUpperC === "CANCELAR" && (sesion.estado_espera?.startsWith("ESPERANDO_CHECKOUT") || sesion.estado_espera === "ESPERANDO_MOTIVO_FALLA" || sesion.estado_espera?.startsWith("ESPERANDO_CAMBIO_EQUIPO"))) {
     await supabase.from("sesiones_whatsapp").update({
       estado_espera: null,
       updated_at: new Date().toISOString()
     }).eq("id", sesion.id);
 
     await enviarMensajeWhatsApp(jid, phoneClean,
-      `✅ Acción cancelada. Tu jornada sigue abierta y activa.${RECORDATORIO_ESTADOS_OPERADOR}`,
+      `✅ Acción cancelada. Tu jornada sigue abierta y activa en tu equipo actual.${RECORDATORIO_ESTADOS_OPERADOR}`,
       !!audio,
       geminiKey
     );
@@ -360,7 +357,7 @@ export async function handleJornadaFlow(ctx, res) {
     const codigoScan = msgUpperC.replace("REPORTE:", "").trim();
     const { data: reporteActivo } = await supabase
       .from("reportes_diarios")
-      .select("*, equipos(descripcion_equipo, codigo_interno, patente)")
+      .select("*, equipos(id, descripcion_equipo, codigo_interno, patente, tipo_seguimiento)")
       .eq("id", sesion.reporte_activo_id)
       .maybeSingle();
     const equipoActivo = reporteActivo?.equipos;
@@ -401,12 +398,48 @@ export async function handleJornadaFlow(ctx, res) {
       );
       return res.status(200).json({ success: true, action: "SESION_YA_ACTIVA_MISMO_EQUIPO" });
     } else {
-      await enviarMensajeWhatsApp(jid, phoneClean,
-        `⚠️ *${personal.nombre_completo}*, ya tienes una jornada activa para:\n*${equipoActivo?.descripcion_equipo || "equipo"}* (${equipoActivo ? formatEquipoLabel(equipoActivo) : ""})\n\nPara cambiar de equipo, primero cierra tu jornada actual diciendo:\n_"Cierre de jornada, horómetro final XXXX"_`,
-        !!audio,
-        geminiKey
-      );
-      return res.status(200).json({ success: true, action: "SESION_YA_ACTIVA_OTRO_EQUIPO" });
+      // Flujo de RELEVO / CAMBIO DE EQUIPO (sin cerrar la jornada de la persona)
+      const { equipo: nuevoEquipo, equiposAmbiguos: ambiguosScan } = await buscarEquipoPorTexto(supabase, codigoScan);
+
+      if (nuevoEquipo && nuevoEquipo.id !== equipoActivo?.id) {
+        const esVehiculoActivo = equipoActivo?.tipo_seguimiento === 'vehiculo';
+        const esVehiculoNuevo = nuevoEquipo?.tipo_seguimiento === 'vehiculo';
+        const labelLecturaActivo = esVehiculoActivo ? "Odómetro (km)" : "Horómetro";
+        const labelLecturaNuevo = esVehiculoNuevo ? "Odómetro (km)" : "Horómetro";
+
+        await supabase.from("sesiones_whatsapp").update({
+          estado_espera: `ESPERANDO_CAMBIO_EQUIPO:${nuevoEquipo.id}`,
+          updated_at: new Date().toISOString()
+        }).eq("id", sesion.id);
+
+        const msgCambio =
+          `🔄 *Cambio de Equipo / Relevo Detectado* 🚜💨\n\n` +
+          `Hola *${personal.nombre_completo}*, actualmente estás operando *${equipoActivo?.descripcion_equipo || "Equipo"}* (${equipoActivo ? formatEquipoLabel(equipoActivo) : ""}).\n\n` +
+          `Para registrar el traspaso y pasar a *${nuevoEquipo.descripcion_equipo}* (${formatEquipoLabel(nuevoEquipo)}), por favor indícanos por *audio o texto*:\n` +
+          `1️⃣ *${labelLecturaActivo} de entrega* de ${equipoActivo?.descripcion_equipo || "equipo actual"}\n` +
+          `2️⃣ *${labelLecturaNuevo} inicial* de ${nuevoEquipo.descripcion_equipo}\n\n` +
+          `💡 _Ejemplo: "Entrego con horómetro 4 y tomo la nueva máquina con horómetro 12"_\n\n` +
+          `_(O escribe *CANCELAR* si deseas continuar en tu equipo actual)_`;
+
+        await guardarMensajeChat(supabase, phoneClean, "model", msgCambio, "texto", sesion.reporte_activo_id);
+        await enviarMensajeWhatsApp(jid, phoneClean, msgCambio, !!audio, geminiKey);
+        return res.status(200).json({ success: true, action: "SOLICITAR_LECTURAS_CAMBIO_EQUIPO" });
+      } else if (ambiguosScan) {
+        const listado = ambiguosScan.map(e => `• ${formatEquipoLabel(e)} — ${e.descripcion_equipo}`).join("\n");
+        await enviarMensajeWhatsApp(jid, phoneClean,
+          `🤔 Encontré más de un equipo con ese código o patente para el relevo:\n\n${listado}\n\nPor favor responde con el *código interno* exacto.`,
+          !!audio,
+          geminiKey
+        );
+        return res.status(200).json({ success: true, action: "EQUIPOS_AMBIGUOS_CAMBIO" });
+      } else {
+        await enviarMensajeWhatsApp(jid, phoneClean,
+          `❓ No pude encontrar el equipo *${codigoScan}* para realizar el cambio. Por favor verifica el código o patente e intenta nuevamente.`,
+          !!audio,
+          geminiKey
+        );
+        return res.status(200).json({ success: true, action: "EQUIPO_NO_ENCONTRADO_CAMBIO" });
+      }
     }
   }
 
@@ -575,6 +608,16 @@ export async function handleJornadaFlow(ctx, res) {
       return res.status(200).json({ success: true, action: "AUDIO_CHECKOUT_REINTENTO_TEXTO" });
     }
 
+    if (sesion.estado_espera?.startsWith("ESPERANDO_CAMBIO_EQUIPO:")) {
+      const msgErrorCambio =
+        `🎧 *No pudimos entender el audio del cambio de equipo*\n\n` +
+        `Por favor escribe por **texto** el horómetro/odómetro de entrega del equipo actual y el inicial del nuevo equipo.\n` +
+        `_Ejemplo: "Entrego con 4 y tomo la nueva con 12"_`;
+      await guardarMensajeChat(supabase, phoneClean, "model", msgErrorCambio, "texto", sesion.reporte_activo_id);
+      await enviarMensajeWhatsApp(jid, phoneClean, msgErrorCambio, false, geminiKey);
+      return res.status(200).json({ success: true, action: "AUDIO_CAMBIO_EQUIPO_REINTENTO_TEXTO" });
+    }
+
     if (sesion.estado_espera === "ESPERANDO_MOTIVO_FALLA") {
       const msgErrorFalla =
         `🎧 *No pudimos entender tu nota de voz*\n\n` +
@@ -590,6 +633,115 @@ export async function handleJornadaFlow(ctx, res) {
     await guardarMensajeChat(supabase, phoneClean, "model", msgAudioError, "texto", sesion.reporte_activo_id);
     await enviarMensajeWhatsApp(jid, phoneClean, msgAudioError, false, geminiKey);
     return res.status(200).json({ success: true, action: "AUDIO_ININTELIGIBLE" });
+  }
+
+  // --- SUB-FLUJO: CAPTURA DE LECTURAS PARA CAMBIO DE EQUIPO / RELEVO ---
+  if (sesion.estado_espera?.startsWith("ESPERANDO_CAMBIO_EQUIPO:")) {
+    const nuevoEquipoId = sesion.estado_espera.split(":")[1];
+    const { data: nuevoEquipo } = await supabase
+      .from("equipos")
+      .select("*, proyectos(*)")
+      .eq("id", nuevoEquipoId)
+      .maybeSingle();
+
+    const { data: reporteActivo } = await supabase
+      .from("reportes_diarios")
+      .select("*, equipos(*)")
+      .eq("id", sesion.reporte_activo_id)
+      .maybeSingle();
+    const equipoActivo = reporteActivo?.equipos;
+
+    if (nuevoEquipo && equipoActivo) {
+      const textoEvaluar = (resultado?.detalles_texto || message || "").trim();
+      const cleanNum = convertirPalabrasANumeros(textoEvaluar).replace(/,/g, ".");
+      const nums = (cleanNum.match(/\d+(?:\.\d+)?/g) || []).map(Number);
+
+      const esVehiculoActivo = equipoActivo.tipo_seguimiento === 'vehiculo';
+      const esVehiculoNuevo = nuevoEquipo.tipo_seguimiento === 'vehiculo';
+
+      let lecturaEntrega = resultado?.horometro_final ?? (resultado?.km_final ?? (nums.length >= 1 ? nums[0] : null));
+      let lecturaInicio = resultado?.horometro_inicial ?? (nums.length >= 2 ? nums[1] : (esVehiculoNuevo ? (nuevoEquipo.ultimo_km || 0) : (nuevoEquipo.ultimo_horometro || 0)));
+
+      if (lecturaEntrega !== null) {
+        // 1. Cerrar tramo en el equipo anterior
+        const updateAnterior = { estado_final: "Disponible" };
+        if (esVehiculoActivo) {
+          updateAnterior.km_final = lecturaEntrega;
+        } else {
+          updateAnterior.horometro_final = lecturaEntrega;
+        }
+        await supabase.from("reportes_diarios").update(updateAnterior).eq("id", reporteActivo.id);
+
+        const labelEntrega = esVehiculoActivo ? `odómetro ${lecturaEntrega} km` : `horómetro ${lecturaEntrega} hrs`;
+        await supabase.from("eventos_jornada").insert({
+          reporte_id: reporteActivo.id,
+          estado_hito: "Disponible",
+          hora_evento: new Date().toISOString(),
+          nota_transcripcion: `Término de tramo por cambio de equipo: Entrega con ${labelEntrega}. Paso a ${nuevoEquipo.descripcion_equipo} (${formatEquipoLabel(nuevoEquipo)}).`
+        });
+
+        // 2. Crear o asociar reporte de hoy en nuevo equipo
+        const hoy = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Santiago" });
+        let { data: reporteNuevo } = await supabase
+          .from("reportes_diarios")
+          .select("id")
+          .eq("equipo_id", nuevoEquipo.id)
+          .eq("operador_id", personal.id)
+          .eq("fecha", hoy)
+          .maybeSingle();
+
+        if (!reporteNuevo) {
+          const insertNuevo = {
+            equipo_id: nuevoEquipo.id,
+            operador_id: personal.id,
+            fecha: hoy,
+            estado_final: "Equipo Operativo",
+            ...(esVehiculoNuevo ? { km_inicial: lecturaInicio } : { horometro_inicio: lecturaInicio })
+          };
+          const { data: nRep } = await supabase
+            .from("reportes_diarios")
+            .insert(insertNuevo)
+            .select()
+            .single();
+          reporteNuevo = nRep;
+        }
+
+        const labelInicio = esVehiculoNuevo ? `odómetro inicial ${lecturaInicio} km` : `horómetro inicial ${lecturaInicio} hrs`;
+        await supabase.from("eventos_jornada").insert({
+          reporte_id: reporteNuevo.id,
+          estado_hito: "Trabajando",
+          hora_evento: new Date().toISOString(),
+          nota_transcripcion: `Inicio de tramo por relevo/cambio: ${labelInicio}. Procedente de ${equipoActivo.descripcion_equipo} (${formatEquipoLabel(equipoActivo)}).`
+        });
+
+        await supabase.from("sesiones_whatsapp").update({
+          reporte_activo_id: reporteNuevo.id,
+          estado_espera: "SESION_ABIERTA_INTERMEDIA",
+          updated_at: new Date().toISOString()
+        }).eq("id", sesion.id);
+
+        const sufijoActivo = esVehiculoActivo ? "km" : "hrs";
+        const sufijoNuevo = esVehiculoNuevo ? "km" : "hrs";
+        const msgConfirmacionCambio =
+          `✅ *¡Cambio de Equipo Confirmado con Éxito!* 🚜💨\n\n` +
+          `• *Entrega ${equipoActivo.descripcion_equipo}:* ${lecturaEntrega} ${sufijoActivo}\n` +
+          `• *Recepción ${nuevoEquipo.descripcion_equipo}:* ${lecturaInicio} ${sufijoNuevo}\n\n` +
+          `📌 *Tu jornada continúa activa.* Toda la trazabilidad de tu día está guardada.\n` +
+          `Ahora tus próximas actualizaciones registrarán para *${nuevoEquipo.descripcion_equipo}* (${formatEquipoLabel(nuevoEquipo)}).\n\n` +
+          `🏗️ *¿Con qué especialidad o actividad vas a iniciar en este equipo?*`;
+
+        await guardarMensajeChat(supabase, phoneClean, "model", msgConfirmacionCambio, "texto", reporteNuevo.id);
+        await enviarMensajeWhatsApp(jid, phoneClean, msgConfirmacionCambio, !!audio, geminiKey);
+        return res.status(200).json({ success: true, action: "CAMBIO_EQUIPO_COMPLETADO" });
+      } else {
+        const msgPedir =
+          `⚠️ *Lectura de entrega requerida*\n\n` +
+          `Por favor indícanos el ${esVehiculoActivo ? "odómetro" : "horómetro"} con el que entregas *${equipoActivo.descripcion_equipo}*.\n` +
+          `_Ejemplo: "Entrego con horómetro 4.5"_`;
+        await enviarMensajeWhatsApp(jid, phoneClean, msgPedir, !!audio, geminiKey);
+        return res.status(200).json({ success: true, action: "REINTENTO_CAMBIO_EQUIPO" });
+      }
+    }
   }
 
   // --- SUB-FLUJO: CAPTURA DE MOTIVO DE FALLA CUANDO ESTÁ EN ESPERANDO_MOTIVO_FALLA ---
@@ -1069,6 +1221,23 @@ export async function handleJornadaFlow(ctx, res) {
     });
   }
 
+  // Detección y registro de movimientos, izajes o producción reportados por el operador
+  const metricasTexto = parseMetricasFallback(message || resultado.detalles_texto || "", resultado.especialidad_detectada || "");
+  const izajesDetectados = resultado.izajes || metricasTexto.izajes_movimientos;
+  const cantidadDetectada = resultado.cantidad_produccion || metricasTexto.cantidad_ejecutada;
+  const unidadDetectada = resultado.unidad_produccion || metricasTexto.unidad || "un";
+
+  if (izajesDetectados || cantidadDetectada) {
+    const textoAvance = `📦 Avance reportado por operador: ${izajesDetectados ? `${izajesDetectados} izajes` : ""}${cantidadDetectada ? ` | ${cantidadDetectada} ${unidadDetectada}` : ""}${resultado.especialidad_detectada ? ` (${resultado.especialidad_detectada})` : ""}`.trim();
+    await supabase.from("eventos_jornada").insert({
+      reporte_id: sesion.reporte_activo_id,
+      estado_hito: "Trabajando",
+      especialidad_id: resultado.especialidad_id || null,
+      hora_evento: new Date().toISOString(),
+      nota_transcripcion: textoAvance
+    });
+  }
+
   // Cuantificar horas de detención si el equipo saliendo de Detenido por Falla
   let textoDetencionCuantificada = "";
   if (reporteActual.equipos?.estado_actual === "Detenido por Falla") {
@@ -1190,12 +1359,25 @@ export async function handleJornadaFlow(ctx, res) {
     estadoHito;
 
   const tagEspecialidad = resultado.especialidad_detectada ? ` — *${resultado.especialidad_detectada}*` : "";
-  const baseConfirmacion = (resultado.mensaje_conversacional_bot
-    || `✅ *Indicación Registrada*\n${iconosEstado[estadoHito] || "⚪"} *Estado:* ${labelEstadoMostrar}${tagEspecialidad}\n📝 *Registro:* _"${indicacionTexto}"_`) + textoDetencionCuantificada;
 
-  const confirmacion = baseConfirmacion.includes("Recuerda informar")
-    ? baseConfirmacion
-    : `${baseConfirmacion}${RECORDATORIO_ESTADOS_OPERADOR}`;
+  let confirmacion;
+  if (izajesDetectados || cantidadDetectada) {
+    confirmacion =
+      `💪 *¡Movimientos Registrados con Éxito!* 🏗️\n\n` +
+      `🟢 *Estado:* ${labelEstadoMostrar}${tagEspecialidad}\n` +
+      (izajesDetectados ? `• *Izajes / Movimientos:* ${izajesDetectados}\n` : "") +
+      (cantidadDetectada ? `• *Producción:* ${cantidadDetectada} ${unidadDetectada}\n` : "") +
+      `\nTodo registrado en la trazabilidad de tu jornada. Te seguiré consultando cuando reportes un nuevo hito.${textoDetencionCuantificada}`;
+  } else {
+    const consultaMovimientos = (estadoHito === "Detenido por Falla") ? "" :
+      `\n\n🏗️ *¿Llevas izajes o movimientos realizados?*\n` +
+      `Indícanos por audio o texto la cantidad e izajes para incluirlos en tu reporte diario (ej: _"llevo 3 izajes y 10 metros de tubería"_).`;
+
+    const baseConfirmacion = (resultado.mensaje_conversacional_bot
+      || `✅ *Indicación Registrada*\n${iconosEstado[estadoHito] || "⚪"} *Estado:* ${labelEstadoMostrar}${tagEspecialidad}\n📝 *Registro:* _"${indicacionTexto}"_`) + textoDetencionCuantificada;
+
+    confirmacion = `${baseConfirmacion}${consultaMovimientos}`;
+  }
 
   await guardarMensajeChat(supabase, phoneClean, "model", confirmacion, "texto", sesion.reporte_activo_id);
   await enviarMensajeWhatsApp(jid, phoneClean, confirmacion, !!audio, geminiKey);

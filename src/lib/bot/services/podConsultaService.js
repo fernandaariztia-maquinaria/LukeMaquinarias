@@ -388,7 +388,8 @@ async function aplicarActividadInicial(supabase, consultaPendiente, { actividadF
         .maybeSingle();
 
       const opWa = eventoInfo?.reportes_diarios?.personal?.whatsapp;
-      if (opWa) {
+      const esPreguntaConversacional = /[?¿]/.test(actividadFinal) || /^(hola|que mas|qu[eé] mas|qu[eé] tal|gracias|ok)\b/i.test(actividadFinal.trim());
+      if (opWa && !esPreguntaConversacional) {
         await enviarMensajeWhatsApp(
           null,
           opWa,

@@ -392,15 +392,52 @@ export async function handleCierreFlow(ctx, res) {
 
       const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://equipos.lukeapp.cl";
       const horasDetFinalTxt = totalHorasDetencion > 0 ? `\n⚠️ Horas detenido por falla: ${totalHorasDetencion.toFixed(1)} hrs` : "";
+
+      // Consultar todos los reportes / tramos del operador en el día para trazabilidad completa
+      let resumenMaquinas = "";
+      try {
+        const { data: todosReportesHoy } = await supabase
+          .from("reportes_diarios")
+          .select("*, equipos(*), eventos_jornada(*)")
+          .eq("operador_id", personal.id)
+          .eq("fecha", reporteCompleto.fecha)
+          .order("created_at", { ascending: true });
+
+        if (todosReportesHoy && todosReportesHoy.length > 1) {
+          resumenMaquinas = "\n\n📋 *Trazabilidad de tus Equipos de Hoy:*";
+          let totalIzajesDia = 0;
+          todosReportesHoy.forEach((r, idx) => {
+            const eqNom = r.equipos?.descripcion_equipo || "Equipo";
+            const eqCod = r.equipos?.codigo_interno || r.equipos?.patente || "";
+            const esVeh = r.equipos?.tipo_seguimiento === 'vehiculo';
+            const ini = esVeh ? r.km_inicial : r.horometro_inicio;
+            const fin = esVeh ? r.km_final : r.horometro_final;
+            const unid = esVeh ? 'km' : 'hrs';
+            const diff = (fin != null && ini != null) ? (fin - ini) : null;
+            resumenMaquinas += `\n${idx + 1}️⃣ *${eqNom}* (${eqCod}):\n   • ${esVeh ? 'Odómetro' : 'Horómetro'}: ${ini ?? '—'} ➔ ${fin ?? '—'} ${unid}${diff != null && diff >= 0 ? ` (${diff.toFixed(1)} ${unid})` : ''}`;
+
+            (r.eventos_jornada || []).forEach(ev => {
+              const m = (ev.nota_transcripcion || "").match(/(\d+)\s*izajes?/i);
+              if (m) totalIzajesDia += parseInt(m[1], 10);
+            });
+          });
+          if (totalIzajesDia > 0) {
+            resumenMaquinas += `\n🏗️ *Total Izajes del Día:* ${totalIzajesDia}`;
+          }
+        }
+      } catch (eHistoRep) {
+        console.warn("[cierreHandler] Error consultando histórico diario del operador:", eHistoRep.message);
+      }
+
       if (equipo?.tipo_seguimiento === 'vehiculo') {
         const kmFinalCalculado = kmFinal || reporteCompleto.km_final;
         const kmRecorridos = kmFinalCalculado && reporteCompleto.km_inicial ? (kmFinalCalculado - reporteCompleto.km_inicial) : null;
-        const msgText = `✅ *Reporte Diario de Jornada consolidado con éxito.*\n\n🚗 Odómetro: ${reporteCompleto.km_inicial?.toLocaleString("es-CL") || "—"} → ${kmFinalCalculado?.toLocaleString("es-CL") || "—"} km\n${kmRecorridos !== null ? `⏱ Kilómetros recorridos: ${kmRecorridos.toLocaleString("es-CL")} km\n` : ""}${horasDetFinalTxt}\n📄 Descarga tu reporte aquí:\n👉 ${baseUrl}${pdfUrl}\n\n¡Buen término de jornada, ${personal.nombre_completo}! 👷‍♂️`;
+        const msgText = `✅ *Reporte Diario de Jornada consolidado con éxito.*\n\n🚗 Odómetro: ${reporteCompleto.km_inicial?.toLocaleString("es-CL") || "—"} → ${kmFinalCalculado?.toLocaleString("es-CL") || "—"} km\n${kmRecorridos !== null ? `⏱ Kilómetros recorridos: ${kmRecorridos.toLocaleString("es-CL")} km\n` : ""}${horasDetFinalTxt}${resumenMaquinas}\n\n📄 Descarga tu reporte aquí:\n👉 ${baseUrl}${pdfUrl}\n\n¡Buen término de jornada, ${personal.nombre_completo}! 👷‍♂️`;
         
         await guardarMensajeChat(supabase, phoneClean, "model", msgText, "texto", sesion.reporte_activo_id);
         await enviarMensajeWhatsApp(jid, phoneClean, msgText, !!audio, geminiKey);
       } else {
-        const msgText = `✅ *Reporte Diario de Jornada consolidado con éxito.*\n\n📊 Horómetro: ${reporteCompleto.horometro_inicio} → ${horometroFinal || "—"} hrs\n${horometroFinal ? `⏱ Horas trabajadas: ${(horometroFinal - reporteCompleto.horometro_inicio).toFixed(1)} hrs\n` : ""}${horasDetFinalTxt}\n📄 Descarga tu reporte aquí:\n👉 ${baseUrl}${pdfUrl}\n\n¡Buen término de jornada, ${personal.nombre_completo}! 👷‍♂️`;
+        const msgText = `✅ *Reporte Diario de Jornada consolidado con éxito.*\n\n📊 Horómetro: ${reporteCompleto.horometro_inicio} → ${horometroFinal || "—"} hrs\n${horometroFinal ? `⏱ Horas trabajadas: ${(horometroFinal - reporteCompleto.horometro_inicio).toFixed(1)} hrs\n` : ""}${horasDetFinalTxt}${resumenMaquinas}\n\n📄 Descarga tu reporte aquí:\n👉 ${baseUrl}${pdfUrl}\n\n¡Buen término de jornada, ${personal.nombre_completo}! 👷‍♂️`;
         
         await guardarMensajeChat(supabase, phoneClean, "model", msgText, "texto", sesion.reporte_activo_id);
         await enviarMensajeWhatsApp(jid, phoneClean, msgText, !!audio, geminiKey);
