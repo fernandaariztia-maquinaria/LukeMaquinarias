@@ -1360,24 +1360,10 @@ export async function handleJornadaFlow(ctx, res) {
 
   const tagEspecialidad = resultado.especialidad_detectada ? ` — *${resultado.especialidad_detectada}*` : "";
 
-  let confirmacion;
-  if (izajesDetectados || cantidadDetectada) {
-    confirmacion =
-      `💪 *¡Movimientos Registrados con Éxito!* 🏗️\n\n` +
-      `🟢 *Estado:* ${labelEstadoMostrar}${tagEspecialidad}\n` +
-      (izajesDetectados ? `• *Izajes / Movimientos:* ${izajesDetectados}\n` : "") +
-      (cantidadDetectada ? `• *Producción:* ${cantidadDetectada} ${unidadDetectada}\n` : "") +
-      `\nTodo registrado en la trazabilidad de tu jornada. Te seguiré consultando cuando reportes un nuevo hito.${textoDetencionCuantificada}`;
-  } else {
-    const consultaMovimientos = (estadoHito === "Detenido por Falla") ? "" :
-      `\n\n🏗️ *¿Llevas izajes o movimientos realizados?*\n` +
-      `Indícanos por audio o texto la cantidad e izajes para incluirlos en tu reporte diario (ej: _"llevo 3 izajes y 10 metros de tubería"_).`;
+  const baseConfirmacion = (resultado.mensaje_conversacional_bot
+    || `✅ *Indicación Registrada*\n${iconosEstado[estadoHito] || "⚪"} *Estado:* ${labelEstadoMostrar}${tagEspecialidad}\n📝 *Registro:* _"${indicacionTexto}"_`) + textoDetencionCuantificada;
 
-    const baseConfirmacion = (resultado.mensaje_conversacional_bot
-      || `✅ *Indicación Registrada*\n${iconosEstado[estadoHito] || "⚪"} *Estado:* ${labelEstadoMostrar}${tagEspecialidad}\n📝 *Registro:* _"${indicacionTexto}"_`) + textoDetencionCuantificada;
-
-    confirmacion = `${baseConfirmacion}${consultaMovimientos}`;
-  }
+  const confirmacion = baseConfirmacion;
 
   await guardarMensajeChat(supabase, phoneClean, "model", confirmacion, "texto", sesion.reporte_activo_id);
   await enviarMensajeWhatsApp(jid, phoneClean, confirmacion, !!audio, geminiKey);
