@@ -87,25 +87,9 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
   const [errorMsg, setErrorMsg] = useState(null);
   const [dashData, setDashData] = useState(null);
 
-  // Vista de Dashboard activa ("general" | "horas" | "combustible" | "utilizacion" | "kilometraje" | "exclusivos" | "conductores" | "horario")
+  // Vista de Dashboard activa ("general" | "horas" | "combustible" | "utilizacion" | "kilometraje" | "conductores" | "horario")
   const [seccionActiva, setSeccionActiva] = useState("general");
   const [filtroUtilizacion, setFiltroUtilizacion] = useState("todos"); // "todos" | "optimo" | "en_rango" | "subutilizado" | "sobreutilizado"
-
-  // 5. Estado del Modal de Asignación de Camionetas a Gerencia / Jefaturas
-  const [modalAsignacionAbierto, setModalAsignacionAbierto] = useState(false);
-  const [guardandoAsignacion, setGuardandoAsignacion] = useState(false);
-  const [errorModalAsig, setErrorModalAsig] = useState(null);
-  const [formAsignacion, setFormAsignacion] = useState({
-    id: null,
-    patente: "",
-    codigo_interno: "",
-    nombre_responsable: "",
-    rut_responsable: "",
-    cargo: "Gerente de Proyecto",
-    proyecto_id: "",
-    proyecto_nombre: "",
-    notas: "",
-  });
 
   // Sincronizar proyecto si cambia el usuario y no es admin
   useEffect(() => {
@@ -190,16 +174,6 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
     if (tipoEquipoFiltro === "todos") return list;
     return list.filter((e) => (e.tipo_clasificado || clasificarTipoEquipo(e)) === tipoEquipoFiltro);
   }, [dashData?.rankings?.top_ralenti, tipoEquipoFiltro]);
-
-  // Equipos / Camionetas de Gerentes o Jefaturas Asignadas (Basada en la base de datos detallada)
-  const equiposAsignadosGerenciaFiltrados = useMemo(() => {
-    const list =
-      dashData?.rankings?.equipos_asignados_gerencia ||
-      dashData?.rankings?.equipos_uso_exclusivo ||
-      [];
-    if (tipoEquipoFiltro === "todos") return list;
-    return list.filter((e) => (e.tipo_clasificado || clasificarTipoEquipo(e)) === tipoEquipoFiltro);
-  }, [dashData?.rankings?.equipos_asignados_gerencia, dashData?.rankings?.equipos_uso_exclusivo, tipoEquipoFiltro]);
 
   // KPIs globales dinámicos que se actualizan inmediatamente al cambiar el filtro de tipo de equipo
   const kpisDinamicos = useMemo(() => {
@@ -350,79 +324,6 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
     const dist = dashData?.distribucion_horaria || [];
     return Math.max(1, ...dist.map((d) => d.horas_operacion || 0));
   }, [dashData?.distribucion_horaria]);
-
-  // ── MANEJADORES DE GESTIÓN DE ASIGNACIONES DE GERENCIA ─────────────────
-  const abrirModalNuevaAsignacion = () => {
-    setFormAsignacion({
-      id: null,
-      patente: "",
-      codigo_interno: "",
-      nombre_responsable: "",
-      rut_responsable: "",
-      cargo: "Gerente de Proyecto",
-      proyecto_id: proyectoFiltro || "",
-      proyecto_nombre: "",
-      notas: "",
-    });
-    setErrorModalAsig(null);
-    setModalAsignacionAbierto(true);
-  };
-
-  const handleGuardarAsignacion = async (e) => {
-    e.preventDefault();
-    if (!formAsignacion.patente.trim()) {
-      setErrorModalAsig("Por favor ingresa o selecciona la patente del vehículo.");
-      return;
-    }
-    if (!formAsignacion.nombre_responsable.trim()) {
-      setErrorModalAsig("Por favor ingresa el nombre del gerente o jefatura.");
-      return;
-    }
-
-    setGuardandoAsignacion(true);
-    setErrorModalAsig(null);
-
-    try {
-      const res = await fetch("/api/admin/telemetria/asignaciones-gerencia", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formAsignacion),
-      });
-      const json = await res.json();
-      if (!json.success) {
-        throw new Error(json.error || "No se pudo guardar la asignación.");
-      }
-
-      setModalAsignacionAbierto(false);
-      // Recargar dashboards para recalcular horas con la nueva asignación
-      cargarDashboards();
-    } catch (err) {
-      setErrorModalAsig(err.message || "Error al comunicarse con el servidor.");
-    } finally {
-      setGuardandoAsignacion(false);
-    }
-  };
-
-  const handleEliminarAsignacion = async (asig) => {
-    if (!confirm(`¿Estás seguro de desasignar la camioneta ${asig.patente} de ${asig.nombre_responsable}?`)) {
-      return;
-    }
-
-    try {
-      const res = await fetch("/api/admin/telemetria/asignaciones-gerencia", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: asig.id, patente: asig.patente }),
-      });
-      const json = await res.json();
-      if (!json.success) {
-        throw new Error(json.error || "No se pudo eliminar la asignación.");
-      }
-      cargarDashboards();
-    } catch (err) {
-      alert(`Error al eliminar: ${err.message}`);
-    }
-  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -1082,21 +983,6 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
         </button>
 
         <button
-          onClick={() => setSeccionActiva("exclusivos")}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: "6px",
-            padding: "8px 14px", borderRadius: "8px", fontSize: "12px", fontWeight: 700,
-            border: "none", cursor: "pointer", transition: "all 0.15s ease",
-            backgroundColor: seccionActiva === "exclusivos" ? "#0284c7" : "#ffffff",
-            color: seccionActiva === "exclusivos" ? "#ffffff" : "#475569",
-            boxShadow: seccionActiva === "exclusivos" ? "0 2px 4px rgba(2, 132, 199, 0.2)" : "none",
-          }}
-        >
-          <ShieldCheck size={14} />
-          Asignación Gerencia ({equiposAsignadosGerenciaFiltrados.length})
-        </button>
-
-        <button
           onClick={() => setSeccionActiva("conductores")}
           style={{
             display: "inline-flex", alignItems: "center", gap: "6px",
@@ -1477,132 +1363,9 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
             </div>
           </div>
 
-          {/* Fila 3: A LA IZQUIERDA: Camionetas Asignadas a Gerencia | A LA DERECHA: Top Conductores */}
+          {/* Fila 3: A LA IZQUIERDA: Top Conductores Más Activos | A LA DERECHA: Distribución Horaria (24 Horas) */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(480px, 1fr))", gap: "20px" }}>
-            {/* Apartado Izquierdo: Camionetas Asignadas a Gerentes o Jefaturas (Detalladas en Base) */}
-            <div style={{
-              backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
-              padding: "18px", boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <ShieldCheck size={16} color="#0284c7" />
-                    Camionetas Asignadas a Gerencia / Jefaturas
-                  </h3>
-                  <span style={{ fontSize: "11px", color: "#64748b" }}>
-                    Camionetas con asignación exclusiva (si no hay RFID, computa al gerente)
-                  </span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <button
-                    onClick={abrirModalNuevaAsignacion}
-                    title="Registrar una nueva camioneta asignada a gerente o jefatura"
-                    style={{
-                      fontSize: "11px", fontWeight: 700, color: "#0284c7", backgroundColor: "#f0f9ff",
-                      border: "1px solid #bae6fd", borderRadius: "6px", padding: "4px 8px", cursor: "pointer",
-                      display: "flex", alignItems: "center", gap: "4px",
-                    }}
-                  >
-                    <Plus size={13} /> Asignar
-                  </button>
-                  <button
-                    onClick={() => setSeccionActiva("exclusivos")}
-                    style={{
-                      fontSize: "11px", fontWeight: 700, color: "#0284c7", background: "none",
-                      border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: "2px",
-                    }}
-                  >
-                    Ver todos <ChevronRight size={13} />
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {equiposAsignadosGerenciaFiltrados.length === 0 ? (
-                  <div style={{
-                    padding: "28px 16px", textAlign: "center", backgroundColor: "#f8fafc",
-                    borderRadius: "8px", border: "1.5px dashed #cbd5e1", color: "#64748b",
-                  }}>
-                    <ShieldCheck size={28} style={{ margin: "0 auto 8px", color: "#0284c7", opacity: 0.6 }} />
-                    <div style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b" }}>
-                      Aún no has registrado camionetas asignadas a Gerencia
-                    </div>
-                    <p style={{ fontSize: "11px", color: "#64748b", margin: "4px auto 12px", maxWidth: "360px" }}>
-                      Detalla qué camionetas están asignadas a gerentes o jefaturas. Si un viaje no tiene tarjeta RFID, el sistema lo asociará automáticamente a su titular.
-                    </p>
-                    <button
-                      onClick={abrirModalNuevaAsignacion}
-                      style={{
-                        fontSize: "11px", fontWeight: 700, color: "#ffffff", backgroundColor: "#0284c7",
-                        border: "none", borderRadius: "6px", padding: "6px 14px", cursor: "pointer",
-                        display: "inline-flex", alignItems: "center", gap: "6px",
-                        boxShadow: "0 2px 4px rgba(2, 132, 199, 0.25)",
-                      }}
-                    >
-                      <Plus size={13} /> + Registrar Primera Camioneta
-                    </button>
-                  </div>
-                ) : (
-                  equiposAsignadosGerenciaFiltrados.slice(0, 5).map((eq, idx) => (
-                    <div key={eq.id || eq.patente} style={{
-                      padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
-                      border: "1.5px solid #e2e8f0",
-                    }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "nowrap" }}>
-                          <span style={{
-                            width: "22px", height: "22px", borderRadius: "50%",
-                            backgroundColor: idx === 0 ? "#0284c7" : "#e0f2fe",
-                            color: idx === 0 ? "#ffffff" : "#0369a1",
-                            fontSize: "11px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
-                            flexShrink: 0,
-                          }}>
-                            {idx + 1}
-                          </span>
-                          <PatenteBadge patente={eq.patente} codigo={eq.codigo_interno} />
-                          <span style={{ fontSize: "11px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "160px" }}>
-                            {eq.proyecto_nombre}
-                          </span>
-                        </div>
-                        <div style={{ textAlign: "right", flexShrink: 0 }}>
-                          <strong style={{ fontSize: "14px", color: "#0f172a" }}>{eq.horas_totales} hrs</strong>
-                        </div>
-                      </div>
-
-                      {/* Detalle del Gerente / Jefatura Asignada */}
-                      <div style={{
-                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                        marginTop: "6px", paddingTop: "6px", borderTop: "1px dashed #e2e8f0",
-                      }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "nowrap", overflow: "hidden" }}>
-                          <span style={{
-                            fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px",
-                            backgroundColor: "#dbeafe", color: "#1e40af", whiteSpace: "nowrap", flexShrink: 0,
-                          }}>
-                            {eq.cargo || "Gerencia"}
-                          </span>
-                          <strong style={{ fontSize: "11px", color: "#0f172a", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
-                            {eq.nombre_responsable}
-                          </strong>
-                          {eq.rut_responsable && eq.rut_responsable !== "S/R" && (
-                            <span style={{ fontSize: "10px", color: "#64748b", whiteSpace: "nowrap", flexShrink: 0 }}>
-                              ({eq.rut_responsable})
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: "11px", color: "#475569", flexShrink: 0, marginLeft: "8px" }}>
-                          <span>{eq.km_totales} km</span>
-                          {eq.litros_totales > 0 && <span style={{ marginLeft: "6px" }}>• {eq.litros_totales} L</span>}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            {/* Apartado Derecho: Top Conductores Más Activos */}
+            {/* Apartado Izquierdo: Top Conductores Más Activos */}
             <div style={{
               backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
               padding: "18px", boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
@@ -1614,7 +1377,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     Top Conductores Más Activos {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : ""}
                   </h3>
                   <span style={{ fontSize: "11px", color: "#64748b" }}>
-                    Choferes y operadores al volante en los {diasPeriodo} días filtrados
+                    Choferes y personal asignado al volante en los {diasPeriodo} días filtrados
                   </span>
                 </div>
                 <button
@@ -1664,7 +1427,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                               <strong style={{ fontSize: "12px", color: "#0f172a" }}>{cond.nombre}</strong>
                               {cond.es_asignado_gerencia && (
                                 <span style={{ fontSize: "9px", fontWeight: 700, backgroundColor: "#dbeafe", color: "#1e40af", padding: "1px 5px", borderRadius: "3px" }}>
-                                  Gerencia
+                                  {cond.cargo || "Gerencia"}
                                 </span>
                               )}
                             </div>
@@ -1690,6 +1453,84 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     </div>
                   ))
                 )}
+              </div>
+            </div>
+
+            {/* Apartado Derecho: Distribución Horaria de Operación (24 Horas) */}
+            <div style={{
+              backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
+              padding: "18px", boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
+              display: "flex", flexDirection: "column", justifyContent: "space-between",
+            }}>
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
+                      <BarChart3 size={16} color="#0369a1" />
+                      Distribución Horaria de Operación (24 Horas)
+                    </h3>
+                    <span style={{ fontSize: "11px", color: "#64748b" }}>
+                      Curva de horas punta de operación en los {diasPeriodo} días filtrados
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setSeccionActiva("horario")}
+                    style={{
+                      fontSize: "11px", fontWeight: 700, color: "#0369a1", background: "none",
+                      border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: "2px",
+                    }}
+                  >
+                    Ver detalle <ChevronRight size={13} />
+                  </button>
+                </div>
+
+                {/* Gráfico compacto de 24 horas */}
+                <div style={{
+                  display: "grid", gridTemplateColumns: "repeat(24, 1fr)",
+                  gap: "4px", alignItems: "flex-end", height: "140px",
+                  padding: "14px 8px 8px", backgroundColor: "#f8fafc",
+                  borderRadius: "8px", border: "1px solid #e2e8f0",
+                }}>
+                  {(dashData?.distribucion_horaria || []).map((d) => {
+                    const hPct = maxHorasDistribucion > 0 ? (d.horas_operacion / maxHorasDistribucion) * 100 : 0;
+                    const esPunta = d.hora >= 7 && d.hora <= 19;
+                    return (
+                      <div key={d.hora} style={{
+                        display: "flex", flexDirection: "column", alignItems: "center",
+                        height: "100%", justifyContent: "flex-end",
+                      }}>
+                        <div
+                          style={{
+                            width: "100%",
+                            height: `${Math.max(6, hPct)}%`,
+                            backgroundColor: esPunta ? "#0284c7" : "#94a3b8",
+                            borderRadius: "3px 3px 0 0",
+                            transition: "all 0.2s ease",
+                            cursor: "pointer",
+                          }}
+                          title={`${d.etiqueta}: ${d.horas_operacion} hrs, ${d.viajes} viajes, ${d.km} km`}
+                        />
+                        <span style={{ fontSize: "8px", color: "#64748b", marginTop: "3px", fontWeight: 600 }}>
+                          {String(d.hora).padStart(2, "0")}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "12px", fontSize: "10px", color: "#64748b", paddingTop: "8px", borderTop: "1px solid #f1f5f9" }}>
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                    <span style={{ width: "8px", height: "8px", backgroundColor: "#0284c7", borderRadius: "2px" }} />
+                    Día (07h-19h)
+                  </span>
+                  <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                    <span style={{ width: "8px", height: "8px", backgroundColor: "#94a3b8", borderRadius: "2px" }} />
+                    Noche (20h-06h)
+                  </span>
+                </div>
+                <span>Pasa el cursor para ver horas por bloque</span>
               </div>
             </div>
           </div>
@@ -2184,154 +2025,6 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════ */}
-      {/* SECCIÓN 6: CAMIONETAS ASIGNADAS A GERENTES O JEFATURAS (BASE PROPIA)    */}
-      {/* ═══════════════════════════════════════════════════════════════════════ */}
-      {seccionActiva === "exclusivos" && (
-        <div style={{
-          backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
-          padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
-            <div>
-              <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
-                <ShieldCheck size={18} color="#0284c7" />
-                Camionetas Asignadas a Gerencia / Jefaturas {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : ""}
-              </h3>
-              <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
-                Base de vehículos con asignación fija a directivos de obra. Si el viaje no registra conductor por sistema RFID, se computa automáticamente al gerente titular.
-              </p>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <button
-                onClick={abrirModalNuevaAsignacion}
-                style={{
-                  backgroundColor: "#0284c7", color: "#ffffff", border: "none",
-                  padding: "7px 14px", borderRadius: "6px", fontSize: "12px", fontWeight: 700,
-                  cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px",
-                  boxShadow: "0 2px 4px rgba(2, 132, 199, 0.25)",
-                }}
-              >
-                <Plus size={14} /> + Asignar Nueva Camioneta
-              </button>
-            </div>
-          </div>
-
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", textAlign: "left" }}>
-              <thead>
-                <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #cbd5e1", color: "#475569" }}>
-                  <th style={{ padding: "10px 12px" }}>Pos.</th>
-                  <th style={{ padding: "10px 12px" }}>Equipo / Patente</th>
-                  <th style={{ padding: "10px 12px" }}>Proyecto</th>
-                  <th style={{ padding: "10px 12px" }}>Gerente / Jefatura Titular</th>
-                  <th style={{ padding: "10px 12px", textAlign: "center" }}>RUT</th>
-                  <th style={{ padding: "10px 12px" }}>Cargo</th>
-                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Horas ({diasPeriodo}d)</th>
-                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Kilometraje</th>
-                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Combustible</th>
-                  <th style={{ padding: "10px 12px", textAlign: "center" }}>Viajes</th>
-                  <th style={{ padding: "10px 12px", textAlign: "center" }}>Días Activo</th>
-                  <th style={{ padding: "10px 12px", textAlign: "center" }}>Acción</th>
-                </tr>
-              </thead>
-              <tbody>
-                {equiposAsignadosGerenciaFiltrados.length === 0 ? (
-                  <tr>
-                    <td colSpan="12" style={{ padding: "36px 16px", textAlign: "center", color: "#64748b" }}>
-                      <ShieldCheck size={32} style={{ margin: "0 auto 8px", color: "#0284c7", opacity: 0.5 }} />
-                      <div style={{ fontSize: "14px", fontWeight: 700, color: "#334155" }}>
-                        No hay camionetas registradas en la base de Gerencia / Jefaturas
-                      </div>
-                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px", marginBottom: "12px" }}>
-                        Registra las camionetas asignadas para que sus horas y consumos se asocien al gerente correspondiente.
-                      </div>
-                      <button
-                        onClick={abrirModalNuevaAsignacion}
-                        style={{
-                          backgroundColor: "#0284c7", color: "#ffffff", border: "none",
-                          padding: "6px 14px", borderRadius: "6px", fontSize: "12px", fontWeight: 700,
-                          cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px",
-                        }}
-                      >
-                        <Plus size={14} /> Registrar Primera Camioneta
-                      </button>
-                    </td>
-                  </tr>
-                ) : (
-                  equiposAsignadosGerenciaFiltrados.map((eq, idx) => (
-                    <tr key={eq.id || eq.patente} style={{ borderBottom: "1.5px solid #e2e8f0" }}>
-                      <td style={{ padding: "10px 12px", fontWeight: 800 }}>
-                        <span style={{
-                          width: "24px", height: "24px", borderRadius: "50%",
-                          backgroundColor: idx === 0 ? "#0284c7" : "#e0f2fe",
-                          color: idx === 0 ? "#ffffff" : "#0369a1",
-                          fontSize: "11px", display: "inline-flex", alignItems: "center", justifyContent: "center",
-                        }}>
-                          #{idx + 1}
-                        </span>
-                      </td>
-                      <td style={{ padding: "10px 12px" }}>
-                        <PatenteBadge patente={eq.patente} codigo={eq.codigo_interno} />
-                        <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
-                          {eq.descripcion}
-                        </div>
-                      </td>
-                      <td style={{ padding: "10px 12px", color: "#475569", maxWidth: "160px" }}>
-                        <span title={eq.proyecto_nombre} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {eq.proyecto_nombre}
-                        </span>
-                      </td>
-                      <td style={{ padding: "10px 12px", fontWeight: 700, color: "#0f172a" }}>
-                        {eq.nombre_responsable}
-                      </td>
-                      <td style={{ padding: "10px 12px", textAlign: "center", color: "#64748b", fontFamily: "monospace" }}>
-                        {eq.rut_responsable}
-                      </td>
-                      <td style={{ padding: "10px 12px" }}>
-                        <span style={{
-                          fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px",
-                          backgroundColor: "#dbeafe", color: "#1e40af", whiteSpace: "nowrap",
-                        }}>
-                          {eq.cargo}
-                        </span>
-                      </td>
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, color: "#0284c7", fontSize: "13px" }}>
-                        {eq.horas_totales} hrs
-                      </td>
-                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>
-                        {eq.km_totales.toLocaleString("es-CL")} km
-                      </td>
-                      <td style={{ padding: "10px 12px", textAlign: "right", color: "#dc2626", fontWeight: 600 }}>
-                        {eq.litros_totales > 0 ? `${eq.litros_totales} L` : "-"}
-                      </td>
-                      <td style={{ padding: "10px 12px", textAlign: "center", color: "#475569" }}>
-                        {eq.viajes_totales}
-                      </td>
-                      <td style={{ padding: "10px 12px", textAlign: "center", color: "#475569" }}>
-                        {eq.dias_activos} / {diasPeriodo}
-                      </td>
-                      <td style={{ padding: "10px 12px", textAlign: "center" }}>
-                        <button
-                          onClick={() => handleEliminarAsignacion(eq)}
-                          title="Eliminar asignación de gerencia"
-                          style={{
-                            background: "none", border: "none", color: "#ef4444",
-                            cursor: "pointer", padding: "4px", borderRadius: "4px",
-                          }}
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════════════ */}
       {/* SECCIÓN 7: TOP CONDUCTORES MÁS ACTIVOS                                  */}
       {/* ═══════════════════════════════════════════════════════════════════════ */}
       {seccionActiva === "conductores" && (
@@ -2495,225 +2188,6 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
               </span>
             </div>
             <span>Pasa el cursor sobre cada hora para ver detalle exacto de horas y viajes.</span>
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════════════ */}
-      {/* MODAL / APARTADO INTERACTIVO: ASIGNAR CAMIONETA A GERENTE O JEFATURA   */}
-      {/* ═══════════════════════════════════════════════════════════════════════ */}
-      {modalAsignacionAbierto && (
-        <div style={{
-          position: "fixed", inset: 0, zIndex: 9999,
-          backgroundColor: "rgba(15, 23, 42, 0.65)",
-          backdropFilter: "blur(4px)",
-          display: "flex", alignItems: "center", justifyContent: "center", padding: "16px",
-        }}>
-          <div style={{
-            backgroundColor: "#ffffff", borderRadius: "14px", border: "2px solid #cbd5e1",
-            boxShadow: "0 10px 25px rgba(0,0,0,0.2)", width: "100%", maxWidth: "520px",
-            overflow: "hidden", display: "flex", flexDirection: "column",
-          }}>
-            {/* Header del Modal */}
-            <div style={{
-              padding: "16px 20px", backgroundColor: "#f8fafc", borderBottom: "1.5px solid #e2e8f0",
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <div style={{ backgroundColor: "#e0f2fe", color: "#0284c7", padding: "6px", borderRadius: "6px" }}>
-                  <ShieldCheck size={18} />
-                </div>
-                <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>
-                  Asignar Camioneta a Gerente o Jefatura
-                </h3>
-              </div>
-              <button
-                onClick={() => setModalAsignacionAbierto(false)}
-                style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", padding: "4px" }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Contenido / Formulario */}
-            <form onSubmit={handleGuardarAsignacion} style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "14px" }}>
-              <div style={{
-                padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f0f9ff",
-                border: "1px solid #bae6fd", fontSize: "11px", color: "#0369a1", lineHeight: 1.4,
-              }}>
-                ℹ️ <strong>Lógica de identificación:</strong> Si esta camioneta realiza viajes y el conductor <strong>no registra tarjeta RFID</strong>, el sistema asociará automáticamente las horas y consumos al gerente aquí asignado. Si otro chofer pasa su tarjeta RFID, se mantendrá el chofer de la tarjeta.
-              </div>
-
-              {errorModalAsig && (
-                <div style={{
-                  padding: "8px 12px", borderRadius: "6px", backgroundColor: "#fee2e2",
-                  border: "1px solid #fecaca", color: "#991b1b", fontSize: "12px", fontWeight: 600,
-                }}>
-                  {errorModalAsig}
-                </div>
-              )}
-
-              {/* Selector de Vehículo / Patente */}
-              <div>
-                <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#334155", marginBottom: "4px" }}>
-                  Patente o Selección de Equipo *
-                </label>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <select
-                    value={formAsignacion.patente}
-                    onChange={(e) => {
-                      const selectedPat = e.target.value;
-                      const eqFound = equiposDisponibles.find(
-                        (item) => normalizarPatente(item.patente) === normalizarPatente(selectedPat)
-                      );
-                      const proyFound = listaProyectos.find((p) => p.id === eqFound?.proyecto_id);
-                      setFormAsignacion((prev) => ({
-                        ...prev,
-                        patente: selectedPat,
-                        codigo_interno: eqFound?.codigo_interno || prev.codigo_interno,
-                        proyecto_id: eqFound?.proyecto_id || prev.proyecto_id,
-                        proyecto_nombre: proyFound?.nombre_proyecto || prev.proyecto_nombre,
-                      }));
-                    }}
-                    style={{
-                      flex: 1, fontSize: "12px", padding: "7px 10px", borderRadius: "6px",
-                      border: "1.5px solid #cbd5e1", backgroundColor: "#ffffff", outline: "none",
-                    }}
-                  >
-                    <option value="">-- Seleccionar de la flota disponible --</option>
-                    {equiposDisponibles.map((eq) => (
-                      <option key={eq.id} value={eq.patente_raw || eq.patente}>
-                        {eq.patente} {eq.codigo_interno ? `[${eq.codigo_interno}]` : ""} {eq.descripcion ? `- ${eq.descripcion}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div style={{ marginTop: "4px" }}>
-                  <span style={{ fontSize: "10px", color: "#64748b" }}>O digita manualmente la patente:</span>
-                  <input
-                    type="text"
-                    placeholder="Ej. PGXT19 o PGXT-19"
-                    value={formAsignacion.patente}
-                    onChange={(e) => setFormAsignacion({ ...formAsignacion, patente: e.target.value.toUpperCase() })}
-                    style={{
-                      marginTop: "2px", width: "100%", fontSize: "12px", padding: "6px 10px",
-                      borderRadius: "6px", border: "1.5px solid #cbd5e1", outline: "none", boxSizing: "border-box",
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Nombre del Gerente / Jefatura */}
-              <div>
-                <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#334155", marginBottom: "4px" }}>
-                  Nombre Completo del Gerente / Jefatura *
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ej. Carlos Mendoza Valenzuela"
-                  value={formAsignacion.nombre_responsable}
-                  onChange={(e) => setFormAsignacion({ ...formAsignacion, nombre_responsable: e.target.value })}
-                  style={{
-                    width: "100%", fontSize: "12px", padding: "7px 10px", borderRadius: "6px",
-                    border: "1.5px solid #cbd5e1", outline: "none", boxSizing: "border-box",
-                  }}
-                />
-              </div>
-
-              {/* RUT y Cargo */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: "10px" }}>
-                <div>
-                  <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#334155", marginBottom: "4px" }}>
-                    RUT
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Ej. 12.345.678-9"
-                    value={formAsignacion.rut_responsable}
-                    onChange={(e) => setFormAsignacion({ ...formAsignacion, rut_responsable: e.target.value })}
-                    style={{
-                      width: "100%", fontSize: "12px", padding: "7px 10px", borderRadius: "6px",
-                      border: "1.5px solid #cbd5e1", outline: "none", boxSizing: "border-box",
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#334155", marginBottom: "4px" }}>
-                    Cargo / Rol
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Ej. Gerente de Proyecto"
-                    value={formAsignacion.cargo}
-                    onChange={(e) => setFormAsignacion({ ...formAsignacion, cargo: e.target.value })}
-                    style={{
-                      width: "100%", fontSize: "12px", padding: "7px 10px", borderRadius: "6px",
-                      border: "1.5px solid #cbd5e1", outline: "none", boxSizing: "border-box",
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Proyecto / Obra Asignada */}
-              <div>
-                <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#334155", marginBottom: "4px" }}>
-                  Proyecto / Faena
-                </label>
-                <select
-                  value={formAsignacion.proyecto_id}
-                  onChange={(e) => {
-                    const selProy = listaProyectos.find((p) => p.id === e.target.value);
-                    setFormAsignacion({
-                      ...formAsignacion,
-                      proyecto_id: e.target.value,
-                      proyecto_nombre: selProy ? selProy.nombre_proyecto : "",
-                    });
-                  }}
-                  style={{
-                    width: "100%", fontSize: "12px", padding: "7px 10px", borderRadius: "6px",
-                    border: "1.5px solid #cbd5e1", outline: "none", boxSizing: "border-box",
-                  }}
-                >
-                  <option value="">-- Faena General / Sin Proyecto Fijo --</option>
-                  {listaProyectos.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.codigo_cc ? `[${p.codigo_cc}] ` : ""}{p.nombre_proyecto}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Footer del Modal */}
-              <div style={{
-                display: "flex", justifyContent: "flex-end", gap: "10px",
-                paddingTop: "12px", borderTop: "1.5px solid #e2e8f0", marginTop: "6px",
-              }}>
-                <button
-                  type="button"
-                  onClick={() => setModalAsignacionAbierto(false)}
-                  style={{
-                    padding: "7px 14px", borderRadius: "6px", fontSize: "12px",
-                    fontWeight: 600, border: "1px solid #cbd5e1", backgroundColor: "#ffffff",
-                    color: "#475569", cursor: "pointer",
-                  }}
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={guardandoAsignacion}
-                  style={{
-                    padding: "7px 16px", borderRadius: "6px", fontSize: "12px",
-                    fontWeight: 700, border: "none", backgroundColor: "#0284c7",
-                    color: "#ffffff", cursor: guardandoAsignacion ? "not-allowed" : "pointer",
-                    display: "inline-flex", alignItems: "center", gap: "6px",
-                    boxShadow: "0 2px 4px rgba(2, 132, 199, 0.25)",
-                  }}
-                >
-                  {guardandoAsignacion ? "Guardando..." : "Guardar Asignación"}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

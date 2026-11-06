@@ -9,9 +9,22 @@ import TelemetriaMapaTab from "./TelemetriaMapaTab";
 import TelemetriaDashboardsTab from "./TelemetriaDashboardsTab";
 import { formatearPatente, clasificarTipoEquipo, TIPOS_EQUIPO_FILTROS } from "../../lib/telemetriaUtils";
 
-export default function TelemetriaTab({ currentUser, hookProps }) {
+export default function TelemetriaTab({
+  currentUser,
+  hookProps,
+  activeSubTab = null,
+  onNavigateToMapa = null,
+}) {
   // Sub-apartados: "dashboards" | "resumen" | "mapa" (Dashboards primero según solicitud)
-  const [subTab, setSubTab] = useState("dashboards");
+  const [internalSubTab, setInternalSubTab] = useState("dashboards");
+  const subTab = activeSubTab || internalSubTab;
+  const setSubTab = (val) => {
+    if (activeSubTab && val === "mapa" && onNavigateToMapa) {
+      onNavigateToMapa(mapaPatente, mapaFecha);
+    } else {
+      setInternalSubTab(val);
+    }
+  };
   const [mapaPatente, setMapaPatente] = useState("");
   const [mapaFecha, setMapaFecha] = useState("");
   const [tipoEquipoFiltro, setTipoEquipoFiltro] = useState("todos"); // "todos" | "camionetas" | "camiones" | "gruas" | "maquinaria" | "buses" | "otros"
@@ -181,7 +194,7 @@ export default function TelemetriaTab({ currentUser, hookProps }) {
           </div>
           <div>
             <h1 style={{ fontSize: "22px", fontWeight: 700, margin: 0, color: "var(--color-text, #0f172a)" }}>
-              Telemetría y Registro de Viajes
+              {activeSubTab === "resumen" ? "Resumen de Viajes y Bitácora de Telemetría" : "Telemetría y Registro de Viajes"}
             </h1>
             <p style={{ margin: "2px 0 0", fontSize: "13px", color: "#64748b" }}>
               Histórico permanente de cada viaje: equipo, chofer, kilometraje, combustible consumido, lugar de inicio y fin.
@@ -252,132 +265,134 @@ export default function TelemetriaTab({ currentUser, hookProps }) {
         </div>
       )}
 
-      {/* ── SELECTOR DE SUB-APARTADOS DESTACADO ───────────────────────────── */}
-      <div style={{
-        backgroundColor: "#ffffff", padding: "8px 10px", borderRadius: "14px",
-        border: "1px solid #cbd5e1", boxShadow: "0 2px 10px rgba(0,0,0,0.04)",
-        display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px",
-        marginBottom: "24px",
-      }}>
-        {/* Tab 1: Dashboards (Primero) */}
-        <button
-          onClick={() => setSubTab("dashboards")}
-          style={{
-            flex: "1 1 200px", display: "flex", alignItems: "center", gap: "12px",
-            padding: "12px 18px", borderRadius: "10px", border: "none", cursor: "pointer",
-            transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-            background: subTab === "dashboards"
-              ? "linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)"
-              : "#f8fafc",
-            color: subTab === "dashboards" ? "#ffffff" : "#334155",
-            boxShadow: subTab === "dashboards"
-              ? "0 4px 14px rgba(79, 70, 229, 0.35)"
-              : "inset 0 0 0 1px #e2e8f0",
-            position: "relative",
-          }}
-        >
-          <div style={{
-            backgroundColor: subTab === "dashboards" ? "rgba(255,255,255,0.2)" : "#ede9fe",
-            color: subTab === "dashboards" ? "#ffffff" : "#4f46e5",
-            padding: "8px", borderRadius: "8px", display: "flex",
-          }}>
-            <BarChart3 size={18} />
-          </div>
-          <div style={{ textAlign: "left", flex: 1 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px" }}>
-              <span style={{ fontSize: "14px", fontWeight: 800, letterSpacing: "-0.2px" }}>
-                1. Dashboards
-              </span>
-              <span style={{
-                fontSize: "10px", fontWeight: 800, padding: "2px 6px", borderRadius: "10px",
-                backgroundColor: subTab === "dashboards" ? "#fbbf24" : "#4f46e5",
-                color: subTab === "dashboards" ? "#1e1b4b" : "#ffffff",
-                letterSpacing: "0.5px", textTransform: "uppercase",
+      {/* ── SELECTOR DE SUB-APARTADOS DESTACADO (Solo si no está controlado externamente) ── */}
+      {!activeSubTab && (
+        <div style={{
+          backgroundColor: "#ffffff", padding: "8px 10px", borderRadius: "14px",
+          border: "1px solid #cbd5e1", boxShadow: "0 2px 10px rgba(0,0,0,0.04)",
+          display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px",
+          marginBottom: "24px",
+        }}>
+          {/* Tab 1: Dashboards (Primero) */}
+          <button
+            onClick={() => setSubTab("dashboards")}
+            style={{
+              flex: "1 1 200px", display: "flex", alignItems: "center", gap: "12px",
+              padding: "12px 18px", borderRadius: "10px", border: "none", cursor: "pointer",
+              transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+              background: subTab === "dashboards"
+                ? "linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)"
+                : "#f8fafc",
+              color: subTab === "dashboards" ? "#ffffff" : "#334155",
+              boxShadow: subTab === "dashboards"
+                ? "0 4px 14px rgba(79, 70, 229, 0.35)"
+                : "inset 0 0 0 1px #e2e8f0",
+              position: "relative",
+            }}
+          >
+            <div style={{
+              backgroundColor: subTab === "dashboards" ? "rgba(255,255,255,0.2)" : "#ede9fe",
+              color: subTab === "dashboards" ? "#ffffff" : "#4f46e5",
+              padding: "8px", borderRadius: "8px", display: "flex",
+            }}>
+              <BarChart3 size={18} />
+            </div>
+            <div style={{ textAlign: "left", flex: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px" }}>
+                <span style={{ fontSize: "14px", fontWeight: 800, letterSpacing: "-0.2px" }}>
+                  1. Dashboards
+                </span>
+                <span style={{
+                  fontSize: "10px", fontWeight: 800, padding: "2px 6px", borderRadius: "10px",
+                  backgroundColor: subTab === "dashboards" ? "#fbbf24" : "#4f46e5",
+                  color: subTab === "dashboards" ? "#1e1b4b" : "#ffffff",
+                  letterSpacing: "0.5px", textTransform: "uppercase",
+                }}>
+                  Top Flota
+                </span>
+              </div>
+              <div style={{
+                fontSize: "11px", fontWeight: 500,
+                color: subTab === "dashboards" ? "rgba(255,255,255,0.85)" : "#64748b",
               }}>
-                Top Flota
-              </span>
+                Métricas, uso y rankings
+              </div>
             </div>
-            <div style={{
-              fontSize: "11px", fontWeight: 500,
-              color: subTab === "dashboards" ? "rgba(255,255,255,0.85)" : "#64748b",
-            }}>
-              Métricas, uso y rankings
-            </div>
-          </div>
-        </button>
+          </button>
 
-        {/* Tab 2: Resumen Viajes (Segundo) */}
-        <button
-          onClick={() => setSubTab("resumen")}
-          style={{
-            flex: "1 1 200px", display: "flex", alignItems: "center", gap: "12px",
-            padding: "12px 18px", borderRadius: "10px", border: "none", cursor: "pointer",
-            transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-            background: subTab === "resumen"
-              ? "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)"
-              : "#f8fafc",
-            color: subTab === "resumen" ? "#ffffff" : "#334155",
-            boxShadow: subTab === "resumen"
-              ? "0 4px 14px rgba(2, 132, 199, 0.35)"
-              : "inset 0 0 0 1px #e2e8f0",
-          }}
-        >
-          <div style={{
-            backgroundColor: subTab === "resumen" ? "rgba(255,255,255,0.2)" : "#e0f2fe",
-            color: subTab === "resumen" ? "#ffffff" : "#0284c7",
-            padding: "8px", borderRadius: "8px", display: "flex",
-          }}>
-            <FileText size={18} />
-          </div>
-          <div style={{ textAlign: "left" }}>
-            <div style={{ fontSize: "14px", fontWeight: 800, letterSpacing: "-0.2px" }}>
-              2. Resumen Viajes
-            </div>
+          {/* Tab 2: Resumen Viajes (Segundo) */}
+          <button
+            onClick={() => setSubTab("resumen")}
+            style={{
+              flex: "1 1 200px", display: "flex", alignItems: "center", gap: "12px",
+              padding: "12px 18px", borderRadius: "10px", border: "none", cursor: "pointer",
+              transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+              background: subTab === "resumen"
+                ? "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)"
+                : "#f8fafc",
+              color: subTab === "resumen" ? "#ffffff" : "#334155",
+              boxShadow: subTab === "resumen"
+                ? "0 4px 14px rgba(2, 132, 199, 0.35)"
+                : "inset 0 0 0 1px #e2e8f0",
+            }}
+          >
             <div style={{
-              fontSize: "11px", fontWeight: 500,
-              color: subTab === "resumen" ? "rgba(255,255,255,0.85)" : "#64748b",
+              backgroundColor: subTab === "resumen" ? "rgba(255,255,255,0.2)" : "#e0f2fe",
+              color: subTab === "resumen" ? "#ffffff" : "#0284c7",
+              padding: "8px", borderRadius: "8px", display: "flex",
             }}>
-              Bitácora y tabla detallada
+              <FileText size={18} />
             </div>
-          </div>
-        </button>
+            <div style={{ textAlign: "left" }}>
+              <div style={{ fontSize: "14px", fontWeight: 800, letterSpacing: "-0.2px" }}>
+                2. Resumen Viajes
+              </div>
+              <div style={{
+                fontSize: "11px", fontWeight: 500,
+                color: subTab === "resumen" ? "rgba(255,255,255,0.85)" : "#64748b",
+              }}>
+                Bitácora y tabla detallada
+              </div>
+            </div>
+          </button>
 
-        {/* Tab 3: Mapa Viajes (Tercero) */}
-        <button
-          onClick={() => setSubTab("mapa")}
-          style={{
-            flex: "1 1 200px", display: "flex", alignItems: "center", gap: "12px",
-            padding: "12px 18px", borderRadius: "10px", border: "none", cursor: "pointer",
-            transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-            background: subTab === "mapa"
-              ? "linear-gradient(135deg, #0d9488 0%, #0f766e 100%)"
-              : "#f8fafc",
-            color: subTab === "mapa" ? "#ffffff" : "#334155",
-            boxShadow: subTab === "mapa"
-              ? "0 4px 14px rgba(13, 148, 136, 0.35)"
-              : "inset 0 0 0 1px #e2e8f0",
-          }}
-        >
-          <div style={{
-            backgroundColor: subTab === "mapa" ? "rgba(255,255,255,0.2)" : "#ccfbf1",
-            color: subTab === "mapa" ? "#ffffff" : "#0d9488",
-            padding: "8px", borderRadius: "8px", display: "flex",
-          }}>
-            <Map size={18} />
-          </div>
-          <div style={{ textAlign: "left" }}>
-            <div style={{ fontSize: "14px", fontWeight: 800, letterSpacing: "-0.2px" }}>
-              3. Mapa Viajes
-            </div>
+          {/* Tab 3: Mapa Viajes (Tercero) */}
+          <button
+            onClick={() => setSubTab("mapa")}
+            style={{
+              flex: "1 1 200px", display: "flex", alignItems: "center", gap: "12px",
+              padding: "12px 18px", borderRadius: "10px", border: "none", cursor: "pointer",
+              transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+              background: subTab === "mapa"
+                ? "linear-gradient(135deg, #0d9488 0%, #0f766e 100%)"
+                : "#f8fafc",
+              color: subTab === "mapa" ? "#ffffff" : "#334155",
+              boxShadow: subTab === "mapa"
+                ? "0 4px 14px rgba(13, 148, 136, 0.35)"
+                : "inset 0 0 0 1px #e2e8f0",
+            }}
+          >
             <div style={{
-              fontSize: "11px", fontWeight: 500,
-              color: subTab === "mapa" ? "rgba(255,255,255,0.85)" : "#64748b",
+              backgroundColor: subTab === "mapa" ? "rgba(255,255,255,0.2)" : "#ccfbf1",
+              color: subTab === "mapa" ? "#ffffff" : "#0d9488",
+              padding: "8px", borderRadius: "8px", display: "flex",
             }}>
-              Recorridos GPS alta fidelidad
+              <Map size={18} />
             </div>
-          </div>
-        </button>
-      </div>
+            <div style={{ textAlign: "left" }}>
+              <div style={{ fontSize: "14px", fontWeight: 800, letterSpacing: "-0.2px" }}>
+                3. Mapa Viajes
+              </div>
+              <div style={{
+                fontSize: "11px", fontWeight: 500,
+                color: subTab === "mapa" ? "rgba(255,255,255,0.85)" : "#64748b",
+              }}>
+                Recorridos GPS alta fidelidad
+              </div>
+            </div>
+          </button>
+        </div>
+      )}
 
       {/* RENDERIZADO CONDICIONAL DE SUB-APARTADOS */}
       {subTab === "mapa" ? (
@@ -995,7 +1010,11 @@ export default function TelemetriaTab({ currentUser, hookProps }) {
                               onClick={() => {
                                 setMapaPatente(viaje.patente);
                                 setMapaFecha(viaje.fecha);
-                                setSubTab("mapa");
+                                if (onNavigateToMapa) {
+                                  onNavigateToMapa(viaje.patente, viaje.fecha);
+                                } else {
+                                  setSubTab("mapa");
+                                }
                               }}
                               title="Ver recorrido y línea de tiempo de este vehículo en el visor de mapa GPS"
                               style={{

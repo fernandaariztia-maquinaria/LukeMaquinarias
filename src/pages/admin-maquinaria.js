@@ -4,7 +4,8 @@ import Link from "next/link";
 import {
   LayoutGrid, MapPin, HardHat, Building2, Users, FileText,
   MessageSquare, CalendarDays, ChevronLeft, ChevronRight,
-  User, Loader2, Tag, TrendingUp, Wrench
+  User, Loader2, Tag, TrendingUp, Wrench,
+  Layers, Radio, UserCheck, BarChart3, FileSpreadsheet, ChevronDown
 } from "lucide-react";
 import { useAdminMaquinaria } from "../components/admin/hooks/useAdminMaquinaria";
 import { useCurrentUser } from "../components/admin/hooks/useCurrentUser";
@@ -22,8 +23,9 @@ import IndicadoresTab from "../components/admin/IndicadoresTab";
 import MantencionTab from "../components/admin/MantencionTab";
 import EimiplannerTab from "../components/admin/EimiplannerTab";
 import TelemetriaTab from "../components/admin/TelemetriaTab";
+import TelemetriaDashboardsTab from "../components/admin/TelemetriaDashboardsTab";
+import TelemetriaMapaTab from "../components/admin/TelemetriaMapaTab";
 import ConductoresOperadoresTab from "../components/admin/ConductoresOperadoresTab";
-import { Layers, Radio, UserCheck } from "lucide-react";
 
 const SIDEBAR_FULL = 220;
 const SIDEBAR_MINI = 58;
@@ -62,6 +64,18 @@ function AdminMaquinariaContent({ currentUser, setCurrentUser, onChangeUser, onS
     if (tab === "pod") setSidebarCollapsed(true);
   }, [tab]);
 
+  // Sub-menú desplegable de Telemetría
+  const [telemetriaOpen, setTelemetriaOpen] = useState(true);
+  const [telemetriaSubTab, setTelemetriaSubTab] = useState("dashboards");
+  const [mapaParams, setMapaParams] = useState({ patente: "PGXT-19", fecha: "2026-10-02" });
+
+  const SUBTABS_TELEMETRIA = [
+    { id: "dashboards",   label: "Dashboards",             icon: BarChart3 },
+    { id: "resumen",      label: "Resumen viajes",         icon: FileSpreadsheet },
+    { id: "mapa",         label: "Mapa Viajes",            icon: MapPin },
+    { id: "conductores",  label: "Conductores/Operadores", icon: UserCheck },
+  ];
+
   const sidebarW = sidebarCollapsed ? SIDEBAR_MINI : SIDEBAR_FULL;
 
   const TABS = [
@@ -69,8 +83,7 @@ function AdminMaquinariaContent({ currentUser, setCurrentUser, onChangeUser, onS
     { id: "mapa",           label: "Mapa Faena",  icon: MapPin },
     { id: "equipos",        label: "Equipos",     icon: HardHat },
     { id: "eimiplanner",    label: "EIMIPLANNER", icon: Layers },
-    { id: "telemetria",     label: "Telemetría",  icon: Radio },
-    { id: "conductores",    label: "Conductores/Operadores", icon: UserCheck },
+    { id: "telemetria",     label: "Telemetría",  icon: Radio, isAccordion: true },
     ...(esAdminGlobal ? [
       { id: "proyectos",      label: "Proyectos",   icon: Building2 },
       { id: "personal",       label: "Personal",    icon: Users },
@@ -94,7 +107,37 @@ function AdminMaquinariaContent({ currentUser, setCurrentUser, onChangeUser, onS
       case "mapa":           return <MapTab hookProps={hookProps} currentUser={currentUser} />;
       case "equipos":        return <EquiposTab hookProps={hookProps} />;
       case "eimiplanner":    return <EimiplannerTab currentUser={currentUser} />;
-      case "telemetria":     return <TelemetriaTab currentUser={currentUser} hookProps={hookProps} />;
+      case "telemetria": {
+        switch (telemetriaSubTab) {
+          case "dashboards":
+            return <TelemetriaDashboardsTab currentUser={currentUser} hookProps={hookProps} />;
+          case "resumen":
+            return (
+              <TelemetriaTab
+                currentUser={currentUser}
+                hookProps={hookProps}
+                activeSubTab="resumen"
+                onNavigateToMapa={(patente, fecha) => {
+                  setMapaParams({ patente, fecha });
+                  setTelemetriaSubTab("mapa");
+                }}
+              />
+            );
+          case "mapa":
+            return (
+              <TelemetriaMapaTab
+                hookProps={hookProps}
+                currentUser={currentUser}
+                fechaInicial={mapaParams.fecha || "2026-10-02"}
+                patenteInicial={mapaParams.patente || "PGXT-19"}
+              />
+            );
+          case "conductores":
+            return <ConductoresOperadoresTab currentUser={currentUser} hookProps={hookProps} />;
+          default:
+            return <TelemetriaDashboardsTab currentUser={currentUser} hookProps={hookProps} />;
+        }
+      }
       case "conductores":    return <ConductoresOperadoresTab currentUser={currentUser} hookProps={hookProps} />;
       case "proyectos":      return <ProyectosTab hookProps={hookProps} />;
       case "especialidades": return <EspecialidadesTab hookProps={hookProps} />;
@@ -181,50 +224,130 @@ function AdminMaquinariaContent({ currentUser, setCurrentUser, onChangeUser, onS
               const Icono = t.icon;
               const active = tab === t.id;
               const badgeCount = t.id === "registros" ? pendientesCount : 0;
+              const isTelemetria = t.id === "telemetria";
+
+              const handleClick = () => {
+                if (isTelemetria) {
+                  if (sidebarCollapsed) {
+                    setSidebarCollapsed(false);
+                    setTab("telemetria");
+                    setTelemetriaOpen(true);
+                  } else {
+                    if (tab !== "telemetria") {
+                      setTab("telemetria");
+                      setTelemetriaOpen(true);
+                    } else {
+                      setTelemetriaOpen(prev => !prev);
+                    }
+                  }
+                } else {
+                  setTab(t.id);
+                }
+              };
+
               return (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  title={sidebarCollapsed ? t.label : undefined}
-                  style={{
-                    width: "100%", display: "flex", alignItems: "center",
-                    gap: sidebarCollapsed ? 0 : "10px",
-                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                    padding: sidebarCollapsed ? "10px 0" : "10px 12px",
-                    borderRadius: "8px", border: "none",
-                    background: active
-                      ? "linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%)"
-                      : "transparent",
-                    color: active ? "white" : "var(--color-text-muted)",
-                    cursor: "pointer", fontSize: "13px", fontWeight: active ? 700 : 500,
-                    marginBottom: "2px", transition: "all 0.2s",
-                    textAlign: "left", position: "relative", overflow: "hidden",
-                  }}
-                  onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(16, 185, 129, 0.08)"; }}
-                  onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
-                >
-                  {sidebarCollapsed && active && (
-                    <div style={{ position: "absolute", left: 0, top: "20%", bottom: "20%", width: "3px", borderRadius: "0 2px 2px 0", background: "white" }} />
-                  )}
-                  <div style={{ position: "relative", flexShrink: 0 }}>
-                    <Icono size={16} />
-                    {sidebarCollapsed && badgeCount > 0 && (
-                      <span style={{ position: "absolute", top: "-4px", right: "-6px", background: "#ef4444", color: "white", borderRadius: "50%", width: "14px", height: "14px", fontSize: "8px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        {badgeCount}
-                      </span>
+                <React.Fragment key={t.id}>
+                  <button
+                    key={t.id}
+                    onClick={handleClick}
+                    title={sidebarCollapsed ? t.label : undefined}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center",
+                      gap: sidebarCollapsed ? 0 : "10px",
+                      justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                      padding: sidebarCollapsed ? "10px 0" : "10px 12px",
+                      borderRadius: "8px", border: "none",
+                      background: active
+                        ? "linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%)"
+                        : "transparent",
+                      color: active ? "white" : "var(--color-text-muted)",
+                      cursor: "pointer", fontSize: "13px", fontWeight: active ? 700 : 500,
+                      marginBottom: "2px", transition: "all 0.2s",
+                      textAlign: "left", position: "relative", overflow: "hidden",
+                    }}
+                    onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(16, 185, 129, 0.08)"; }}
+                    onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                  >
+                    {sidebarCollapsed && active && (
+                      <div style={{ position: "absolute", left: 0, top: "20%", bottom: "20%", width: "3px", borderRadius: "0 2px 2px 0", background: "white" }} />
                     )}
-                  </div>
-                  {!sidebarCollapsed && (
-                    <>
-                      <span style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.label}</span>
-                      {badgeCount > 0 && (
-                        <span style={{ background: "#ef4444", color: "white", borderRadius: "50%", width: "18px", height: "18px", fontSize: "10px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 0 8px rgba(239, 68, 68, 0.4)" }}>
+                    <div style={{ position: "relative", flexShrink: 0 }}>
+                      <Icono size={16} />
+                      {sidebarCollapsed && badgeCount > 0 && (
+                        <span style={{ position: "absolute", top: "-4px", right: "-6px", background: "#ef4444", color: "white", borderRadius: "50%", width: "14px", height: "14px", fontSize: "8px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>
                           {badgeCount}
                         </span>
                       )}
-                    </>
+                    </div>
+                    {!sidebarCollapsed && (
+                      <>
+                        <span style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.label}</span>
+                        {badgeCount > 0 && (
+                          <span style={{ background: "#ef4444", color: "white", borderRadius: "50%", width: "18px", height: "18px", fontSize: "10px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 0 8px rgba(239, 68, 68, 0.4)" }}>
+                            {badgeCount}
+                          </span>
+                        )}
+                        {isTelemetria && (
+                          <ChevronDown
+                            size={14}
+                            style={{
+                              transform: telemetriaOpen ? "rotate(0deg)" : "rotate(-90deg)",
+                              transition: "transform 0.2s ease",
+                              color: active ? "white" : "var(--color-text-muted)",
+                              flexShrink: 0,
+                            }}
+                          />
+                        )}
+                      </>
+                    )}
+                  </button>
+
+                  {/* Sub-menú desplegable de Telemetría */}
+                  {isTelemetria && !sidebarCollapsed && telemetriaOpen && (
+                    <div style={{
+                      marginLeft: "18px",
+                      paddingLeft: "8px",
+                      borderLeft: "2px solid rgba(16, 185, 129, 0.35)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "2px",
+                      marginTop: "2px",
+                      marginBottom: "6px",
+                    }}>
+                      {SUBTABS_TELEMETRIA.map(sub => {
+                        const SubIcon = sub.icon;
+                        const isSubActive = tab === "telemetria" && telemetriaSubTab === sub.id;
+                        return (
+                          <button
+                            key={sub.id}
+                            onClick={() => {
+                              setTab("telemetria");
+                              setTelemetriaSubTab(sub.id);
+                            }}
+                            style={{
+                              width: "100%", display: "flex", alignItems: "center", gap: "8px",
+                              padding: "7px 10px", borderRadius: "6px", border: "none",
+                              background: isSubActive
+                                ? "rgba(16, 185, 129, 0.16)"
+                                : "transparent",
+                              color: isSubActive ? "#10b981" : "var(--color-text-muted)",
+                              cursor: "pointer", fontSize: "12px",
+                              fontWeight: isSubActive ? 700 : 500,
+                              textAlign: "left", transition: "all 0.15s ease",
+                            }}
+                            onMouseEnter={e => { if (!isSubActive) e.currentTarget.style.background = "rgba(16, 185, 129, 0.08)"; }}
+                            onMouseLeave={e => { if (!isSubActive) e.currentTarget.style.background = "transparent"; }}
+                          >
+                            <SubIcon size={14} style={{ color: isSubActive ? "#10b981" : "inherit", flexShrink: 0 }} />
+                            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
+                              {sub.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   )}
-                </button>
+                </React.Fragment>
               );
             })}
           </nav>
