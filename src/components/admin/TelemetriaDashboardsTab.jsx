@@ -3,9 +3,58 @@ import {
   BarChart3, Clock, Fuel, Gauge, TrendingUp, Filter, Calendar,
   Building2, Car, User, Search, RefreshCw, AlertTriangle,
   CheckCircle2, Award, ArrowUpRight, Flame, Layers, Sliders,
-  Info, ChevronRight, FileSpreadsheet
+  Info, ChevronRight, FileSpreadsheet, UserCheck, CalendarDays
 } from "lucide-react";
 import { formatearPatente, normalizarPatente, clasificarTipoEquipo, TIPOS_EQUIPO_FILTROS } from "../../lib/telemetriaUtils";
+
+/**
+ * Componente de visualización unificada para patentes de vehículos:
+ * - Previene saltos de línea indeseados (PGXT- en una línea y 19 en otra) usando whiteSpace: nowrap y guión no rompible.
+ * - Da formato estético tipo placa patente chilena.
+ */
+function PatenteBadge({ patente, codigo, color = "#0f172a", bg = "#f8fafc", border = "#94a3b8" }) {
+  const formatted = formatearPatente(patente);
+  return (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", flexWrap: "nowrap", flexShrink: 0 }}>
+      <span
+        style={{
+          display: "inline-block",
+          whiteSpace: "nowrap",
+          wordBreak: "keep-all",
+          fontFamily: "'Roboto Mono', 'SF Pro Mono', 'Segoe UI Mono', monospace",
+          fontWeight: 800,
+          fontSize: "12px",
+          color: color,
+          backgroundColor: bg,
+          border: `1.5px solid ${border}`,
+          boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+          padding: "2px 7px",
+          borderRadius: "5px",
+          letterSpacing: "0.5px",
+          flexShrink: 0,
+        }}
+      >
+        {formatted}
+      </span>
+      {codigo && (
+        <span
+          style={{
+            fontSize: "11px",
+            backgroundColor: "#e2e8f0",
+            padding: "1px 6px",
+            borderRadius: "4px",
+            color: "#475569",
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+          }}
+        >
+          {codigo}
+        </span>
+      )}
+    </div>
+  );
+}
 
 export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
   // 1. Verificación de Administrador
@@ -19,12 +68,12 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
   const userProyectoId = currentUser?.proyecto_actual_id || "";
 
   // 2. Filtros de Consulta
-  // Por defecto cubre todo octubre (datos históricos de CSV)
+  // Por defecto cubre el mes de octubre (datos históricos de telemetría cargados)
   const [desde, setDesde] = useState("2026-10-01");
   const [hasta, setHasta] = useState(() => new Date().toISOString().slice(0, 10));
   const [proyectoFiltro, setProyectoFiltro] = useState(() => (esAdmin ? "" : userProyectoId));
-  const [patenteFiltro, setPatenteFiltro] = useState("");
-  const [conductorFiltro, setConductorFiltro] = useState("");
+  // Filtro unificado de búsqueda (Conductor, RUT, Patente o Vehículo)
+  const [busquedaFiltro, setBusquedaFiltro] = useState("");
   const [tipoEquipoFiltro, setTipoEquipoFiltro] = useState("todos"); // "todos" | "camionetas" | "camiones" | "gruas" | "maquinaria" | "buses" | "otros"
 
   // 3. Parámetro de Meta de Utilización Editable por el Usuario
@@ -37,7 +86,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
   const [errorMsg, setErrorMsg] = useState(null);
   const [dashData, setDashData] = useState(null);
 
-  // Vista de Dashboard activa ("general" | "horas" | "combustible" | "utilizacion" | "kilometraje" | "conductores" | "horario")
+  // Vista de Dashboard activa ("general" | "horas" | "combustible" | "utilizacion" | "kilometraje" | "exclusivos" | "conductores" | "horario")
   const [seccionActiva, setSeccionActiva] = useState("general");
   const [filtroUtilizacion, setFiltroUtilizacion] = useState("todos"); // "todos" | "optimo" | "en_rango" | "subutilizado" | "sobreutilizado"
 
@@ -54,7 +103,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
     return f ? f.label : "Equipos";
   }, [tipoEquipoFiltro]);
 
-  // Cargar datos desde la API (incluyendo tipo_equipo para recálculo exacto en backend)
+  // Cargar datos desde la API
   const cargarDashboards = useCallback(async () => {
     setCargando(true);
     setErrorMsg(null);
@@ -63,8 +112,9 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
       if (desde) params.set("desde", desde);
       if (hasta) params.set("hasta", hasta);
       if (proyectoFiltro) params.set("proyecto_id", proyectoFiltro);
-      if (patenteFiltro) params.set("patente", patenteFiltro);
-      if (conductorFiltro) params.set("conductor", conductorFiltro);
+      if (busquedaFiltro && busquedaFiltro.trim() !== "") {
+        params.set("busqueda", busquedaFiltro.trim());
+      }
       if (tipoEquipoFiltro && tipoEquipoFiltro !== "todos") {
         params.set("tipo_equipo", tipoEquipoFiltro);
       }
@@ -84,7 +134,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
     } finally {
       setCargando(false);
     }
-  }, [desde, hasta, proyectoFiltro, patenteFiltro, conductorFiltro, tipoEquipoFiltro, currentUser?.rol, userProyectoId]);
+  }, [desde, hasta, proyectoFiltro, busquedaFiltro, tipoEquipoFiltro, currentUser?.rol, userProyectoId]);
 
   useEffect(() => {
     cargarDashboards();
@@ -124,12 +174,19 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
     return list.filter((e) => (e.tipo_clasificado || clasificarTipoEquipo(e)) === tipoEquipoFiltro);
   }, [dashData?.rankings?.top_ralenti, tipoEquipoFiltro]);
 
+  // Equipos / Camionetas de Uso Exclusivo (1 solo conductor asignado - Gerentes / Jefaturas)
+  const equiposUsoExclusivoFiltrados = useMemo(() => {
+    const list = dashData?.rankings?.equipos_uso_exclusivo || [];
+    if (tipoEquipoFiltro === "todos") return list;
+    return list.filter((e) => (e.tipo_clasificado || clasificarTipoEquipo(e)) === tipoEquipoFiltro);
+  }, [dashData?.rankings?.equipos_uso_exclusivo, tipoEquipoFiltro]);
+
   // KPIs globales dinámicos que se actualizan inmediatamente al cambiar el filtro de tipo de equipo
   const kpisDinamicos = useMemo(() => {
     if (!dashData?.kpis_globales) return null;
     if (tipoEquipoFiltro === "todos") return dashData.kpis_globales;
 
-    // Calcular KPIs instantáneos (0ms de latencia) a partir de los equipos filtrados
+    // Calcular KPIs instantáneos a partir de los equipos filtrados
     const totalVehiculos = topHorasFiltradas.length;
     const totalHoras =
       Math.round(
@@ -183,7 +240,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
     };
   }, [dashData?.kpis_globales, tipoEquipoFiltro, topHorasFiltradas]);
 
-  // Conductores filtrados por tipo de equipo (muestra choferes que operaron el tipo de vehículo seleccionado)
+  // Conductores filtrados por tipo de equipo
   const topConductoresFiltrados = useMemo(() => {
     const list = dashData?.rankings?.top_conductores || [];
     if (tipoEquipoFiltro === "todos") return list;
@@ -224,7 +281,6 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
 
       return {
         ...eq,
-        patente: formatearPatente(eq.patente),
         horas_meta: horasMetaCalculadas,
         pct_utilizacion: pctUtilizacion,
         estado_utilizacion: estado,
@@ -242,13 +298,6 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
 
   // Proyectos disponibles para selector
   const listaProyectos = dashData?.proyectos_disponibles || [];
-  const listaEquipos = dashData?.equipos_disponibles || [];
-
-  // Filtrar lista de equipos para el selector por tipo de equipo
-  const listaEquiposFiltrada = useMemo(() => {
-    if (tipoEquipoFiltro === "todos") return listaEquipos;
-    return listaEquipos.filter((e) => (e.tipo_clasificado || clasificarTipoEquipo(e)) === tipoEquipoFiltro);
-  }, [listaEquipos, tipoEquipoFiltro]);
 
   // Encontrar nombre del proyecto actual si no es admin
   const nombreProyectoObra = useMemo(() => {
@@ -283,17 +332,25 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-      {/* ── BARRA SUPERIOR DE FILTROS ───────────────────────────────────────── */}
+      {/* ── BARRA SUPERIOR DE FILTROS MODULARES CON BORDES VISIBLES ─────────── */}
       <div style={{
-        backgroundColor: "#ffffff", padding: "18px 20px", borderRadius: "12px",
-        border: "1px solid #e2e8f0", boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+        backgroundColor: "#ffffff",
+        padding: "18px 20px",
+        borderRadius: "14px",
+        border: "2px solid #cbd5e1",
+        boxShadow: "0 2px 10px rgba(0,0,0,0.04)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "16px",
       }}>
+        {/* Cabecera del Panel de Filtros */}
         <div style={{
           display: "flex", flexWrap: "wrap", alignItems: "center",
-          justifyContent: "space-between", gap: "16px", marginBottom: "14px",
+          justifyContent: "space-between", gap: "12px", paddingBottom: "14px",
+          borderBottom: "1.5px solid #e2e8f0",
         }}>
           <div>
-            <h2 style={{ fontSize: "16px", fontWeight: 700, margin: 0, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
+            <h2 style={{ fontSize: "16px", fontWeight: 800, margin: 0, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
               <Filter size={18} color="#0284c7" />
               Filtros de Análisis de Flota
             </h2>
@@ -302,211 +359,249 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
             </p>
           </div>
 
-          {/* Accesos rápidos de fechas */}
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-            <span style={{ fontSize: "11px", fontWeight: 600, color: "#64748b" }}>Rango rápido:</span>
-            <button
-              onClick={() => { setDesde("2026-10-01"); setHasta("2026-10-31"); }}
-              style={{
-                fontSize: "11px", padding: "4px 10px", borderRadius: "6px",
-                backgroundColor: desde === "2026-10-01" && hasta === "2026-10-31" ? "#e0f2fe" : "#f1f5f9",
-                color: desde === "2026-10-01" && hasta === "2026-10-31" ? "#0369a1" : "#475569",
-                border: "1px solid #cbd5e1", cursor: "pointer", fontWeight: 600,
-              }}
-            >
-              Mes Octubre 2026
-            </button>
-            <button
-              onClick={() => { setDesde("2026-10-15"); setHasta("2026-10-31"); }}
-              style={{
-                fontSize: "11px", padding: "4px 10px", borderRadius: "6px",
-                backgroundColor: desde === "2026-10-15" && hasta === "2026-10-31" ? "#e0f2fe" : "#f1f5f9",
-                color: desde === "2026-10-15" && hasta === "2026-10-31" ? "#0369a1" : "#475569",
-                border: "1px solid #cbd5e1", cursor: "pointer", fontWeight: 600,
-              }}
-            >
-              Segunda Quincena
-            </button>
-            <button
-              onClick={() => { setDesde("2026-10-01"); setHasta("2026-10-15"); }}
-              style={{
-                fontSize: "11px", padding: "4px 10px", borderRadius: "6px",
-                backgroundColor: desde === "2026-10-01" && hasta === "2026-10-15" ? "#e0f2fe" : "#f1f5f9",
-                color: desde === "2026-10-01" && hasta === "2026-10-15" ? "#0369a1" : "#475569",
-                border: "1px solid #cbd5e1", cursor: "pointer", fontWeight: 600,
-              }}
-            >
-              Primera Quincena
-            </button>
+          {/* Badge informativo de período filtrado */}
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: "6px",
+            padding: "6px 12px", borderRadius: "8px",
+            backgroundColor: "#f0f9ff", border: "1.5px solid #bae6fd",
+            fontSize: "12px", fontWeight: 700, color: "#0369a1",
+          }}>
+            <CalendarDays size={14} color="#0284c7" />
+            <span>Datos filtrados: {diasPeriodo} días ({desde} al {hasta})</span>
           </div>
         </div>
 
-        {/* Controles de Filtros */}
+        {/* Grilla de Módulos de Filtro Separados por Bordes Notorios */}
         <div style={{
-          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-          gap: "14px", alignItems: "flex-end",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))",
+          gap: "14px",
         }}>
-          {/* Rango de Fechas (Entre) */}
-          <div>
-            <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>
-              <Calendar size={13} style={{ display: "inline", marginRight: "4px", verticalAlign: "-1px" }} />
-              Fecha Desde:
-            </label>
-            <input
-              type="date"
-              value={desde}
-              onChange={(e) => setDesde(e.target.value)}
-              style={{
-                width: "100%", fontSize: "12px", padding: "8px 10px", borderRadius: "8px",
-                border: "1px solid #cbd5e1", backgroundColor: "#f8fafc", outline: "none",
-                fontWeight: 600, color: "#0f172a",
-              }}
-            />
-          </div>
-
-          <div>
-            <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>
-              <Calendar size={13} style={{ display: "inline", marginRight: "4px", verticalAlign: "-1px" }} />
-              Fecha Hasta:
-            </label>
-            <input
-              type="date"
-              value={hasta}
-              max={new Date().toISOString().slice(0, 10)}
-              onChange={(e) => setHasta(e.target.value)}
-              style={{
-                width: "100%", fontSize: "12px", padding: "8px 10px", borderRadius: "8px",
-                border: "1px solid #cbd5e1", backgroundColor: "#f8fafc", outline: "none",
-                fontWeight: 600, color: "#0f172a",
-              }}
-            />
-          </div>
-
-          {/* Filtro de Proyecto (Sólo Administradores pueden cambiar; Obra bloqueada a la suya) */}
-          <div>
-            <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>
-              <Building2 size={13} style={{ display: "inline", marginRight: "4px", verticalAlign: "-1px" }} />
-              Proyecto / Obra:
-            </label>
-            {esAdmin ? (
-              <select
-                value={proyectoFiltro}
-                onChange={(e) => setProyectoFiltro(e.target.value)}
-                style={{
-                  width: "100%", fontSize: "12px", padding: "8px 10px", borderRadius: "8px",
-                  border: "1px solid #cbd5e1", backgroundColor: "#f8fafc", outline: "none",
-                  fontWeight: 600, color: "#0f172a",
-                }}
-              >
-                <option value="">-- Todos los Proyectos (Flota Completa) --</option>
-                {listaProyectos.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.codigo_cc ? `[${p.codigo_cc}] ` : ""}{p.nombre_proyecto}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <div style={{
-                display: "flex", alignItems: "center", gap: "6px",
-                padding: "8px 10px", borderRadius: "8px",
-                backgroundColor: "#fef3c7", border: "1px solid #fde68a",
-                fontSize: "12px", fontWeight: 600, color: "#92400e",
-              }} title="Acceso limitado a su obra asignada">
-                <span>🔒 {nombreProyectoObra}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Filtro de Camioneta / Equipo (igual que en Mapa Viajes) */}
-          <div>
-            <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>
-              <Car size={13} style={{ display: "inline", marginRight: "4px", verticalAlign: "-1px" }} />
-              Vehículo / Camioneta:
-            </label>
-            <select
-              value={patenteFiltro}
-              onChange={(e) => setPatenteFiltro(e.target.value)}
-              style={{
-                width: "100%", fontSize: "12px", padding: "8px 10px", borderRadius: "8px",
-                border: "1px solid #cbd5e1", backgroundColor: "#f8fafc", outline: "none",
-                fontWeight: 600, color: "#0f172a",
-              }}
-            >
-              <option value="">-- Todos los Vehículos --</option>
-              {listaEquiposFiltrada.map((eq) => {
-                const pat = eq.patente || "";
-                const cod = eq.codigo_interno || "";
-                const desc = eq.descripcion || "";
-                return (
-                  <option key={eq.id} value={pat || cod}>
-                    {cod ? `[${cod}] ` : ""}{formatearPatente(pat)}{desc ? ` - ${desc}` : ""}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-
-          {/* Filtro o Buscador de Conductor */}
-          <div>
-            <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>
-              <User size={13} style={{ display: "inline", marginRight: "4px", verticalAlign: "-1px" }} />
-              Buscador Conductor:
-            </label>
-            <div style={{ position: "relative" }}>
-              <input
-                type="text"
-                placeholder="Nombre o RUT de conductor..."
-                value={conductorFiltro}
-                onChange={(e) => setConductorFiltro(e.target.value)}
-                style={{
-                  width: "100%", fontSize: "12px", padding: "8px 28px 8px 10px", borderRadius: "8px",
-                  border: "1px solid #cbd5e1", backgroundColor: "#f8fafc", outline: "none",
-                  fontWeight: 600, color: "#0f172a",
-                }}
-              />
-              {conductorFiltro ? (
+          {/* Módulo 1: Rango Temporal de Fechas */}
+          <div style={{
+            backgroundColor: "#f8fafc",
+            border: "1.5px solid #cbd5e1",
+            borderRadius: "10px",
+            padding: "12px 14px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.02)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: "12px", fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: "6px" }}>
+                <Calendar size={14} color="#0284c7" />
+                Rango Temporal (Entre Fechas)
+              </span>
+              <div style={{ display: "flex", gap: "4px" }}>
                 <button
-                  onClick={() => setConductorFiltro("")}
+                  onClick={() => { setDesde("2026-10-01"); setHasta("2026-10-31"); }}
+                  title="Octubre completo"
                   style={{
-                    position: "absolute", right: "8px", top: "50%", transform: "translateY(-50%)",
-                    background: "none", border: "none", color: "#94a3b8", cursor: "pointer",
-                    fontSize: "12px", fontWeight: "bold",
+                    fontSize: "10px", padding: "2px 7px", borderRadius: "4px",
+                    backgroundColor: desde === "2026-10-01" && hasta === "2026-10-31" ? "#0284c7" : "#e2e8f0",
+                    color: desde === "2026-10-01" && hasta === "2026-10-31" ? "#ffffff" : "#475569",
+                    border: "none", cursor: "pointer", fontWeight: 700,
                   }}
                 >
-                  ✕
+                  Octubre
                 </button>
+                <button
+                  onClick={() => { setDesde("2026-10-01"); setHasta("2026-10-15"); }}
+                  title="1ra Quincena Octubre"
+                  style={{
+                    fontSize: "10px", padding: "2px 7px", borderRadius: "4px",
+                    backgroundColor: desde === "2026-10-01" && hasta === "2026-10-15" ? "#0284c7" : "#e2e8f0",
+                    color: desde === "2026-10-01" && hasta === "2026-10-15" ? "#ffffff" : "#475569",
+                    border: "none", cursor: "pointer", fontWeight: 700,
+                  }}
+                >
+                  1ra Q.
+                </button>
+                <button
+                  onClick={() => { setDesde("2026-10-15"); setHasta("2026-10-31"); }}
+                  title="2da Quincena Octubre"
+                  style={{
+                    fontSize: "10px", padding: "2px 7px", borderRadius: "4px",
+                    backgroundColor: desde === "2026-10-15" && hasta === "2026-10-31" ? "#0284c7" : "#e2e8f0",
+                    color: desde === "2026-10-15" && hasta === "2026-10-31" ? "#ffffff" : "#475569",
+                    border: "none", cursor: "pointer", fontWeight: 700,
+                  }}
+                >
+                  2da Q.
+                </button>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "3px" }}>
+                  Desde:
+                </label>
+                <input
+                  type="date"
+                  value={desde}
+                  onChange={(e) => setDesde(e.target.value)}
+                  style={{
+                    width: "100%", fontSize: "12px", padding: "6px 8px", borderRadius: "6px",
+                    border: "1.5px solid #cbd5e1", backgroundColor: "#ffffff", outline: "none",
+                    fontWeight: 600, color: "#0f172a", boxSizing: "border-box",
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "3px" }}>
+                  Hasta:
+                </label>
+                <input
+                  type="date"
+                  value={hasta}
+                  max={new Date().toISOString().slice(0, 10)}
+                  onChange={(e) => setHasta(e.target.value)}
+                  style={{
+                    width: "100%", fontSize: "12px", padding: "6px 8px", borderRadius: "6px",
+                    border: "1.5px solid #cbd5e1", backgroundColor: "#ffffff", outline: "none",
+                    fontWeight: 600, color: "#0f172a", boxSizing: "border-box",
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Módulo 2: Proyecto / Obra */}
+          <div style={{
+            backgroundColor: "#f8fafc",
+            border: "1.5px solid #cbd5e1",
+            borderRadius: "10px",
+            padding: "12px 14px",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            gap: "8px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.02)",
+          }}>
+            <span style={{ fontSize: "12px", fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: "6px" }}>
+              <Building2 size={14} color="#0284c7" />
+              Proyecto / Obra (Faena)
+            </span>
+            <div>
+              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "3px" }}>
+                {esAdmin ? "Seleccionar Faena:" : "Obra Asignada:"}
+              </label>
+              {esAdmin ? (
+                <select
+                  value={proyectoFiltro}
+                  onChange={(e) => setProyectoFiltro(e.target.value)}
+                  style={{
+                    width: "100%", fontSize: "12px", padding: "6px 8px", borderRadius: "6px",
+                    border: "1.5px solid #cbd5e1", backgroundColor: "#ffffff", outline: "none",
+                    fontWeight: 600, color: "#0f172a", boxSizing: "border-box",
+                  }}
+                >
+                  <option value="">-- Todos los Proyectos (Flota Completa) --</option>
+                  {listaProyectos.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.codigo_cc ? `[${p.codigo_cc}] ` : ""}{p.nombre_proyecto}
+                    </option>
+                  ))}
+                </select>
               ) : (
-                <Search size={13} style={{ position: "absolute", right: "8px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+                <div style={{
+                  display: "flex", alignItems: "center", gap: "6px",
+                  padding: "6px 10px", borderRadius: "6px",
+                  backgroundColor: "#fef3c7", border: "1.5px solid #fde68a",
+                  fontSize: "12px", fontWeight: 600, color: "#92400e",
+                }} title="Acceso limitado a su obra asignada">
+                  <span>🔒 {nombreProyectoObra}</span>
+                </div>
               )}
             </div>
           </div>
 
-          {/* Botón Aplicar / Recargar */}
-          <div>
-            <button
-              onClick={cargarDashboards}
-              disabled={cargando}
-              style={{
-                width: "100%", backgroundColor: cargando ? "#94a3b8" : "#0284c7",
-                color: "#ffffff", border: "none", padding: "9px 16px", borderRadius: "8px",
-                fontSize: "12px", fontWeight: 700, cursor: cargando ? "not-allowed" : "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
-                boxShadow: "0 2px 4px rgba(2, 132, 199, 0.25)",
-              }}
-            >
-              <RefreshCw size={14} className={cargando ? "animate-spin" : ""} />
-              {cargando ? "Consultando..." : "Actualizar"}
-            </button>
+          {/* Módulo 3: Buscador Unificado Conductor / Vehículo */}
+          <div style={{
+            backgroundColor: "#f8fafc",
+            border: "1.5px solid #cbd5e1",
+            borderRadius: "10px",
+            padding: "12px 14px",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            gap: "8px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.02)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: "12px", fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: "6px" }}>
+                <Search size={14} color="#0284c7" />
+                Buscador Conductor / Vehículo
+              </span>
+              <span style={{ fontSize: "10px", backgroundColor: "#e0f2fe", color: "#0369a1", padding: "1px 6px", borderRadius: "4px", fontWeight: 600 }}>
+                Unificado
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+              <div style={{ position: "relative", flex: 1 }}>
+                <input
+                  type="text"
+                  placeholder="Chofer, RUT o Patente (ej. PGXT19)..."
+                  value={busquedaFiltro}
+                  onChange={(e) => setBusquedaFiltro(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") cargarDashboards();
+                  }}
+                  style={{
+                    width: "100%", fontSize: "12px", padding: "6px 28px 6px 8px", borderRadius: "6px",
+                    border: "1.5px solid #cbd5e1", backgroundColor: "#ffffff", outline: "none",
+                    fontWeight: 600, color: "#0f172a", boxSizing: "border-box",
+                  }}
+                />
+                {busquedaFiltro ? (
+                  <button
+                    onClick={() => setBusquedaFiltro("")}
+                    style={{
+                      position: "absolute", right: "8px", top: "50%", transform: "translateY(-50%)",
+                      background: "none", border: "none", color: "#94a3b8", cursor: "pointer",
+                      fontSize: "12px", fontWeight: "bold",
+                    }}
+                  >
+                    ✕
+                  </button>
+                ) : (
+                  <Search size={13} style={{ position: "absolute", right: "8px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+                )}
+              </div>
+              <button
+                onClick={cargarDashboards}
+                disabled={cargando}
+                title="Actualizar datos con los filtros seleccionados"
+                style={{
+                  backgroundColor: cargando ? "#94a3b8" : "#0284c7",
+                  color: "#ffffff", border: "none", padding: "7px 14px", borderRadius: "6px",
+                  fontSize: "12px", fontWeight: 700, cursor: cargando ? "not-allowed" : "pointer",
+                  display: "inline-flex", alignItems: "center", gap: "6px", flexShrink: 0,
+                  boxShadow: "0 2px 4px rgba(2, 132, 199, 0.25)",
+                }}
+              >
+                <RefreshCw size={13} className={cargando ? "animate-spin" : ""} />
+                {cargando ? "Cargando..." : "Buscar"}
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* ── BOTONES DE FILTRO POR TIPO DE EQUIPO ─────────────────────── */}
+        {/* Módulo 4: Filtro por Tipo de Equipo con Borde Notorio */}
         <div style={{
-          marginTop: "16px", paddingTop: "14px", borderTop: "1px solid #f1f5f9",
-          display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px",
+          backgroundColor: "#f0f9ff",
+          border: "1.5px solid #bae6fd",
+          borderRadius: "10px",
+          padding: "10px 14px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "10px",
         }}>
-          <span style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "flex", alignItems: "center", gap: "6px" }}>
-            <Layers size={14} color="#0284c7" />
+          <span style={{ fontSize: "12px", fontWeight: 700, color: "#0369a1", display: "flex", alignItems: "center", gap: "6px" }}>
+            <Layers size={15} color="#0284c7" />
             Tipo de Equipo:
           </span>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
@@ -519,7 +614,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                   style={{
                     fontSize: "11px", fontWeight: 700, padding: "5px 12px", borderRadius: "6px",
                     cursor: "pointer", transition: "all 0.15s ease",
-                    border: activo ? "1px solid #0284c7" : "1px solid #cbd5e1",
+                    border: activo ? "1.5px solid #0284c7" : "1.5px solid #cbd5e1",
                     backgroundColor: activo ? "#0284c7" : "#ffffff",
                     color: activo ? "#ffffff" : "#475569",
                     boxShadow: activo ? "0 2px 4px rgba(2, 132, 199, 0.25)" : "none",
@@ -537,7 +632,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
       {errorMsg && (
         <div style={{
           padding: "14px 18px", borderRadius: "10px", backgroundColor: "#fee2e2",
-          border: "1px solid #fecaca", color: "#991b1b", fontSize: "13px", fontWeight: 600,
+          border: "1.5px solid #fca5a5", color: "#991b1b", fontSize: "13px", fontWeight: 600,
           display: "flex", alignItems: "center", gap: "10px",
         }}>
           <AlertTriangle size={18} />
@@ -548,9 +643,9 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
       {/* ── PANEL DE CONFIGURACIÓN DE META DE UTILIZACIÓN DINÁMICA ────────────── */}
       <div style={{
         backgroundColor: "#f8fafc", padding: "16px 20px", borderRadius: "12px",
-        border: "1px solid #cbd5e1", display: "flex", flexWrap: "wrap",
+        border: "1.5px solid #cbd5e1", display: "flex", flexWrap: "wrap",
         alignItems: "center", justifyContent: "space-between", gap: "16px",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+        boxShadow: "0 1px 4px rgba(0,0,0,0.03)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <div style={{
@@ -567,7 +662,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
               </span>
             </div>
             <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
-              Digita las horas que debiese operar un equipo; los porcentajes de utilización se actualizarán al instante.
+              Digita las horas esperadas para calcular el % de cumplimiento sobre los <strong>{diasPeriodo} días filtrados</strong>.
             </p>
           </div>
         </div>
@@ -637,128 +732,176 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                   textAlign: "center", backgroundColor: "#ffffff", color: "#0f172a",
                 }}
               />
-              <span style={{ fontSize: "12px", color: "#64748b" }}>horas en el período</span>
+              <span style={{ fontSize: "12px", color: "#64748b" }}>horas en los {diasPeriodo} días</span>
             </div>
           )}
         </div>
       </div>
 
-      {/* ── TARJETAS KPIS GLOBALES DE LA FLOTA (ACTUALIZADAS DINÁMICAMENTE POR TIPO) ── */}
+      {/* ── TARJETAS KPIS GLOBALES CON BORDES NOTORIOS Y ESPECIFICACIÓN DE DÍAS ── */}
       {kpisDinamicos && (
         <div style={{
-          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: "14px",
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+          gap: "16px",
         }}>
           {/* KPI 1: Horas Totales con Desglose de Ralentí */}
           <div style={{
             backgroundColor: "#ffffff", padding: "16px", borderRadius: "12px",
-            border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.03)",
+            border: "1.5px solid #cbd5e1", borderTop: "4px solid #0284c7",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.03)", display: "flex", flexDirection: "column", justifyContent: "space-between",
           }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-              <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>
-                Horas de Motor ({tipoEquipoFiltro === "todos" ? "Uso Flota" : labelTipoActivo})
-              </span>
-              <div style={{ backgroundColor: "#eff6ff", color: "#2563eb", padding: "6px", borderRadius: "8px" }}>
-                <Clock size={18} />
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <span style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>
+                  Horas de Motor ({tipoEquipoFiltro === "todos" ? "Uso Flota" : labelTipoActivo})
+                </span>
+                <div style={{ backgroundColor: "#eff6ff", color: "#2563eb", padding: "6px", borderRadius: "8px" }}>
+                  <Clock size={18} />
+                </div>
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
+                {kpisDinamicos.total_horas.toLocaleString("es-CL")} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>hrs</span>
+              </div>
+              {/* Barra apilada: Efectiva vs Ralentí */}
+              <div style={{ width: "100%", height: "8px", backgroundColor: "#f1f5f9", borderRadius: "4px", overflow: "hidden", display: "flex", margin: "10px 0 6px" }}>
+                <div
+                  style={{
+                    width: `${100 - (kpisDinamicos.pct_ralenti || 0)}%`,
+                    backgroundColor: "#0284c7",
+                  }}
+                  title={`Horas Efectivas: ${kpisDinamicos.horas_efectivas} hrs (${100 - (kpisDinamicos.pct_ralenti || 0)}%)`}
+                />
+                <div
+                  style={{
+                    width: `${kpisDinamicos.pct_ralenti || 0}%`,
+                    backgroundColor: "#f97316",
+                  }}
+                  title={`Ralentí: ${kpisDinamicos.horas_ralenti} hrs (${kpisDinamicos.pct_ralenti}%)`}
+                />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#475569" }}>
+                <span>Efectiva: <strong>{kpisDinamicos.horas_efectivas} hrs</strong></span>
+                <span style={{ color: "#c2410c" }}>Ralentí: <strong>{kpisDinamicos.horas_ralenti} hrs ({kpisDinamicos.pct_ralenti}%)</strong></span>
               </div>
             </div>
-            <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
-              {kpisDinamicos.total_horas.toLocaleString("es-CL")} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>hrs</span>
-            </div>
-            {/* Barra apilada: Efectiva vs Ralentí */}
-            <div style={{ width: "100%", height: "8px", backgroundColor: "#f1f5f9", borderRadius: "4px", overflow: "hidden", display: "flex", margin: "10px 0 6px" }}>
-              <div
-                style={{
-                  width: `${100 - (kpisDinamicos.pct_ralenti || 0)}%`,
-                  backgroundColor: "#0284c7",
-                }}
-                title={`Horas Efectivas: ${kpisDinamicos.horas_efectivas} hrs (${100 - (kpisDinamicos.pct_ralenti || 0)}%)`}
-              />
-              <div
-                style={{
-                  width: `${kpisDinamicos.pct_ralenti || 0}%`,
-                  backgroundColor: "#f97316",
-                }}
-                title={`Ralentí: ${kpisDinamicos.horas_ralenti} hrs (${kpisDinamicos.pct_ralenti}%)`}
-              />
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#475569" }}>
-              <span>Efectiva: <strong>{kpisDinamicos.horas_efectivas} hrs</strong></span>
-              <span style={{ color: "#c2410c" }}>Ralentí: <strong>{kpisDinamicos.horas_ralenti} hrs ({kpisDinamicos.pct_ralenti}%)</strong></span>
+            {/* Especificación de días filtrados */}
+            <div style={{
+              fontSize: "11px", fontWeight: 600, color: "#64748b",
+              marginTop: "12px", paddingTop: "8px", borderTop: "1px dashed #e2e8f0",
+              display: "flex", alignItems: "center", gap: "5px",
+            }}>
+              <CalendarDays size={12} color="#0284c7" />
+              <span>Acumulado en los {diasPeriodo} días filtrados</span>
             </div>
           </div>
 
           {/* KPI 2: Consumo de Combustible */}
           <div style={{
             backgroundColor: "#ffffff", padding: "16px", borderRadius: "12px",
-            border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.03)",
+            border: "1.5px solid #cbd5e1", borderTop: "4px solid #dc2626",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.03)", display: "flex", flexDirection: "column", justifyContent: "space-between",
           }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-              <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>
-                Combustible Consumido ({tipoEquipoFiltro === "todos" ? "Total Flota" : labelTipoActivo})
-              </span>
-              <div style={{ backgroundColor: "#fef2f2", color: "#dc2626", padding: "6px", borderRadius: "8px" }}>
-                <Fuel size={18} />
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <span style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>
+                  Combustible Consumido ({tipoEquipoFiltro === "todos" ? "Total Flota" : labelTipoActivo})
+                </span>
+                <div style={{ backgroundColor: "#fef2f2", color: "#dc2626", padding: "6px", borderRadius: "8px" }}>
+                  <Fuel size={18} />
+                </div>
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
+                {kpisDinamicos.total_litros.toLocaleString("es-CL")} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>Lts</span>
+              </div>
+              <div style={{ display: "flex", gap: "10px", fontSize: "11px", color: "#64748b", marginTop: "10px" }}>
+                <span>CAN Bus: <strong>{kpisDinamicos.litros_can} L</strong></span>
+                <span>•</span>
+                <span>GPS: <strong>{kpisDinamicos.litros_gps} L</strong></span>
+              </div>
+              <div style={{ fontSize: "11px", color: "#0369a1", marginTop: "4px", fontWeight: 600 }}>
+                Rendimiento: {kpisDinamicos.rendimiento_promedio ? `${kpisDinamicos.rendimiento_promedio} km/L` : "Calculando..."}
               </div>
             </div>
-            <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
-              {kpisDinamicos.total_litros.toLocaleString("es-CL")} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>Lts</span>
-            </div>
-            <div style={{ display: "flex", gap: "10px", fontSize: "11px", color: "#64748b", marginTop: "10px" }}>
-              <span>CAN Bus: <strong>{kpisDinamicos.litros_can} L</strong></span>
-              <span>•</span>
-              <span>GPS: <strong>{kpisDinamicos.litros_gps} L</strong></span>
-            </div>
-            <div style={{ fontSize: "11px", color: "#0369a1", marginTop: "4px", fontWeight: 600 }}>
-              Rendimiento: {kpisDinamicos.rendimiento_promedio ? `${kpisDinamicos.rendimiento_promedio} km/L` : "Calculando..."}
+            {/* Especificación de días filtrados */}
+            <div style={{
+              fontSize: "11px", fontWeight: 600, color: "#64748b",
+              marginTop: "12px", paddingTop: "8px", borderTop: "1px dashed #e2e8f0",
+              display: "flex", alignItems: "center", gap: "5px",
+            }}>
+              <CalendarDays size={12} color="#dc2626" />
+              <span>Consumo en los {diasPeriodo} días filtrados</span>
             </div>
           </div>
 
           {/* KPI 3: Distancia Recorrida */}
           <div style={{
             backgroundColor: "#ffffff", padding: "16px", borderRadius: "12px",
-            border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.03)",
+            border: "1.5px solid #cbd5e1", borderTop: "4px solid #16a34a",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.03)", display: "flex", flexDirection: "column", justifyContent: "space-between",
           }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-              <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>
-                Distancia Total Recorrida ({tipoEquipoFiltro === "todos" ? "Total Flota" : labelTipoActivo})
-              </span>
-              <div style={{ backgroundColor: "#f0fdf4", color: "#16a34a", padding: "6px", borderRadius: "8px" }}>
-                <Gauge size={18} />
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <span style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>
+                  Distancia Total Recorrida ({tipoEquipoFiltro === "todos" ? "Total Flota" : labelTipoActivo})
+                </span>
+                <div style={{ backgroundColor: "#f0fdf4", color: "#16a34a", padding: "6px", borderRadius: "8px" }}>
+                  <Gauge size={18} />
+                </div>
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
+                {kpisDinamicos.total_km.toLocaleString("es-CL")} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>km</span>
+              </div>
+              <div style={{ fontSize: "11px", color: "#64748b", marginTop: "10px" }}>
+                Total Viajes: <strong>{kpisDinamicos.total_viajes?.toLocaleString("es-CL")}</strong>
+              </div>
+              <div style={{ fontSize: "11px", color: "#15803d", marginTop: "4px", fontWeight: 600 }}>
+                Promedio por viaje: {kpisDinamicos.total_viajes > 0 ? `${(Math.round((kpisDinamicos.total_km / kpisDinamicos.total_viajes) * 10) / 10)} km` : "0 km"}
               </div>
             </div>
-            <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
-              {kpisDinamicos.total_km.toLocaleString("es-CL")} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>km</span>
-            </div>
-            <div style={{ fontSize: "11px", color: "#64748b", marginTop: "10px" }}>
-              Total Viajes: <strong>{kpisDinamicos.total_viajes?.toLocaleString("es-CL")}</strong>
-            </div>
-            <div style={{ fontSize: "11px", color: "#15803d", marginTop: "4px", fontWeight: 600 }}>
-              Promedio por viaje: {kpisDinamicos.total_viajes > 0 ? `${(Math.round((kpisDinamicos.total_km / kpisDinamicos.total_viajes) * 10) / 10)} km` : "0 km"}
+            {/* Especificación de días filtrados */}
+            <div style={{
+              fontSize: "11px", fontWeight: 600, color: "#64748b",
+              marginTop: "12px", paddingTop: "8px", borderTop: "1px dashed #e2e8f0",
+              display: "flex", alignItems: "center", gap: "5px",
+            }}>
+              <CalendarDays size={12} color="#16a34a" />
+              <span>Desplazamiento en los {diasPeriodo} días filtrados</span>
             </div>
           </div>
 
           {/* KPI 4: Flota en Operación */}
           <div style={{
             backgroundColor: "#ffffff", padding: "16px", borderRadius: "12px",
-            border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.03)",
+            border: "1.5px solid #cbd5e1", borderTop: "4px solid #9333ea",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.03)", display: "flex", flexDirection: "column", justifyContent: "space-between",
           }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-              <span style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>
-                Equipos Activos ({labelTipoActivo})
-              </span>
-              <div style={{ backgroundColor: "#fdf4ff", color: "#a855f7", padding: "6px", borderRadius: "8px" }}>
-                <Car size={18} />
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <span style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>
+                  Equipos Activos ({labelTipoActivo})
+                </span>
+                <div style={{ backgroundColor: "#fdf4ff", color: "#a855f7", padding: "6px", borderRadius: "8px" }}>
+                  <Car size={18} />
+                </div>
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
+                {kpisDinamicos.total_vehiculos_activos} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>unidades</span>
+              </div>
+              <div style={{ fontSize: "11px", color: "#64748b", marginTop: "10px" }}>
+                Días con actividad: <strong>{dashData?.periodo?.dias_con_actividad || 0} de {diasPeriodo} días</strong>
+              </div>
+              <div style={{ fontSize: "11px", color: "#7e22ce", marginTop: "4px", fontWeight: 600 }}>
+                Meta actual: {horasMetaCalculadas} hrs / equipo
               </div>
             </div>
-            <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
-              {kpisDinamicos.total_vehiculos_activos} <span style={{ fontSize: "13px", fontWeight: 500, color: "#64748b" }}>unidades</span>
-            </div>
-            <div style={{ fontSize: "11px", color: "#64748b", marginTop: "10px" }}>
-              Días con actividad: <strong>{dashData.periodo?.dias_con_actividad || 0} de {diasPeriodo} días</strong>
-            </div>
-            <div style={{ fontSize: "11px", color: "#7e22ce", marginTop: "4px", fontWeight: 600 }}>
-              Meta del periodo: {horasMetaCalculadas} hrs / equipo
+            {/* Especificación de días filtrados */}
+            <div style={{
+              fontSize: "11px", fontWeight: 600, color: "#64748b",
+              marginTop: "12px", paddingTop: "8px", borderTop: "1px dashed #e2e8f0",
+              display: "flex", alignItems: "center", gap: "5px",
+            }}>
+              <CalendarDays size={12} color="#9333ea" />
+              <span>Operatividad en el rango de {diasPeriodo} días</span>
             </div>
           </div>
         </div>
@@ -796,7 +939,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
           }}
         >
           <Clock size={14} />
-          Top Horas de Uso (Ralentí vs Efectiva)
+          Top Horas de Uso
         </button>
 
         <button
@@ -826,7 +969,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
           }}
         >
           <TrendingUp size={14} />
-          % Utilización por Equipo (Meta Dinámica)
+          % Utilización por Equipo
         </button>
 
         <button
@@ -842,6 +985,21 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
         >
           <Gauge size={14} />
           Top Kilometraje Recorrido
+        </button>
+
+        <button
+          onClick={() => setSeccionActiva("exclusivos")}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: "6px",
+            padding: "8px 14px", borderRadius: "8px", fontSize: "12px", fontWeight: 700,
+            border: "none", cursor: "pointer", transition: "all 0.15s ease",
+            backgroundColor: seccionActiva === "exclusivos" ? "#0284c7" : "#ffffff",
+            color: seccionActiva === "exclusivos" ? "#ffffff" : "#475569",
+            boxShadow: seccionActiva === "exclusivos" ? "0 2px 4px rgba(2, 132, 199, 0.2)" : "none",
+          }}
+        >
+          <UserCheck size={14} />
+          Uso Exclusivo (Gerentes)
         </button>
 
         <button
@@ -884,7 +1042,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(480px, 1fr))", gap: "20px" }}>
             {/* Top Horas de Uso (Preview) */}
             <div style={{
-              backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0",
+              backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
               padding: "18px", boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
@@ -893,7 +1051,9 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     <Clock size={16} color="#0284c7" />
                     Top Horas de Uso (Mayor a Menor)
                   </h3>
-                  <span style={{ fontSize: "11px", color: "#64748b" }}>Desglose de uso efectivo vs ralentí</span>
+                  <span style={{ fontSize: "11px", color: "#64748b" }}>
+                    Desglose en los {diasPeriodo} días filtrados (efectiva vs ralentí)
+                  </span>
                 </div>
                 <button
                   onClick={() => setSeccionActiva("horas")}
@@ -924,27 +1084,25 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                   topHorasFiltradas.slice(0, 5).map((eq, idx) => (
                     <div key={eq.patente} style={{
                       padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
-                      border: "1px solid #e2e8f0",
+                      border: "1.5px solid #e2e8f0",
                     }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "nowrap" }}>
                           <span style={{
                             width: "22px", height: "22px", borderRadius: "50%",
                             backgroundColor: idx === 0 ? "#fbbf24" : idx === 1 ? "#94a3b8" : idx === 2 ? "#d97706" : "#e2e8f0",
                             color: idx === 0 || idx === 2 ? "#ffffff" : "#0f172a",
                             fontSize: "11px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
+                            flexShrink: 0,
                           }}>
                             {idx + 1}
                           </span>
-                          <strong style={{ fontSize: "13px", color: "#0f172a" }}>{formatearPatente(eq.patente)}</strong>
-                          {eq.codigo_interno && (
-                            <span style={{ fontSize: "11px", backgroundColor: "#e2e8f0", padding: "1px 6px", borderRadius: "4px", color: "#475569" }}>
-                              {eq.codigo_interno}
-                            </span>
-                          )}
-                          <span style={{ fontSize: "11px", color: "#64748b" }}>{eq.proyecto_nombre}</span>
+                          <PatenteBadge patente={eq.patente} codigo={eq.codigo_interno} />
+                          <span style={{ fontSize: "11px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "160px" }}>
+                            {eq.proyecto_nombre}
+                          </span>
                         </div>
-                        <div style={{ textAlign: "right" }}>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
                           <strong style={{ fontSize: "14px", color: "#0f172a" }}>{eq.horas_totales} hrs</strong>
                         </div>
                       </div>
@@ -971,7 +1129,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
 
             {/* Top Consumo de Combustible (Preview) */}
             <div style={{
-              backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0",
+              backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
               padding: "18px", boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
@@ -980,7 +1138,9 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     <Fuel size={16} color="#dc2626" />
                     Top Consumo de Combustible {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
                   </h3>
-                  <span style={{ fontSize: "11px", color: "#64748b" }}>Litros consumidos y rendimiento estimado</span>
+                  <span style={{ fontSize: "11px", color: "#64748b" }}>
+                    Litros consumidos en los {diasPeriodo} días filtrados
+                  </span>
                 </div>
                 <button
                   onClick={() => setSeccionActiva("combustible")}
@@ -1011,27 +1171,25 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                   topCombustibleFiltrado.slice(0, 5).map((eq, idx) => (
                     <div key={eq.patente} style={{
                       padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
-                      border: "1px solid #e2e8f0",
+                      border: "1.5px solid #e2e8f0",
                     }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "nowrap" }}>
                           <span style={{
                             width: "22px", height: "22px", borderRadius: "50%",
                             backgroundColor: idx === 0 ? "#ef4444" : "#fee2e2",
                             color: idx === 0 ? "#ffffff" : "#b91c1c",
                             fontSize: "11px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
+                            flexShrink: 0,
                           }}>
                             {idx + 1}
                           </span>
-                          <strong style={{ fontSize: "13px", color: "#0f172a" }}>{formatearPatente(eq.patente)}</strong>
-                          {eq.codigo_interno && (
-                            <span style={{ fontSize: "11px", backgroundColor: "#e2e8f0", padding: "1px 6px", borderRadius: "4px", color: "#475569" }}>
-                              {eq.codigo_interno}
-                            </span>
-                          )}
-                          <span style={{ fontSize: "11px", color: "#64748b" }}>{eq.proyecto_nombre}</span>
+                          <PatenteBadge patente={eq.patente} codigo={eq.codigo_interno} />
+                          <span style={{ fontSize: "11px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "160px" }}>
+                            {eq.proyecto_nombre}
+                          </span>
                         </div>
-                        <div style={{ textAlign: "right" }}>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
                           <strong style={{ fontSize: "14px", color: "#b91c1c" }}>{eq.litros_totales} L</strong>
                         </div>
                       </div>
@@ -1055,11 +1213,11 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
             </div>
           </div>
 
-          {/* Fila 2: Porcentaje de Utilización (Meta Dinámica) & Top Conductores */}
+          {/* Fila 2: Porcentaje de Utilización (Meta Dinámica) & Top Kilometraje */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(480px, 1fr))", gap: "20px" }}>
             {/* Utilización Dinámica (Preview) */}
             <div style={{
-              backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0",
+              backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
               padding: "18px", boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
@@ -1068,7 +1226,9 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     <TrendingUp size={16} color="#16a34a" />
                     % de Utilización {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "por Equipo"} (Meta: {horasMetaCalculadas} hrs)
                   </h3>
-                  <span style={{ fontSize: "11px", color: "#64748b" }}>Actualizado con la meta digitada en el panel superior</span>
+                  <span style={{ fontSize: "11px", color: "#64748b" }}>
+                    Calculado sobre la meta en los {diasPeriodo} días filtrados
+                  </span>
                 </div>
                 <button
                   onClick={() => setSeccionActiva("utilizacion")}
@@ -1099,25 +1259,20 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                   equiposConUtilizacion.slice(0, 5).map((eq, idx) => (
                     <div key={eq.patente} style={{
                       padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
-                      border: "1px solid #e2e8f0",
+                      border: "1.5px solid #e2e8f0",
                     }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <strong style={{ fontSize: "13px", color: "#0f172a" }}>{eq.patente}</strong>
-                          {eq.codigo_interno && (
-                            <span style={{ fontSize: "11px", backgroundColor: "#e2e8f0", padding: "1px 6px", borderRadius: "4px", color: "#475569" }}>
-                              {eq.codigo_interno}
-                            </span>
-                          )}
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "nowrap" }}>
+                          <PatenteBadge patente={eq.patente} codigo={eq.codigo_interno} />
                           <span style={{
                             fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px",
                             backgroundColor: `${eq.color_utilizacion}15`, color: eq.color_utilizacion,
-                            border: `1px solid ${eq.color_utilizacion}30`,
+                            border: `1px solid ${eq.color_utilizacion}30`, whiteSpace: "nowrap", flexShrink: 0,
                           }}>
                             {eq.etiqueta_utilizacion}
                           </span>
                         </div>
-                        <div style={{ textAlign: "right" }}>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
                           <strong style={{ fontSize: "14px", color: eq.color_utilizacion }}>{eq.pct_utilizacion}%</strong>
                         </div>
                       </div>
@@ -1141,9 +1296,197 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
               </div>
             </div>
 
-            {/* Top Conductores (Preview) */}
+            {/* Top Kilometraje (Preview) */}
             <div style={{
-              backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0",
+              backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
+              padding: "18px", boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <Gauge size={16} color="#8b5cf6" />
+                    Top Kilometraje Recorrido {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : ""}
+                  </h3>
+                  <span style={{ fontSize: "11px", color: "#64748b" }}>
+                    Distancia recorrida en carretera y faena en los {diasPeriodo} días filtrados
+                  </span>
+                </div>
+                <button
+                  onClick={() => setSeccionActiva("kilometraje")}
+                  style={{
+                    fontSize: "11px", fontWeight: 700, color: "#8b5cf6", background: "none",
+                    border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: "2px",
+                  }}
+                >
+                  Ver todos <ChevronRight size={13} />
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {topKmFiltrado.length === 0 ? (
+                  <div style={{
+                    padding: "24px 16px", textAlign: "center", backgroundColor: "#f8fafc",
+                    borderRadius: "8px", border: "1px dashed #cbd5e1", color: "#64748b",
+                  }}>
+                    <Gauge size={24} style={{ margin: "0 auto 6px", opacity: 0.4 }} />
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
+                      Sin desplazamientos para {labelTipoActivo.toLowerCase()}
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                      No se registraron kilómetros en el período consultado.
+                    </div>
+                  </div>
+                ) : (
+                  topKmFiltrado.slice(0, 5).map((eq, idx) => (
+                    <div key={eq.patente} style={{
+                      padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
+                      border: "1.5px solid #e2e8f0",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "nowrap" }}>
+                          <span style={{
+                            width: "22px", height: "22px", borderRadius: "50%",
+                            backgroundColor: idx === 0 ? "#8b5cf6" : "#ede9fe",
+                            color: idx === 0 ? "#ffffff" : "#6d28d9",
+                            fontSize: "11px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
+                            flexShrink: 0,
+                          }}>
+                            {idx + 1}
+                          </span>
+                          <PatenteBadge patente={eq.patente} codigo={eq.codigo_interno} />
+                          <span style={{ fontSize: "11px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "160px" }}>
+                            {eq.proyecto_nombre}
+                          </span>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <strong style={{ fontSize: "14px", color: "#6d28d9" }}>{eq.km_totales.toLocaleString("es-CL")} km</strong>
+                        </div>
+                      </div>
+                      {/* Barra de progreso de km */}
+                      <div style={{ width: "100%", height: "6px", backgroundColor: "#e2e8f0", borderRadius: "3px", overflow: "hidden" }}>
+                        <div
+                          style={{
+                            width: `${maxKm > 0 ? (eq.km_totales / maxKm) * 100 : 0}%`,
+                            backgroundColor: "#8b5cf6", height: "100%",
+                          }}
+                        />
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "#64748b", marginTop: "4px" }}>
+                        <span>Viajes: <strong>{eq.viajes_totales}</strong></span>
+                        <span>Promedio: <strong>{eq.viajes_totales > 0 ? `${Math.round((eq.km_totales / eq.viajes_totales) * 10) / 10} km/viaje` : "-"}</strong></span>
+                        <span>Chofer: <strong>{eq.conductor_principal}</strong></span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Fila 3: A LA IZQUIERDA: Vehículos de Uso Exclusivo (Gerentes) | A LA DERECHA: Top Conductores */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(480px, 1fr))", gap: "20px" }}>
+            {/* Apartado Izquierdo: Camionetas / Vehículos de Uso Exclusivo (Gerentes / Personal Asignado) */}
+            <div style={{
+              backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
+              padding: "18px", boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <UserCheck size={16} color="#0284c7" />
+                    Vehículos de Uso Exclusivo (Gerentes / Asignados)
+                  </h3>
+                  <span style={{ fontSize: "11px", color: "#64748b" }}>
+                    Equipos operados por 1 solo conductor en los {diasPeriodo} días filtrados
+                  </span>
+                </div>
+                <button
+                  onClick={() => setSeccionActiva("exclusivos")}
+                  style={{
+                    fontSize: "11px", fontWeight: 700, color: "#0284c7", background: "none",
+                    border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: "2px",
+                  }}
+                >
+                  Ver todos <ChevronRight size={13} />
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {equiposUsoExclusivoFiltrados.length === 0 ? (
+                  <div style={{
+                    padding: "24px 16px", textAlign: "center", backgroundColor: "#f8fafc",
+                    borderRadius: "8px", border: "1px dashed #cbd5e1", color: "#64748b",
+                  }}>
+                    <UserCheck size={24} style={{ margin: "0 auto 6px", opacity: 0.4 }} />
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
+                      Sin equipos de uso exclusivo para {labelTipoActivo.toLowerCase()}
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                      No se encontraron vehículos operados por un único conductor en el período consultado.
+                    </div>
+                  </div>
+                ) : (
+                  equiposUsoExclusivoFiltrados.slice(0, 5).map((eq, idx) => (
+                    <div key={eq.patente} style={{
+                      padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
+                      border: "1.5px solid #e2e8f0",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "nowrap" }}>
+                          <span style={{
+                            width: "22px", height: "22px", borderRadius: "50%",
+                            backgroundColor: idx === 0 ? "#0284c7" : "#e0f2fe",
+                            color: idx === 0 ? "#ffffff" : "#0369a1",
+                            fontSize: "11px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
+                            flexShrink: 0,
+                          }}>
+                            {idx + 1}
+                          </span>
+                          <PatenteBadge patente={eq.patente} codigo={eq.codigo_interno} />
+                          <span style={{ fontSize: "11px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "160px" }}>
+                            {eq.proyecto_nombre}
+                          </span>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <strong style={{ fontSize: "14px", color: "#0f172a" }}>{eq.horas_totales} hrs</strong>
+                        </div>
+                      </div>
+
+                      {/* Detalle del Conductor Único Asignado */}
+                      <div style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        marginTop: "6px", paddingTop: "6px", borderTop: "1px dashed #e2e8f0",
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "nowrap", overflow: "hidden" }}>
+                          <span style={{
+                            fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px",
+                            backgroundColor: "#dbeafe", color: "#1e40af", whiteSpace: "nowrap", flexShrink: 0,
+                          }}>
+                            1 Conductor Exclusivo
+                          </span>
+                          <strong style={{ fontSize: "11px", color: "#0f172a", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
+                            {eq.conductor_exclusivo?.nombre || eq.conductor_principal}
+                          </strong>
+                          {eq.conductor_exclusivo?.rut && eq.conductor_exclusivo?.rut !== "S/R" && (
+                            <span style={{ fontSize: "10px", color: "#64748b", whiteSpace: "nowrap", flexShrink: 0 }}>
+                              ({eq.conductor_exclusivo.rut})
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: "11px", color: "#475569", flexShrink: 0, marginLeft: "8px" }}>
+                          <span>{eq.km_totales} km</span>
+                          {eq.litros_totales > 0 && <span style={{ marginLeft: "6px" }}>• {eq.litros_totales} L</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Apartado Derecho: Top Conductores Más Activos */}
+            <div style={{
+              backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
               padding: "18px", boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
@@ -1152,7 +1495,9 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     <User size={16} color="#f59e0b" />
                     Top Conductores Más Activos {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : ""}
                   </h3>
-                  <span style={{ fontSize: "11px", color: "#64748b" }}>Choferes y operadores al volante</span>
+                  <span style={{ fontSize: "11px", color: "#64748b" }}>
+                    Choferes y operadores al volante en los {diasPeriodo} días filtrados
+                  </span>
                 </div>
                 <button
                   onClick={() => setSeccionActiva("conductores")}
@@ -1183,7 +1528,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                   topConductoresFiltrados.slice(0, 5).map((cond, idx) => (
                     <div key={cond.nombre} style={{
                       padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
-                      border: "1px solid #e2e8f0",
+                      border: "1.5px solid #e2e8f0",
                     }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -1192,6 +1537,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                             backgroundColor: idx === 0 ? "#f59e0b" : "#fef3c7",
                             color: idx === 0 ? "#ffffff" : "#b45309",
                             fontSize: "11px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
+                            flexShrink: 0,
                           }}>
                             {idx + 1}
                           </span>
@@ -1200,14 +1546,21 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                             <span style={{ fontSize: "10px", color: "#64748b" }}>RUT: {cond.rut}</span>
                           </div>
                         </div>
-                        <div style={{ textAlign: "right" }}>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
                           <strong style={{ fontSize: "14px", color: "#0f172a" }}>{cond.horas_conducidas} hrs</strong>
                           <div style={{ fontSize: "10px", color: "#64748b" }}>{cond.km_totales} km</div>
                         </div>
                       </div>
-                      <div style={{ fontSize: "10px", color: "#64748b", marginTop: "4px" }}>
-                        Vehículos operados: <strong>{cond.vehiculos?.slice(0, 3).map(formatearPatente).join(", ") || "S/R"}</strong>
-                        {cond.vehiculos?.length > 3 ? ` (+${cond.vehiculos.length - 3})` : ""}
+                      <div style={{ fontSize: "10px", color: "#64748b", marginTop: "4px", display: "flex", alignItems: "center", gap: "4px", flexWrap: "wrap" }}>
+                        <span>Vehículos:</span>
+                        {(cond.vehiculos || []).slice(0, 3).map((v) => (
+                          <PatenteBadge key={v} patente={v} />
+                        ))}
+                        {cond.vehiculos?.length > 3 ? (
+                          <span style={{ fontSize: "10px", color: "#64748b", fontWeight: 600 }}>
+                            (+{cond.vehiculos.length - 3})
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   ))
@@ -1223,7 +1576,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
       {/* ═══════════════════════════════════════════════════════════════════════ */}
       {seccionActiva === "horas" && (
         <div style={{
-          backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0",
+          backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
           padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
@@ -1233,7 +1586,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 Ranking Completo: Top Horas de Uso {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
               </h3>
               <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
-                Identifica qué equipos tienen mayor operación y qué proporción corresponde a tiempo productivo vs ralentí (detenido con motor encendido).
+                Datos consolidados en los <strong>{diasPeriodo} días filtrados</strong> ({desde} al {hasta}). Identifica equipos con mayor operación y ratio de ralentí.
               </p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "12px", fontSize: "12px" }}>
@@ -1251,11 +1604,11 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", textAlign: "left" }}>
               <thead>
-                <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #e2e8f0", color: "#475569" }}>
+                <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #cbd5e1", color: "#475569" }}>
                   <th style={{ padding: "10px 12px" }}>Pos.</th>
                   <th style={{ padding: "10px 12px" }}>Equipo / Patente</th>
                   <th style={{ padding: "10px 12px" }}>Proyecto</th>
-                  <th style={{ padding: "10px 12px", textAlign: "center" }}>Horas Totales</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center" }}>Horas Totales ({diasPeriodo}d)</th>
                   <th style={{ padding: "10px 12px" }}>Desglose Visual (Efectiva vs Ralentí)</th>
                   <th style={{ padding: "10px 12px", textAlign: "right" }}>Horas Efectivas</th>
                   <th style={{ padding: "10px 12px", textAlign: "right" }}>Horas Ralentí</th>
@@ -1278,63 +1631,64 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                   </tr>
                 ) : (
                   topHorasFiltradas.map((eq, idx) => (
-                  <tr key={eq.patente} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                    <td style={{ padding: "10px 12px", fontWeight: 800 }}>
-                      <span style={{
-                        width: "24px", height: "24px", borderRadius: "50%",
-                        backgroundColor: idx === 0 ? "#fbbf24" : idx === 1 ? "#94a3b8" : idx === 2 ? "#d97706" : "#f1f5f9",
-                        color: idx === 0 || idx === 2 ? "#ffffff" : "#0f172a",
-                        fontSize: "11px", display: "inline-flex", alignItems: "center", justifyContent: "center",
-                      }}>
-                        #{idx + 1}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 12px" }}>
-                      <div style={{ fontWeight: 700, color: "#0f172a" }}>{formatearPatente(eq.patente)}</div>
-                      <div style={{ fontSize: "11px", color: "#64748b" }}>
-                        {eq.codigo_interno ? `[${eq.codigo_interno}] ` : ""}{eq.descripcion}
-                      </div>
-                    </td>
-                    <td style={{ padding: "10px 12px", color: "#475569", maxWidth: "160px" }}>
-                      <span title={eq.proyecto_nombre} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {eq.proyecto_nombre}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "center", fontWeight: 800, color: "#0f172a", fontSize: "13px" }}>
-                      {eq.horas_totales} hrs
-                    </td>
-                    <td style={{ padding: "10px 12px", minWidth: "160px" }}>
-                      <div style={{ width: "100%", height: "8px", backgroundColor: "#e2e8f0", borderRadius: "4px", overflow: "hidden", display: "flex" }}>
-                        <div
-                          style={{ width: `${maxHoras > 0 ? (eq.horas_efectivas / maxHoras) * 100 : 0}%`, backgroundColor: "#0284c7" }}
-                          title={`Efectiva: ${eq.horas_efectivas} hrs`}
-                        />
-                        <div
-                          style={{ width: `${maxHoras > 0 ? (eq.horas_ralenti / maxHoras) * 100 : 0}%`, backgroundColor: "#f97316" }}
-                          title={`Ralentí: ${eq.horas_ralenti} hrs`}
-                        />
-                      </div>
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: "#0284c7" }}>
-                      {eq.horas_efectivas} hrs
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: "#ea580c" }}>
-                      {eq.horas_ralenti} hrs
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right" }}>
-                      <span style={{
-                        padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: 700,
-                        backgroundColor: eq.pct_ralenti > 25 ? "#fee2e2" : eq.pct_ralenti > 10 ? "#fef3c7" : "#dcfce7",
-                        color: eq.pct_ralenti > 25 ? "#991b1b" : eq.pct_ralenti > 10 ? "#92400e" : "#166534",
-                      }}>
-                        {eq.pct_ralenti}%
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 12px", color: "#64748b", fontSize: "11px" }}>
-                      {eq.conductor_principal}
-                    </td>
-                  </tr>
-                )))}
+                    <tr key={eq.patente} style={{ borderBottom: "1.5px solid #e2e8f0" }}>
+                      <td style={{ padding: "10px 12px", fontWeight: 800 }}>
+                        <span style={{
+                          width: "24px", height: "24px", borderRadius: "50%",
+                          backgroundColor: idx === 0 ? "#fbbf24" : idx === 1 ? "#94a3b8" : idx === 2 ? "#d97706" : "#f1f5f9",
+                          color: idx === 0 || idx === 2 ? "#ffffff" : "#0f172a",
+                          fontSize: "11px", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          #{idx + 1}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px" }}>
+                        <PatenteBadge patente={eq.patente} codigo={eq.codigo_interno} />
+                        <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                          {eq.descripcion}
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 12px", color: "#475569", maxWidth: "160px" }}>
+                        <span title={eq.proyecto_nombre} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {eq.proyecto_nombre}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "center", fontWeight: 800, color: "#0f172a", fontSize: "13px" }}>
+                        {eq.horas_totales} hrs
+                      </td>
+                      <td style={{ padding: "10px 12px", minWidth: "160px" }}>
+                        <div style={{ width: "100%", height: "8px", backgroundColor: "#e2e8f0", borderRadius: "4px", overflow: "hidden", display: "flex" }}>
+                          <div
+                            style={{ width: `${maxHoras > 0 ? (eq.horas_efectivas / maxHoras) * 100 : 0}%`, backgroundColor: "#0284c7" }}
+                            title={`Efectiva: ${eq.horas_efectivas} hrs`}
+                          />
+                          <div
+                            style={{ width: `${maxHoras > 0 ? (eq.horas_ralenti / maxHoras) * 100 : 0}%`, backgroundColor: "#f97316" }}
+                            title={`Ralentí: ${eq.horas_ralenti} hrs`}
+                          />
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: "#0284c7" }}>
+                        {eq.horas_efectivas} hrs
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: "#ea580c" }}>
+                        {eq.horas_ralenti} hrs
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right" }}>
+                        <span style={{
+                          padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: 700,
+                          backgroundColor: eq.pct_ralenti > 25 ? "#fee2e2" : eq.pct_ralenti > 10 ? "#fef3c7" : "#dcfce7",
+                          color: eq.pct_ralenti > 25 ? "#991b1b" : eq.pct_ralenti > 10 ? "#92400e" : "#166534",
+                        }}>
+                          {eq.pct_ralenti}%
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px", color: "#64748b", fontSize: "11px" }}>
+                        {eq.conductor_principal}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -1346,7 +1700,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
       {/* ═══════════════════════════════════════════════════════════════════════ */}
       {seccionActiva === "combustible" && (
         <div style={{
-          backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0",
+          backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
           padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
@@ -1356,7 +1710,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 Ranking Completo: Top Consumo de Combustible {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
               </h3>
               <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
-                Monitorea el gasto en litros acumulado en el período, desglosando CAN Bus vs telemetría GPS y rendimiento medio.
+                Gasto acumulado en los <strong>{diasPeriodo} días filtrados</strong> ({desde} al {hasta}), desglosando CAN Bus vs telemetría GPS.
               </p>
             </div>
           </div>
@@ -1364,11 +1718,11 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", textAlign: "left" }}>
               <thead>
-                <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #e2e8f0", color: "#475569" }}>
+                <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #cbd5e1", color: "#475569" }}>
                   <th style={{ padding: "10px 12px" }}>Pos.</th>
                   <th style={{ padding: "10px 12px" }}>Equipo / Patente</th>
                   <th style={{ padding: "10px 12px" }}>Proyecto</th>
-                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Total Litros</th>
+                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Total Litros ({diasPeriodo}d)</th>
                   <th style={{ padding: "10px 12px" }}>Proporción de Consumo</th>
                   <th style={{ padding: "10px 12px", textAlign: "right" }}>Litros CAN</th>
                   <th style={{ padding: "10px 12px", textAlign: "right" }}>Litros GPS</th>
@@ -1391,57 +1745,58 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                   </tr>
                 ) : (
                   topCombustibleFiltrado.map((eq, idx) => (
-                  <tr key={eq.patente} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                    <td style={{ padding: "10px 12px", fontWeight: 800 }}>
-                      <span style={{
-                        width: "24px", height: "24px", borderRadius: "50%",
-                        backgroundColor: idx === 0 ? "#ef4444" : "#fee2e2",
-                        color: idx === 0 ? "#ffffff" : "#b91c1c",
-                        fontSize: "11px", display: "inline-flex", alignItems: "center", justifyContent: "center",
-                      }}>
-                        #{idx + 1}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 12px" }}>
-                      <div style={{ fontWeight: 700, color: "#0f172a" }}>{formatearPatente(eq.patente)}</div>
-                      <div style={{ fontSize: "11px", color: "#64748b" }}>
-                        {eq.codigo_interno ? `[${eq.codigo_interno}] ` : ""}{eq.descripcion}
-                      </div>
-                    </td>
-                    <td style={{ padding: "10px 12px", color: "#475569", maxWidth: "160px" }}>
-                      <span title={eq.proyecto_nombre} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {eq.proyecto_nombre}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, color: "#b91c1c", fontSize: "13px" }}>
-                      {eq.litros_totales} L
-                    </td>
-                    <td style={{ padding: "10px 12px", minWidth: "140px" }}>
-                      <div style={{ width: "100%", height: "8px", backgroundColor: "#e2e8f0", borderRadius: "4px", overflow: "hidden" }}>
-                        <div
-                          style={{
-                            width: `${maxLitros > 0 ? (eq.litros_totales / maxLitros) * 100 : 0}%`,
-                            backgroundColor: "#ef4444", height: "100%",
-                          }}
-                        />
-                      </div>
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", color: "#475569" }}>
-                      {eq.litros_can > 0 ? `${eq.litros_can} L` : "-"}
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", color: "#475569" }}>
-                      {eq.litros_gps > 0 ? `${eq.litros_gps} L` : "-"}
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>
-                      {eq.km_totales} km
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right" }}>
-                      <span style={{ fontWeight: 700, color: "#0369a1" }}>
-                        {eq.rendimiento_kml ? `${eq.rendimiento_kml} km/L` : "N/D"}
-                      </span>
-                    </td>
-                  </tr>
-                )))}
+                    <tr key={eq.patente} style={{ borderBottom: "1.5px solid #e2e8f0" }}>
+                      <td style={{ padding: "10px 12px", fontWeight: 800 }}>
+                        <span style={{
+                          width: "24px", height: "24px", borderRadius: "50%",
+                          backgroundColor: idx === 0 ? "#ef4444" : "#fee2e2",
+                          color: idx === 0 ? "#ffffff" : "#b91c1c",
+                          fontSize: "11px", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          #{idx + 1}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px" }}>
+                        <PatenteBadge patente={eq.patente} codigo={eq.codigo_interno} />
+                        <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                          {eq.descripcion}
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 12px", color: "#475569", maxWidth: "160px" }}>
+                        <span title={eq.proyecto_nombre} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {eq.proyecto_nombre}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, color: "#b91c1c", fontSize: "13px" }}>
+                        {eq.litros_totales} L
+                      </td>
+                      <td style={{ padding: "10px 12px", minWidth: "140px" }}>
+                        <div style={{ width: "100%", height: "8px", backgroundColor: "#e2e8f0", borderRadius: "4px", overflow: "hidden" }}>
+                          <div
+                            style={{
+                              width: `${maxLitros > 0 ? (eq.litros_totales / maxLitros) * 100 : 0}%`,
+                              backgroundColor: "#ef4444", height: "100%",
+                            }}
+                          />
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", color: "#475569" }}>
+                        {eq.litros_can > 0 ? `${eq.litros_can} L` : "-"}
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", color: "#475569" }}>
+                        {eq.litros_gps > 0 ? `${eq.litros_gps} L` : "-"}
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>
+                        {eq.km_totales} km
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right" }}>
+                        <span style={{ fontWeight: 700, color: "#0369a1" }}>
+                          {eq.rendimiento_kml ? `${eq.rendimiento_kml} km/L` : "N/D"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -1453,17 +1808,17 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
       {/* ═══════════════════════════════════════════════════════════════════════ */}
       {seccionActiva === "utilizacion" && (
         <div style={{
-          backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0",
+          backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
           padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
             <div>
               <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                 <TrendingUp size={18} color="#16a34a" />
-                Porcentaje de Utilización por Equipo (Meta Actual: {horasMetaCalculadas} Horas)
+                Porcentaje de Utilización por Equipo (Meta Actual: {horasMetaCalculadas} Horas en {diasPeriodo} días)
               </h3>
               <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
-                Calcula la tasa de utilización: <strong>(Horas Reales / Horas Meta) × 100%</strong>. Si modificas el parámetro en la barra superior, esta tabla se recalcula al instante.
+                Tasa de utilización: <strong>(Horas Reales / Horas Meta) × 100%</strong>. Modifica el parámetro en la barra superior para recalcular al instante.
               </p>
             </div>
 
@@ -1473,7 +1828,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 onClick={() => setFiltroUtilizacion("todos")}
                 style={{
                   fontSize: "11px", fontWeight: 700, padding: "5px 10px", borderRadius: "6px",
-                  border: "1px solid #cbd5e1", cursor: "pointer",
+                  border: "1.5px solid #cbd5e1", cursor: "pointer",
                   backgroundColor: filtroUtilizacion === "todos" ? "#0f172a" : "#ffffff",
                   color: filtroUtilizacion === "todos" ? "#ffffff" : "#475569",
                 }}
@@ -1484,7 +1839,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 onClick={() => setFiltroUtilizacion("optimo")}
                 style={{
                   fontSize: "11px", fontWeight: 700, padding: "5px 10px", borderRadius: "6px",
-                  border: "1px solid #bbf7d0", cursor: "pointer",
+                  border: "1.5px solid #bbf7d0", cursor: "pointer",
                   backgroundColor: filtroUtilizacion === "optimo" ? "#16a34a" : "#f0fdf4",
                   color: filtroUtilizacion === "optimo" ? "#ffffff" : "#166534",
                 }}
@@ -1495,7 +1850,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 onClick={() => setFiltroUtilizacion("subutilizado")}
                 style={{
                   fontSize: "11px", fontWeight: 700, padding: "5px 10px", borderRadius: "6px",
-                  border: "1px solid #fecaca", cursor: "pointer",
+                  border: "1.5px solid #fecaca", cursor: "pointer",
                   backgroundColor: filtroUtilizacion === "subutilizado" ? "#dc2626" : "#fef2f2",
                   color: filtroUtilizacion === "subutilizado" ? "#ffffff" : "#991b1b",
                 }}
@@ -1506,7 +1861,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 onClick={() => setFiltroUtilizacion("sobreutilizado")}
                 style={{
                   fontSize: "11px", fontWeight: 700, padding: "5px 10px", borderRadius: "6px",
-                  border: "1px solid #e9d5ff", cursor: "pointer",
+                  border: "1.5px solid #e9d5ff", cursor: "pointer",
                   backgroundColor: filtroUtilizacion === "sobreutilizado" ? "#9333ea" : "#faf5ff",
                   color: filtroUtilizacion === "sobreutilizado" ? "#ffffff" : "#6b21a8",
                 }}
@@ -1519,11 +1874,11 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", textAlign: "left" }}>
               <thead>
-                <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #e2e8f0", color: "#475569" }}>
+                <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #cbd5e1", color: "#475569" }}>
                   <th style={{ padding: "10px 12px" }}>Pos.</th>
                   <th style={{ padding: "10px 12px" }}>Equipo / Patente</th>
                   <th style={{ padding: "10px 12px" }}>Proyecto</th>
-                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Horas Reales</th>
+                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Horas Reales ({diasPeriodo}d)</th>
                   <th style={{ padding: "10px 12px", textAlign: "right" }}>Horas Meta</th>
                   <th style={{ padding: "10px 12px" }}>Barra Cumplimiento</th>
                   <th style={{ padding: "10px 12px", textAlign: "right" }}>% Utilización</th>
@@ -1546,54 +1901,55 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                   </tr>
                 ) : (
                   equiposUtilizacionFiltrados.map((eq, idx) => (
-                  <tr key={eq.patente} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                    <td style={{ padding: "10px 12px", fontWeight: 800 }}>
-                      #{idx + 1}
-                    </td>
-                    <td style={{ padding: "10px 12px" }}>
-                      <div style={{ fontWeight: 700, color: "#0f172a" }}>{eq.patente}</div>
-                      <div style={{ fontSize: "11px", color: "#64748b" }}>
-                        {eq.codigo_interno ? `[${eq.codigo_interno}] ` : ""}{eq.descripcion}
-                      </div>
-                    </td>
-                    <td style={{ padding: "10px 12px", color: "#475569", maxWidth: "160px" }}>
-                      <span title={eq.proyecto_nombre} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {eq.proyecto_nombre}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>
-                      {eq.horas_totales} hrs
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", color: "#64748b" }}>
-                      {horasMetaCalculadas} hrs
-                    </td>
-                    <td style={{ padding: "10px 12px", minWidth: "140px" }}>
-                      <div style={{ width: "100%", height: "8px", backgroundColor: "#e2e8f0", borderRadius: "4px", overflow: "hidden" }}>
-                        <div
-                          style={{
-                            width: `${Math.min(100, eq.pct_utilizacion)}%`,
-                            backgroundColor: eq.color_utilizacion, height: "100%",
-                          }}
-                        />
-                      </div>
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, fontSize: "13px", color: eq.color_utilizacion }}>
-                      {eq.pct_utilizacion}%
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "center" }}>
-                      <span style={{
-                        padding: "3px 8px", borderRadius: "6px", fontSize: "10px", fontWeight: 700,
-                        backgroundColor: `${eq.color_utilizacion}15`, color: eq.color_utilizacion,
-                        border: `1px solid ${eq.color_utilizacion}30`,
-                      }}>
-                        {eq.etiqueta_utilizacion}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "center", color: "#475569" }}>
-                      {eq.dias_activos} / {diasPeriodo}
-                    </td>
-                  </tr>
-                )))}
+                    <tr key={eq.patente} style={{ borderBottom: "1.5px solid #e2e8f0" }}>
+                      <td style={{ padding: "10px 12px", fontWeight: 800 }}>
+                        #{idx + 1}
+                      </td>
+                      <td style={{ padding: "10px 12px" }}>
+                        <PatenteBadge patente={eq.patente} codigo={eq.codigo_interno} />
+                        <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                          {eq.descripcion}
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 12px", color: "#475569", maxWidth: "160px" }}>
+                        <span title={eq.proyecto_nombre} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {eq.proyecto_nombre}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>
+                        {eq.horas_totales} hrs
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", color: "#64748b" }}>
+                        {horasMetaCalculadas} hrs
+                      </td>
+                      <td style={{ padding: "10px 12px", minWidth: "140px" }}>
+                        <div style={{ width: "100%", height: "8px", backgroundColor: "#e2e8f0", borderRadius: "4px", overflow: "hidden" }}>
+                          <div
+                            style={{
+                              width: `${Math.min(100, eq.pct_utilizacion)}%`,
+                              backgroundColor: eq.color_utilizacion, height: "100%",
+                            }}
+                          />
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, fontSize: "13px", color: eq.color_utilizacion }}>
+                        {eq.pct_utilizacion}%
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                        <span style={{
+                          padding: "3px 8px", borderRadius: "6px", fontSize: "10px", fontWeight: 700,
+                          backgroundColor: `${eq.color_utilizacion}15`, color: eq.color_utilizacion,
+                          border: `1px solid ${eq.color_utilizacion}30`,
+                        }}>
+                          {eq.etiqueta_utilizacion}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "center", color: "#475569" }}>
+                        {eq.dias_activos} / {diasPeriodo}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -1605,7 +1961,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
       {/* ═══════════════════════════════════════════════════════════════════════ */}
       {seccionActiva === "kilometraje" && (
         <div style={{
-          backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0",
+          backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
           padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
@@ -1615,7 +1971,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 Ranking Completo: Top Kilometraje Recorrido {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
               </h3>
               <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
-                Equipos con mayor recorrido en carretera y desplazamientos entre faenas y campamentos.
+                Equipos con mayor recorrido acumulado en los <strong>{diasPeriodo} días filtrados</strong> ({desde} al {hasta}).
               </p>
             </div>
           </div>
@@ -1623,11 +1979,11 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", textAlign: "left" }}>
               <thead>
-                <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #e2e8f0", color: "#475569" }}>
+                <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #cbd5e1", color: "#475569" }}>
                   <th style={{ padding: "10px 12px" }}>Pos.</th>
                   <th style={{ padding: "10px 12px" }}>Equipo / Patente</th>
                   <th style={{ padding: "10px 12px" }}>Proyecto</th>
-                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Km Totales</th>
+                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Km Totales ({diasPeriodo}d)</th>
                   <th style={{ padding: "10px 12px" }}>Proporción Distancia</th>
                   <th style={{ padding: "10px 12px", textAlign: "center" }}>Viajes Realizados</th>
                   <th style={{ padding: "10px 12px", textAlign: "right" }}>Promedio Km/Viaje</th>
@@ -1649,52 +2005,53 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                   </tr>
                 ) : (
                   topKmFiltrado.map((eq, idx) => (
-                  <tr key={eq.patente} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                    <td style={{ padding: "10px 12px", fontWeight: 800 }}>
-                      <span style={{
-                        width: "24px", height: "24px", borderRadius: "50%",
-                        backgroundColor: idx === 0 ? "#8b5cf6" : "#ede9fe",
-                        color: idx === 0 ? "#ffffff" : "#6d28d9",
-                        fontSize: "11px", display: "inline-flex", alignItems: "center", justifyContent: "center",
-                      }}>
-                        #{idx + 1}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 12px" }}>
-                      <div style={{ fontWeight: 700, color: "#0f172a" }}>{formatearPatente(eq.patente)}</div>
-                      <div style={{ fontSize: "11px", color: "#64748b" }}>
-                        {eq.codigo_interno ? `[${eq.codigo_interno}] ` : ""}{eq.descripcion}
-                      </div>
-                    </td>
-                    <td style={{ padding: "10px 12px", color: "#475569", maxWidth: "160px" }}>
-                      <span title={eq.proyecto_nombre} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {eq.proyecto_nombre}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, color: "#6d28d9", fontSize: "13px" }}>
-                      {eq.km_totales.toLocaleString("es-CL")} km
-                    </td>
-                    <td style={{ padding: "10px 12px", minWidth: "140px" }}>
-                      <div style={{ width: "100%", height: "8px", backgroundColor: "#e2e8f0", borderRadius: "4px", overflow: "hidden" }}>
-                        <div
-                          style={{
-                            width: `${maxKm > 0 ? (eq.km_totales / maxKm) * 100 : 0}%`,
-                            backgroundColor: "#8b5cf6", height: "100%",
-                          }}
-                        />
-                      </div>
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "center", fontWeight: 600, color: "#0f172a" }}>
-                      {eq.viajes_totales}
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: "#0369a1" }}>
-                      {eq.viajes_totales > 0 ? `${Math.round((eq.km_totales / eq.viajes_totales) * 10) / 10} km` : "-"}
-                    </td>
-                    <td style={{ padding: "10px 12px", color: "#64748b", fontSize: "11px" }}>
-                      {eq.conductor_principal}
-                    </td>
-                  </tr>
-                )))}
+                    <tr key={eq.patente} style={{ borderBottom: "1.5px solid #e2e8f0" }}>
+                      <td style={{ padding: "10px 12px", fontWeight: 800 }}>
+                        <span style={{
+                          width: "24px", height: "24px", borderRadius: "50%",
+                          backgroundColor: idx === 0 ? "#8b5cf6" : "#ede9fe",
+                          color: idx === 0 ? "#ffffff" : "#6d28d9",
+                          fontSize: "11px", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          #{idx + 1}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px" }}>
+                        <PatenteBadge patente={eq.patente} codigo={eq.codigo_interno} />
+                        <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                          {eq.descripcion}
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 12px", color: "#475569", maxWidth: "160px" }}>
+                        <span title={eq.proyecto_nombre} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {eq.proyecto_nombre}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, color: "#6d28d9", fontSize: "13px" }}>
+                        {eq.km_totales.toLocaleString("es-CL")} km
+                      </td>
+                      <td style={{ padding: "10px 12px", minWidth: "140px" }}>
+                        <div style={{ width: "100%", height: "8px", backgroundColor: "#e2e8f0", borderRadius: "4px", overflow: "hidden" }}>
+                          <div
+                            style={{
+                              width: `${maxKm > 0 ? (eq.km_totales / maxKm) * 100 : 0}%`,
+                              backgroundColor: "#8b5cf6", height: "100%",
+                            }}
+                          />
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "center", fontWeight: 600, color: "#0f172a" }}>
+                        {eq.viajes_totales}
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: "#0369a1" }}>
+                        {eq.viajes_totales > 0 ? `${Math.round((eq.km_totales / eq.viajes_totales) * 10) / 10} km` : "-"}
+                      </td>
+                      <td style={{ padding: "10px 12px", color: "#64748b", fontSize: "11px" }}>
+                        {eq.conductor_principal}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -1702,11 +2059,138 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════ */}
-      {/* SECCIÓN 6: TOP CONDUCTORES MÁS ACTIVOS                                  */}
+      {/* SECCIÓN 6: EQUIPOS DE USO EXCLUSIVO (GERENTES / PERSONAL ASIGNADO)      */}
+      {/* ═══════════════════════════════════════════════════════════════════════ */}
+      {seccionActiva === "exclusivos" && (
+        <div style={{
+          backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
+          padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
+                <UserCheck size={18} color="#0284c7" />
+                Vehículos de Uso Exclusivo (Gerentes / Personal Asignado) {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : ""}
+              </h3>
+              <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
+                Equipos operados por <strong>un único conductor</strong> durante los <strong>{diasPeriodo} días filtrados</strong> ({desde} al {hasta}). Ideal para auditar asignaciones personales y uso gerencial.
+              </p>
+            </div>
+            <div style={{
+              display: "flex", alignItems: "center", gap: "6px",
+              padding: "4px 10px", borderRadius: "6px", backgroundColor: "#f0f9ff",
+              border: "1px solid #bae6fd", fontSize: "11px", fontWeight: 700, color: "#0369a1",
+            }}>
+              <UserCheck size={14} />
+              <span>{equiposUsoExclusivoFiltrados.length} equipos con chofer exclusivo</span>
+            </div>
+          </div>
+
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", textAlign: "left" }}>
+              <thead>
+                <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #cbd5e1", color: "#475569" }}>
+                  <th style={{ padding: "10px 12px" }}>Pos.</th>
+                  <th style={{ padding: "10px 12px" }}>Equipo / Patente</th>
+                  <th style={{ padding: "10px 12px" }}>Proyecto</th>
+                  <th style={{ padding: "10px 12px" }}>Conductor Único Asignado</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center" }}>RUT Conductor</th>
+                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Horas Totales</th>
+                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Kilometraje</th>
+                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Combustible</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center" }}>Viajes</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center" }}>Días Activo</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center" }}>Asignación</th>
+                </tr>
+              </thead>
+              <tbody>
+                {equiposUsoExclusivoFiltrados.length === 0 ? (
+                  <tr>
+                    <td colSpan="11" style={{ padding: "36px 16px", textAlign: "center", color: "#64748b" }}>
+                      <UserCheck size={30} style={{ margin: "0 auto 8px", opacity: 0.4 }} />
+                      <div style={{ fontSize: "14px", fontWeight: 700, color: "#334155" }}>
+                        Sin vehículos de uso exclusivo para {labelTipoActivo.toLowerCase()}
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px" }}>
+                        No se encontraron equipos operados por un solo conductor en el período seleccionado.
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  equiposUsoExclusivoFiltrados.map((eq, idx) => {
+                    const cond = eq.conductor_exclusivo || {
+                      nombre: eq.conductor_principal,
+                      rut: "S/R",
+                    };
+                    return (
+                      <tr key={eq.patente} style={{ borderBottom: "1.5px solid #e2e8f0" }}>
+                        <td style={{ padding: "10px 12px", fontWeight: 800 }}>
+                          <span style={{
+                            width: "24px", height: "24px", borderRadius: "50%",
+                            backgroundColor: idx === 0 ? "#0284c7" : "#e0f2fe",
+                            color: idx === 0 ? "#ffffff" : "#0369a1",
+                            fontSize: "11px", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                          }}>
+                            #{idx + 1}
+                          </span>
+                        </td>
+                        <td style={{ padding: "10px 12px" }}>
+                          <PatenteBadge patente={eq.patente} codigo={eq.codigo_interno} />
+                          <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                            {eq.descripcion}
+                          </div>
+                        </td>
+                        <td style={{ padding: "10px 12px", color: "#475569", maxWidth: "160px" }}>
+                          <span title={eq.proyecto_nombre} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {eq.proyecto_nombre}
+                          </span>
+                        </td>
+                        <td style={{ padding: "10px 12px", fontWeight: 700, color: "#0f172a" }}>
+                          {cond.nombre}
+                        </td>
+                        <td style={{ padding: "10px 12px", textAlign: "center", color: "#64748b", fontFamily: "monospace" }}>
+                          {cond.rut}
+                        </td>
+                        <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, color: "#0284c7", fontSize: "13px" }}>
+                          {eq.horas_totales} hrs
+                        </td>
+                        <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>
+                          {eq.km_totales.toLocaleString("es-CL")} km
+                        </td>
+                        <td style={{ padding: "10px 12px", textAlign: "right", color: "#dc2626", fontWeight: 600 }}>
+                          {eq.litros_totales > 0 ? `${eq.litros_totales} L` : "-"}
+                        </td>
+                        <td style={{ padding: "10px 12px", textAlign: "center", color: "#475569" }}>
+                          {eq.viajes_totales}
+                        </td>
+                        <td style={{ padding: "10px 12px", textAlign: "center", color: "#475569" }}>
+                          {eq.dias_activos} / {diasPeriodo}
+                        </td>
+                        <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                          <span style={{
+                            padding: "3px 8px", borderRadius: "6px", fontSize: "10px", fontWeight: 700,
+                            backgroundColor: "#dbeafe", color: "#1e40af", border: "1px solid #bfdbfe",
+                            whiteSpace: "nowrap",
+                          }}>
+                            ⭐ Uso Exclusivo
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════════ */}
+      {/* SECCIÓN 7: TOP CONDUCTORES MÁS ACTIVOS                                  */}
       {/* ═══════════════════════════════════════════════════════════════════════ */}
       {seccionActiva === "conductores" && (
         <div style={{
-          backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0",
+          backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
           padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
@@ -1716,7 +2200,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 Ranking Completo: Top Conductores Más Activos {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
               </h3>
               <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
-                Histórico de horas al volante, kilometraje acumulado y vehículos operados por chofer.
+                Histórico acumulado en los <strong>{diasPeriodo} días filtrados</strong> ({desde} al {hasta}): horas de conducción, kilometraje y vehículos operados.
               </p>
             </div>
           </div>
@@ -1724,11 +2208,11 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", textAlign: "left" }}>
               <thead>
-                <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #e2e8f0", color: "#475569" }}>
+                <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #cbd5e1", color: "#475569" }}>
                   <th style={{ padding: "10px 12px" }}>Pos.</th>
                   <th style={{ padding: "10px 12px" }}>Nombre del Conductor</th>
                   <th style={{ padding: "10px 12px" }}>RUT</th>
-                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Horas Conducidas</th>
+                  <th style={{ padding: "10px 12px", textAlign: "right" }}>Horas Conducidas ({diasPeriodo}d)</th>
                   <th style={{ padding: "10px 12px", textAlign: "right" }}>Kilometraje</th>
                   <th style={{ padding: "10px 12px", textAlign: "center" }}>Total Viajes</th>
                   <th style={{ padding: "10px 12px" }}>Vehículos Operados</th>
@@ -1743,52 +2227,48 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                         Sin registros de conductores para {labelTipoActivo.toLowerCase()}
                       </div>
                       <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px" }}>
-                        No se registraron choferes u operadores asociados a este tipo de equipo en el período seleccionado.
+                        No se registraron choferes asociados a este tipo de equipo en el período seleccionado.
                       </div>
                     </td>
                   </tr>
                 ) : (
                   topConductoresFiltrados.map((cond, idx) => (
-                  <tr key={cond.nombre} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                    <td style={{ padding: "10px 12px", fontWeight: 800 }}>
-                      <span style={{
-                        width: "24px", height: "24px", borderRadius: "50%",
-                        backgroundColor: idx === 0 ? "#f59e0b" : "#fef3c7",
-                        color: idx === 0 ? "#ffffff" : "#b45309",
-                        fontSize: "11px", display: "inline-flex", alignItems: "center", justifyContent: "center",
-                      }}>
-                        #{idx + 1}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 12px", fontWeight: 700, color: "#0f172a" }}>
-                      {cond.nombre}
-                    </td>
-                    <td style={{ padding: "10px 12px", color: "#64748b" }}>
-                      {cond.rut}
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, color: "#b45309", fontSize: "13px" }}>
-                      {cond.horas_conducidas} hrs
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>
-                      {cond.km_totales.toLocaleString("es-CL")} km
-                    </td>
-                    <td style={{ padding: "10px 12px", textAlign: "center", color: "#475569" }}>
-                      {cond.viajes}
-                    </td>
-                    <td style={{ padding: "10px 12px" }}>
-                      <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                        {(cond.vehiculos || []).map((v) => (
-                          <span key={v} style={{
-                            fontSize: "10px", fontWeight: 600, padding: "1px 6px",
-                            borderRadius: "4px", backgroundColor: "#e2e8f0", color: "#334155",
-                          }}>
-                            {formatearPatente(v)}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                )))}
+                    <tr key={cond.nombre} style={{ borderBottom: "1.5px solid #e2e8f0" }}>
+                      <td style={{ padding: "10px 12px", fontWeight: 800 }}>
+                        <span style={{
+                          width: "24px", height: "24px", borderRadius: "50%",
+                          backgroundColor: idx === 0 ? "#f59e0b" : "#fef3c7",
+                          color: idx === 0 ? "#ffffff" : "#b45309",
+                          fontSize: "11px", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          #{idx + 1}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px", fontWeight: 700, color: "#0f172a" }}>
+                        {cond.nombre}
+                      </td>
+                      <td style={{ padding: "10px 12px", color: "#64748b" }}>
+                        {cond.rut}
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, color: "#b45309", fontSize: "13px" }}>
+                        {cond.horas_conducidas} hrs
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>
+                        {cond.km_totales.toLocaleString("es-CL")} km
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "center", color: "#475569" }}>
+                        {cond.viajes}
+                      </td>
+                      <td style={{ padding: "10px 12px" }}>
+                        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                          {(cond.vehiculos || []).map((v) => (
+                            <PatenteBadge key={v} patente={v} />
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -1796,11 +2276,11 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════ */}
-      {/* SECCIÓN 7: DISTRIBUCIÓN HORARIA (CURVA DE 24 HORAS)                     */}
+      {/* SECCIÓN 8: DISTRIBUCIÓN HORARIA (CURVA DE 24 HORAS)                     */}
       {/* ═══════════════════════════════════════════════════════════════════════ */}
       {seccionActiva === "horario" && (
         <div style={{
-          backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0",
+          backgroundColor: "#ffffff", borderRadius: "12px", border: "1.5px solid #cbd5e1",
           padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
         }}>
           <div style={{ marginBottom: "16px" }}>
@@ -1809,16 +2289,16 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
               Distribución Horaria de Operación de la Flota (24 Horas)
             </h3>
             <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
-              Visualiza las horas punta de operación, inicio de turnos, colación y turnos noche en todas las faenas.
+              Visualiza las horas punta de operación durante los <strong>{diasPeriodo} días filtrados</strong> ({desde} al {hasta}).
             </p>
           </div>
 
-          {/* Gráfico de barras horizontales/verticales interactivo */}
+          {/* Gráfico de barras interactivo */}
           <div style={{
             display: "grid", gridTemplateColumns: "repeat(24, 1fr)",
             gap: "6px", alignItems: "flex-end", height: "220px",
             padding: "20px 10px 10px", backgroundColor: "#f8fafc",
-            borderRadius: "10px", border: "1px solid #e2e8f0",
+            borderRadius: "10px", border: "1.5px solid #e2e8f0",
           }}>
             {(dashData?.distribucion_horaria || []).map((d) => {
               const hPct = maxHorasDistribucion > 0 ? (d.horas_operacion / maxHorasDistribucion) * 100 : 0;
@@ -1865,4 +2345,3 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
     </div>
   );
 }
-

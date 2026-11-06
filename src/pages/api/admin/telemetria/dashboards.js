@@ -13,10 +13,14 @@ export default async function handler(req, res) {
     proyecto_id,
     patente,
     conductor,
+    busqueda,
     tipo_equipo = "todos",
     user_rol = "",
     user_proyecto_id = "",
   } = req.query;
+
+  // Búsqueda unificada por conductor o patente/vehículo
+  const terminoBusqueda = (busqueda || conductor || patente || "").trim();
 
   try {
     // 1. Verificación de permisos de proyecto (Regla: sólo administradores pueden ver todos los proyectos)
@@ -119,14 +123,12 @@ export default async function handler(req, res) {
         .gte("fecha", fDesde)
         .lte("fecha", fHasta);
 
-      if (patente && patente.trim() !== "") {
-        const patSearch = normPat(patente);
-        query = query.ilike("patente", `%${patSearch}%`);
-      }
-
-      if (conductor && conductor.trim() !== "") {
-        const term = `%${conductor.trim()}%`;
-        query = query.or(`nombre_conductor.ilike.${term},rut_conductor.ilike.${term}`);
+      if (terminoBusqueda !== "") {
+        const term = `%${terminoBusqueda}%`;
+        const patSearch = `%${normPat(terminoBusqueda)}%`;
+        query = query.or(
+          `nombre_conductor.ilike.${term},rut_conductor.ilike.${term},patente.ilike.${patSearch},nombre_skynav.ilike.${term}`
+        );
       }
 
       query = query.range(from, from + step - 1);
@@ -181,6 +183,25 @@ export default async function handler(req, res) {
       const tipoV = clasificarTipoEquipo(eqMatched || v);
       if (tipo_equipo && tipo_equipo !== "todos" && tipoV !== tipo_equipo) {
         continue;
+      }
+
+      // Si hay búsqueda unificada activa, verificar coincidencias por chofer o vehículo
+      if (terminoBusqueda !== "") {
+        const termLow = terminoBusqueda.toLowerCase();
+        const patClean = normPat(terminoBusqueda);
+        const matchCond =
+          (v.nombre_conductor && v.nombre_conductor.toLowerCase().includes(termLow)) ||
+          (v.rut_conductor && v.rut_conductor.toLowerCase().includes(termLow));
+        const matchVeh =
+          (v.patente && (v.patente.toLowerCase().includes(termLow) || normPat(v.patente).includes(patClean))) ||
+          (v.nombre_skynav && v.nombre_skynav.toLowerCase().includes(termLow)) ||
+          (eqMatched?.patente && normPat(eqMatched.patente).includes(patClean)) ||
+          (eqMatched?.codigo_interno && eqMatched.codigo_interno.toLowerCase().includes(termLow)) ||
+          (eqMatched?.descripcion_equipo && eqMatched.descripcion_equipo.toLowerCase().includes(termLow));
+
+        if (!matchCond && !matchVeh) {
+          continue;
+        }
       }
 
       globalTotalViajes++;
@@ -251,10 +272,22 @@ export default async function handler(req, res) {
 
       if (v.nombre_conductor && v.nombre_conductor.trim() !== "") {
         const condName = v.nombre_conductor.trim();
-        eqStat.conductores_map.set(
-          condName,
-          (eqStat.conductores_map.get(condName) || 0) + tMin
-        );
+        const condRut = v.rut_conductor?.trim() || "S/R";
+        if (!eqStat.conductores_map.has(condName)) {
+          eqStat.conductores_map.set(condName, {
+            nombre: condName,
+            rut: condRut,
+            minutos: 0,
+            km: 0,
+            viajes: 0,
+            litros: 0,
+          });
+        }
+        const condEntry = eqStat.conductores_map.get(condName);
+        condEntry.minutos += tMin;
+        condEntry.km += km;
+        condEntry.viajes += 1;
+        condEntry.litros += litros;
       }
 
       // 4.2 Agregación por Conductor
@@ -302,19 +335,37 @@ export default async function handler(req, res) {
       const litTot = Math.round(e.litros_total * 10) / 10;
       const rend = litTot > 0 ? Math.round((kmTot / litTot) * 10) / 10 : null;
 
-      // Obtener conductor más frecuente
+      // Obtener conductor más frecuente y verificar si tiene uso exclusivo (1 solo conductor)
       let conductorPrincipal = "Sin Registro";
       let maxMinCond = 0;
-      for (const [cName, cMin] of e.conductores_map.entries()) {
+      for (const [cName, cObj] of e.conductores_map.entries()) {
+        const cMin = typeof cObj === "object" ? cObj.minutos : cObj;
         if (cMin > maxMinCond) {
           maxMinCond = cMin;
           conductorPrincipal = cName;
         }
       }
 
+      const cantidadConductores = e.conductores_map.size;
+      const esUsoExclusivo = cantidadConductores === 1;
+      let conductorExclusivo = null;
+
+      if (esUsoExclusivo) {
+        const [soloCond] = Array.from(e.conductores_map.values());
+        conductorExclusivo = {
+          nombre: typeof soloCond === "object" ? soloCond.nombre : soloCond,
+          rut: typeof soloCond === "object" ? soloCond.rut : "S/R",
+          horas: typeof soloCond === "object" ? Math.round((soloCond.minutos / 60) * 10) / 10 : horasTotales,
+          km: typeof soloCond === "object" ? Math.round(soloCond.km * 10) / 10 : kmTot,
+          viajes: typeof soloCond === "object" ? soloCond.viajes : e.viajes_total,
+          litros: typeof soloCond === "object" ? Math.round(soloCond.litros * 10) / 10 : litTot,
+        };
+      }
+
       return {
         equipo_id: e.equipo_id,
         patente: e.patente,
+        patente_raw: e.patente_raw,
         codigo_interno: e.codigo_interno,
         descripcion: e.descripcion,
         tipo: e.tipo,
@@ -336,6 +387,9 @@ export default async function handler(req, res) {
         viajes_totales: e.viajes_total,
         dias_activos: e.fechas_set.size,
         conductor_principal: conductorPrincipal,
+        cantidad_conductores: cantidadConductores,
+        es_uso_exclusivo: esUsoExclusivo,
+        conductor_exclusivo: conductorExclusivo,
       };
     });
 
@@ -379,6 +433,11 @@ export default async function handler(req, res) {
       }))
       .sort((a, b) => b.horas_conducidas - a.horas_conducidas)
       .slice(0, 30);
+
+    // 6.6 Equipos / Camionetas de Uso Exclusivo (1 solo conductor asignado - Gerentes / Jefaturas)
+    const equiposUsoExclusivo = [...equiposFiltradosPorTipo]
+      .filter((e) => e.cantidad_conductores === 1 && e.horas_totales > 0)
+      .sort((a, b) => b.horas_totales - a.horas_totales);
 
     // 6.6 Formatear distribución horaria
     const distribucionFinal = distribucionHoras.map((d) => ({
@@ -434,6 +493,7 @@ export default async function handler(req, res) {
         top_kilometraje: topKilometraje,
         top_ralenti: topRalenti,
         top_conductores: topConductores,
+        equipos_uso_exclusivo: equiposUsoExclusivo,
       },
       distribucion_horaria: distribucionFinal,
       equipos_disponibles: todosEquipos.map((e) => ({

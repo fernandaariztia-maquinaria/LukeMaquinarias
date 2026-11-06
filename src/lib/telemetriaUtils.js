@@ -9,30 +9,36 @@ export function normalizarPatente(raw) {
 
 /**
  * Formatea una patente chilena agregándole el guión estándar sin modificar la base de datos:
- * - 4 letras + 2 números: PGXT19 -> PGXT-19
- * - 2 letras + 4 números: HY9014 o HY-9014 -> HY-90-14
+ * - 4 letras + 2 números: PGXT19 -> PGXT‑19 (con guión no rompible para evitar salto de línea)
+ * - 2 letras + 4 números: HY9014 o HY-9014 -> HY‑90‑14
  * - Formatos con guión preexistente: preservados
  */
-export function formatearPatente(raw) {
+export function formatearPatente(raw, useNonBreaking = true) {
   if (!raw) return "";
   const clean = String(raw).trim().toUpperCase();
   if (clean === "N/A" || clean === "S/P" || clean === "SIN REGISTRO") return clean;
 
   const noDash = clean.replace(/[^A-Z0-9]/g, "");
+  // Guión no rompible (U+2011) previene que los navegadores corten la patente en dos líneas
+  const dash = useNonBreaking ? "\u2011" : "-";
 
   // Formato moderno chileno (4 letras + 2 dígitos): PGXT19 -> PGXT-19
   if (/^[A-Z]{4}\d{2}$/.test(noDash)) {
-    return `${noDash.slice(0, 4)}-${noDash.slice(4)}`;
+    return `${noDash.slice(0, 4)}${dash}${noDash.slice(4)}`;
   }
 
   // Formato antiguo chileno (2 letras + 4 dígitos): HY9014 -> HY-90-14
   if (/^[A-Z]{2}\d{4}$/.test(noDash)) {
-    if (/^[A-Z]{2}-\d{2}-\d{2}$/.test(clean)) return clean;
-    return `${noDash.slice(0, 2)}-${noDash.slice(2, 4)}-${noDash.slice(4)}`;
+    if (/^[A-Z]{2}[-\u2011]\d{2}[-\u2011]\d{2}$/.test(clean)) {
+      return clean.replace(/-/g, dash);
+    }
+    return `${noDash.slice(0, 2)}${dash}${noDash.slice(2, 4)}${dash}${noDash.slice(4)}`;
   }
 
   // Si ya tiene guión en formato estándar (ej. GRHQ-0007 o CTAP-0214)
-  if (clean.includes("-")) return clean;
+  if (clean.includes("-") || clean.includes("\u2011")) {
+    return useNonBreaking ? clean.replace(/-/g, "\u2011") : clean;
+  }
 
   return clean;
 }
