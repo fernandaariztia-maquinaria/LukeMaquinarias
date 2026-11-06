@@ -22,7 +22,8 @@ import IndicadoresTab from "../components/admin/IndicadoresTab";
 import MantencionTab from "../components/admin/MantencionTab";
 import EimiplannerTab from "../components/admin/EimiplannerTab";
 import TelemetriaTab from "../components/admin/TelemetriaTab";
-import { Layers, Radio } from "lucide-react";
+import ConductoresOperadoresTab from "../components/admin/ConductoresOperadoresTab";
+import { Layers, Radio, UserCheck } from "lucide-react";
 
 const SIDEBAR_FULL = 220;
 const SIDEBAR_MINI = 58;
@@ -69,6 +70,7 @@ function AdminMaquinariaContent({ currentUser, setCurrentUser, onChangeUser, onS
     { id: "equipos",        label: "Equipos",     icon: HardHat },
     { id: "eimiplanner",    label: "EIMIPLANNER", icon: Layers },
     { id: "telemetria",     label: "Telemetría",  icon: Radio },
+    { id: "conductores",    label: "Conductores/Operadores", icon: UserCheck },
     ...(esAdminGlobal ? [
       { id: "proyectos",      label: "Proyectos",   icon: Building2 },
       { id: "personal",       label: "Personal",    icon: Users },
@@ -93,6 +95,7 @@ function AdminMaquinariaContent({ currentUser, setCurrentUser, onChangeUser, onS
       case "equipos":        return <EquiposTab hookProps={hookProps} />;
       case "eimiplanner":    return <EimiplannerTab currentUser={currentUser} />;
       case "telemetria":     return <TelemetriaTab currentUser={currentUser} hookProps={hookProps} />;
+      case "conductores":    return <ConductoresOperadoresTab currentUser={currentUser} hookProps={hookProps} />;
       case "proyectos":      return <ProyectosTab hookProps={hookProps} />;
       case "especialidades": return <EspecialidadesTab hookProps={hookProps} />;
       case "personal":       return <PersonalTab hookProps={hookProps} />;
