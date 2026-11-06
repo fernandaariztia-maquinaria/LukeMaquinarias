@@ -9,7 +9,7 @@
  */
 
 import { GoogleGenAI } from "@google/genai";
-import { formatFechaHoraChile } from "./timeUtils";
+import { formatFechaHoraChile } from "./timeUtils.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";

@@ -890,60 +890,14 @@ export async function handleJornadaFlow(ctx, res) {
       .eq("id", msgUsuarioC.id);
   }
 
-  // ¿Es cierre de jornada?
-  const intentoCierre =
+  // ¿Es cierre de jornada o estamos en algún sub-flujo de checkout?
+  const esFlujoCheckout =
     resultado.tipo_evento === "CIERRE" ||
     resultado.horometro_final != null ||
-    resultado.km_final != null;
+    resultado.km_final != null ||
+    (sesion.estado_espera && sesion.estado_espera.startsWith("ESPERANDO_CHECKOUT_"));
 
-  if (intentoCierre) {
-    const esVehiculo = tipoSeguimiento === 'vehiculo';
-    const lecturaFinal = esVehiculo ? resultado.km_final : resultado.horometro_final;
-
-    if (lecturaFinal == null && sesion.estado_espera !== "ESPERANDO_CHECKOUT_AUDIO") {
-      await supabase.from("sesiones_whatsapp")
-        .update({ estado_espera: "ESPERANDO_CHECKOUT_AUDIO", updated_at: new Date().toISOString() })
-        .eq("id", sesion.id);
-
-      const textoIndicacionCierre = (resultado.detalles_texto || message || "Término de jornada").trim();
-      const ejemploCierre = esVehiculo
-        ? `_"Kilometraje final 84.500, sin carga de combustible, observaciones: vehículo sin novedades"_`
-        : `_"Horómetro final 2.310, cargué 80 litros de combustible, observaciones: equipo operativo sin novedades"_`;
-
-      const msgPedirLectura =
-        `✅ *Indicación Registrada:* _"${textoIndicacionCierre}"_\n` +
-        `🏁 *Término de jornada iniciado.*\n\n` +
-        `Para consolidar tu jornada y generar el *Reporte Diario en PDF*, por favor indícanos por *texto o audio*:\n` +
-        `1️⃣ *${esVehiculo ? 'Odómetro (kilometraje) final' : 'Horómetro final'}*\n` +
-        `2️⃣ *Carga de combustible* _(litros cargados o "sin carga de combustible")_\n` +
-        `3️⃣ *Observaciones* _(novedades del equipo o de la jornada)_\n\n` +
-        `💡 _Ejemplo: ${ejemploCierre}_`;
-
-      await guardarMensajeChat(supabase, phoneClean, "model", msgPedirLectura, "texto", sesion.reporte_activo_id);
-      await enviarMensajeWhatsApp(jid, phoneClean, msgPedirLectura, !!audio, geminiKey);
-      return res.status(200).json({ success: true, action: "ESPERANDO_LECTURA_FINAL" });
-    }
-  }
-
-  // Si el operador envía un hito intermedio mientras estaba en ESPERANDO_CHECKOUT_AUDIO, sacarlo de espera
-  const esIntermedioExplicito = !intentoCierre && (
-    resultado.tipo_evento === "Trabajando" ||
-    resultado.tipo_evento === "En Colacion" ||
-    resultado.tipo_evento === "Detenido por Falla" ||
-    resultado.tipo_evento === "Disponible" ||
-    resultado.especialidad_id != null
-  );
-
-  if (esIntermedioExplicito && sesion.estado_espera === "ESPERANDO_CHECKOUT_AUDIO") {
-    await supabase.from("sesiones_whatsapp").update({
-      estado_espera: null,
-      updated_at: new Date().toISOString()
-    }).eq("id", sesion.id);
-    sesion.estado_espera = null;
-  }
-
-  // Si ya tenemos el horómetro final o estamos en checkout confirmado, llamamos a cierreHandler
-  if (intentoCierre || sesion.estado_espera === "ESPERANDO_CHECKOUT_AUDIO" || sesion.estado_espera === "ESPERANDO_CHECKOUT_PLATAFORMA" || sesion.estado_espera === "ESPERANDO_CHECKOUT_PLATAFORMA_DETALLE" || sesion.estado_espera === "ESPERANDO_CONFIRMACION_TURNO_LARGO") {
+  if (esFlujoCheckout) {
     const contextCierre = {
       ...ctx,
       resultadoIA: resultado,
@@ -951,6 +905,31 @@ export async function handleJornadaFlow(ctx, res) {
       reporteActual
     };
     return await handleCierreFlow(contextCierre, res);
+  }
+
+  // ── REQUERIMIENTO 2.1: REGISTRO DE CARGA DE COMBUSTIBLE DURANTE LA JORNADA ──
+  const { extraerCargaCombustible, registrarCargaCombustible } = await import("../services/combustibleService");
+  const cargaInfoIntermedia = extraerCargaCombustible(message || resultado.detalles_texto || "");
+  if (cargaInfoIntermedia.tieneCarga) {
+    const regCarga = await registrarCargaCombustible(supabase, {
+      reporteId: sesion.reporte_activo_id,
+      personalId: personal.id,
+      litros: cargaInfoIntermedia.litros,
+      horaTexto: cargaInfoIntermedia.horaTexto,
+      horaIso: cargaInfoIntermedia.horaIso,
+      servicentro: "Terreno / Faena"
+    });
+
+    const horaDesc = cargaInfoIntermedia.horaTexto ? ` a las ${cargaInfoIntermedia.horaTexto}` : "";
+    const msgConfirmacionCarga =
+      `⛽ *Carga de Combustible Registrada* 🚜💨\n\n` +
+      `• *Litros cargados:* ${cargaInfoIntermedia.litros} L${horaDesc}\n` +
+      `• *Total acumulado en el turno:* ${regCarga.totalLitrosAcumulado} L\n\n` +
+      `📌 Tu jornada continúa activa en *${reporteActual.equipos?.descripcion_equipo || "tu equipo"}*.`;
+
+    await guardarMensajeChat(supabase, phoneClean, "model", msgConfirmacionCarga, "texto", sesion.reporte_activo_id);
+    await enviarMensajeWhatsApp(jid, phoneClean, msgConfirmacionCarga, !!audio, geminiKey);
+    return res.status(200).json({ success: true, action: "CARGA_COMBUSTIBLE_REGISTRADA" });
   }
 
   // === HITO INTERMEDIO ===

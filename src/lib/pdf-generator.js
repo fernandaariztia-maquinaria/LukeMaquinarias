@@ -174,40 +174,47 @@ export async function generarReportePDF({
         doc.fontSize(9).font("Helvetica").fillColor("#64748b").text("LukeEquipos", 54, 78);
       }
 
-      // Título en el centro con ancho acotado
-      const tituloW = 200;
+      // Título en el centro con espaciado vertical dinámico (sin solapamiento)
+      const tituloX = 180;
+      const tituloW = 210;
       doc
         .fillColor(AZUL_OSCURO)
-        .fontSize(14)
+        .fontSize(12)
         .font("Helvetica-Bold")
-        .text("REPORTE DIARIO DE JORNADA", 185, 55, { width: tituloW });
+        .text("REPORTE DIARIO DE JORNADA", tituloX, 50, { width: tituloW });
 
+      const subY = doc.y + 2;
       doc
-        .fontSize(9)
+        .fontSize(8.5)
         .font("Helvetica")
         .fillColor("#475569")
-        .text("LukeEquipos — Control Operacional", 185, 73, { width: tituloW });
+        .text("LukeEquipos — Control Operacional", tituloX, subY, { width: tituloW });
 
-      doc
-        .fontSize(8)
-        .font("Helvetica")
-        .fillColor("#64748b")
-        .text(`Generado: ${new Date().toLocaleString("es-CL")}`, 185, 87, { width: tituloW });
-
-      // Código de equipo a la derecha en una pastilla destacada (evita colisiones con el título)
-      const codeW = 155;
-      const codeX = 50 + W - codeW;
-      doc.roundedRect(codeX, 54, codeW, 38, 5).fillAndStroke("#f8fafc", "#cbd5e1");
+      const genY = doc.y + 1;
       doc
         .fontSize(7.5)
+        .font("Helvetica")
+        .fillColor("#64748b")
+        .text(`Generado: ${new Date().toLocaleString("es-CL")}`, tituloX, genY, { width: tituloW });
+
+      // Código de equipo a la derecha en una pastilla proporcionada y con ajuste dinámico
+      const codeW = 160;
+      const codeX = 50 + W - codeW;
+      const codeBadgeH = 48;
+      doc.roundedRect(codeX, 48, codeW, codeBadgeH, 5).fillAndStroke("#f8fafc", "#cbd5e1");
+      doc
+        .fontSize(7)
         .font("Helvetica-Bold")
         .fillColor("#64748b")
-        .text("CÓDIGO DE EQUIPO", codeX, 59, { width: codeW, align: "center" });
+        .text("CÓDIGO DE EQUIPO", codeX, 53, { width: codeW, align: "center" });
+
+      const labelEq = formatEquipoLabel(equipo);
+      const codeFontSize = labelEq.length > 24 ? 7.5 : (labelEq.length > 16 ? 8.5 : 10);
       doc
-        .fontSize(11)
+        .fontSize(codeFontSize)
         .font("Helvetica-Bold")
         .fillColor(NARANJA)
-        .text(formatEquipoLabel(equipo), codeX + 4, 72, { width: codeW - 8, align: "center" });
+        .text(labelEq, codeX + 4, 65, { width: codeW - 8, align: "center", lineGap: 1 });
 
       // Línea divisoria inferior de la cabecera
       doc.moveTo(50, 115).lineTo(50 + W, 115).strokeColor(AZUL_ACENTO).lineWidth(2).stroke();
@@ -215,7 +222,35 @@ export async function generarReportePDF({
       // ============================================================
       // SECCIÓN 1: DATOS DEL EQUIPO Y PERSONAL
       // ============================================================
-      let y = 140;
+      let y = 130;
+
+      // Banner de Alerta / Inconsistencia si el reporte fue marcado como OBSERVADO
+      const obsTexto = String(reporte.observaciones || "");
+      const esObservado = reporte.estado_final === "Observado" ||
+        obsTexto.includes("[ALERTA INCONSISTENCIA]") ||
+        obsTexto.includes("[OBSERVADO]") ||
+        obsTexto.includes("cierre automático") ||
+        obsTexto.includes("Cierre automático") ||
+        (reporte.horometro_final != null && reporte.horometro_inicio != null && Number(reporte.horometro_final) <= Number(reporte.horometro_inicio) && eventos.some(e => e.estado_hito === "Trabajando"));
+
+      let alertaMotivo = null;
+      if (esObservado) {
+        if (obsTexto.includes("[ALERTA INCONSISTENCIA]")) {
+          alertaMotivo = "Actividad declarada con 0 horas de avance de horómetro o lectura inconsistente.";
+        } else if (obsTexto.includes("cierre automático") || obsTexto.includes("Cierre automático")) {
+          alertaMotivo = "Cierre automático por cumplimiento del límite de 12 horas de jornada.";
+        } else if (reporte.horometro_final != null && Number(reporte.horometro_final) < Number(reporte.horometro_inicio)) {
+          alertaMotivo = `Horómetro final (${reporte.horometro_final}) menor al inicial (${reporte.horometro_inicio}).`;
+        } else if (Number(reporte.horometro_final) === Number(reporte.horometro_inicio)) {
+          alertaMotivo = "Horómetro final igual al inicial (0 hrs de avance) con actividad declarada.";
+        } else {
+          alertaMotivo = "Reporte con observaciones operacionales para revisión y auditoría.";
+        }
+
+        doc.roundedRect(50, y, W, 24, 4).fillAndStroke("#fef2f2", "#ef4444");
+        doc.fontSize(8).font("Helvetica-Bold").fillColor("#b91c1c").text(`⚠️ REPORTE OBSERVADO: ${alertaMotivo}`, 58, y + 7, { width: W - 16 });
+        y += 30;
+      }
 
       // Banner de sección con color sólido
       doc.rect(50, y, W, 22).fill(AZUL_OSCURO);
