@@ -1029,7 +1029,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 <div>
                   <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                     <Clock size={16} color="#0284c7" />
-                    Top Horas de Uso (Mayor a Menor)
+                    Top Horas de Uso ({topHorasFiltradas.length}) {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
                   </h3>
                   <span style={{ fontSize: "11px", color: "#64748b" }}>
                     Desglose en los {diasPeriodo} días filtrados (efectiva vs ralentí)
@@ -1042,11 +1042,11 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: "2px",
                   }}
                 >
-                  Ver todos <ChevronRight size={13} />
+                  Ver tabla completa <ChevronRight size={13} />
                 </button>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "450px", overflowY: "auto", paddingRight: "4px" }}>
                 {topHorasFiltradas.length === 0 ? (
                   <div style={{
                     padding: "24px 16px", textAlign: "center", backgroundColor: "#f8fafc",
@@ -1061,7 +1061,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     </div>
                   </div>
                 ) : (
-                  topHorasFiltradas.slice(0, 5).map((eq, idx) => (
+                  topHorasFiltradas.map((eq, idx) => (
                     <div key={eq.patente} style={{
                       padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
                       border: "1.5px solid #e2e8f0",
@@ -1116,7 +1116,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 <div>
                   <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                     <Fuel size={16} color="#dc2626" />
-                    Top Consumo de Combustible {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
+                    Top Consumo de Combustible ({topCombustibleFiltrado.length}) {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
                   </h3>
                   <span style={{ fontSize: "11px", color: "#64748b" }}>
                     Litros consumidos en los {diasPeriodo} días filtrados
@@ -1129,11 +1129,11 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: "2px",
                   }}
                 >
-                  Ver todos <ChevronRight size={13} />
+                  Ver tabla completa <ChevronRight size={13} />
                 </button>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "450px", overflowY: "auto", paddingRight: "4px" }}>
                 {topCombustibleFiltrado.length === 0 ? (
                   <div style={{
                     padding: "24px 16px", textAlign: "center", backgroundColor: "#f8fafc",
@@ -1148,7 +1148,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     </div>
                   </div>
                 ) : (
-                  topCombustibleFiltrado.slice(0, 5).map((eq, idx) => (
+                  topCombustibleFiltrado.map((eq, idx) => (
                     <div key={eq.patente} style={{
                       padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
                       border: "1.5px solid #e2e8f0",
@@ -1204,7 +1204,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 <div>
                   <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                     <TrendingUp size={16} color="#16a34a" />
-                    % de Utilización {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "por Equipo"} (Meta: {horasMetaCalculadas} hrs)
+                    % de Utilización ({equiposConUtilizacion.length}) {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "por Equipo"} (Meta: {horasMetaCalculadas} hrs)
                   </h3>
                   <span style={{ fontSize: "11px", color: "#64748b" }}>
                     Calculado sobre la meta en los {diasPeriodo} días filtrados
@@ -1217,11 +1217,11 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: "2px",
                   }}
                 >
-                  Ver todos <ChevronRight size={13} />
+                  Ver tabla completa <ChevronRight size={13} />
                 </button>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "450px", overflowY: "auto", paddingRight: "4px" }}>
                 {equiposConUtilizacion.length === 0 ? (
                   <div style={{
                     padding: "24px 16px", textAlign: "center", backgroundColor: "#f8fafc",
@@ -1236,7 +1236,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     </div>
                   </div>
                 ) : (
-                  equiposConUtilizacion.slice(0, 5).map((eq, idx) => (
+                  equiposConUtilizacion.map((eq, idx) => (
                     <div key={eq.patente} style={{
                       padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
                       border: "1.5px solid #e2e8f0",
@@ -1285,7 +1285,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 <div>
                   <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                     <Gauge size={16} color="#8b5cf6" />
-                    Top Kilometraje Recorrido {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : ""}
+                    Top Kilometraje Recorrido ({topKmFiltrado.length}) {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
                   </h3>
                   <span style={{ fontSize: "11px", color: "#64748b" }}>
                     Distancia recorrida en los {diasPeriodo} días filtrados
@@ -1298,11 +1298,11 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: "2px",
                   }}
                 >
-                  Ver todos <ChevronRight size={13} />
+                  Ver tabla completa <ChevronRight size={13} />
                 </button>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "450px", overflowY: "auto", paddingRight: "4px" }}>
                 {topKmFiltrado.length === 0 ? (
                   <div style={{
                     padding: "24px 16px", textAlign: "center", backgroundColor: "#f8fafc",
@@ -1317,7 +1317,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     </div>
                   </div>
                 ) : (
-                  topKmFiltrado.slice(0, 5).map((eq, idx) => (
+                  topKmFiltrado.map((eq, idx) => (
                     <div key={eq.patente} style={{
                       padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
                       border: "1.5px solid #e2e8f0",
@@ -1374,7 +1374,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                 <div>
                   <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
                     <User size={16} color="#f59e0b" />
-                    Top Conductores Más Activos {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : ""}
+                    Top Conductores Más Activos ({topConductoresFiltrados.length}) {tipoEquipoFiltro !== "todos" ? `(${labelTipoActivo})` : "(Mayor a Menor)"}
                   </h3>
                   <span style={{ fontSize: "11px", color: "#64748b" }}>
                     Choferes y personal asignado al volante en los {diasPeriodo} días filtrados
@@ -1387,11 +1387,11 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: "2px",
                   }}
                 >
-                  Ver todos <ChevronRight size={13} />
+                  Ver tabla completa <ChevronRight size={13} />
                 </button>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "450px", overflowY: "auto", paddingRight: "4px" }}>
                 {topConductoresFiltrados.length === 0 ? (
                   <div style={{
                     padding: "24px 16px", textAlign: "center", backgroundColor: "#f8fafc",
@@ -1406,7 +1406,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
                     </div>
                   </div>
                 ) : (
-                  topConductoresFiltrados.slice(0, 5).map((cond, idx) => (
+                  topConductoresFiltrados.map((cond, idx) => (
                     <div key={cond.nombre} style={{
                       padding: "10px 12px", borderRadius: "8px", backgroundColor: "#f8fafc",
                       border: "1.5px solid #e2e8f0",

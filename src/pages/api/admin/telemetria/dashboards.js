@@ -467,23 +467,20 @@ export default async function handler(req, res) {
         ? listaEquiposDash.filter((e) => e.tipo_clasificado === tipo_equipo)
         : listaEquiposDash;
 
-    // 8. Rankings
+    // 8. Rankings (Completos sin límite, ordenados de mayor a menor)
     // 8.1 Top Horas de Uso
     const topHorasUso = [...equiposFiltradosPorTipo]
-      .sort((a, b) => b.horas_totales - a.horas_totales)
-      .slice(0, 30);
+      .sort((a, b) => b.horas_totales - a.horas_totales);
 
     // 8.2 Top Consumo de Combustible
     const topCombustible = [...equiposFiltradosPorTipo]
       .filter((e) => e.litros_totales > 0)
-      .sort((a, b) => b.litros_totales - a.litros_totales)
-      .slice(0, 30);
+      .sort((a, b) => b.litros_totales - a.litros_totales);
 
     // 8.3 Top Kilometraje
     const topKilometraje = [...equiposFiltradosPorTipo]
       .filter((e) => e.km_totales > 0)
-      .sort((a, b) => b.km_totales - a.km_totales)
-      .slice(0, 30);
+      .sort((a, b) => b.km_totales - a.km_totales);
 
     // 8.4 Top Ralentí
     const topRalenti = [...equiposFiltradosPorTipo]
@@ -505,8 +502,7 @@ export default async function handler(req, res) {
         viajes: c.viajes,
         vehiculos: Array.from(c.vehiculos_set).map(formatearPatente),
       }))
-      .sort((a, b) => b.horas_conducidas - a.horas_conducidas)
-      .slice(0, 30);
+      .sort((a, b) => b.horas_conducidas - a.horas_conducidas);
 
     // 8.6 BASE DE CAMIONETAS ASIGNADAS A GERENTES O JEFATURAS (Basada estrictamente en la base de datos detallada)
     const equiposAsignadosGerencia = asignacionesGerencia
