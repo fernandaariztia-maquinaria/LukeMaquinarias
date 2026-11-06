@@ -397,6 +397,11 @@ REGLAS ESTRICTAS DE INTERACCIÓN Y RESPUESTA:
      * REGLA DE UNIDAD DE MEDIDA DE COMBUSTIBLE: Si el operador entrega un dato numérico de combustible pero no especifica la unidad de medida (por ejemplo dice solo "combustible 50" o "le puse 80" sin aclarar si son litros, cuartos o porcentaje), indícale amablemente en 'mensaje_conversacional_bot': "¿Me confirma si ese valor de combustible indicado corresponde a litros o a fracción/porcentaje de estanque (ej: 1/4, 1/2, 3/4, full)?".
    - Descripción de Labores Realizadas:
      * Si el operador describe las labores efectuadas durante el día o en el cierre (ej: "estuve cargando camiones tolva con la gente de OOCC y luego zanjas con Piping"), extrae un resumen limpio y técnico en el campo 'labores_descripcion'.
+   - Extracción de Movimientos e Izajes:
+     * Si el operador menciona cantidades de izajes o movimientos realizados (ej: "hice 4 izajes", "3 movimientos", "5 maniobras"), extrae el número entero en 'izajes'.
+     * Si menciona cantidades de material o producción movida (ej: "15 metros de cañería", "20 m3 de tierra", "8 toneladas", "10 spools"), extrae el valor en 'cantidad_produccion' y la unidad correspondiente en 'unidad_produccion' ("m3", "m2", "Kg", "Ton", "ml", "un").
+   - Detección de Cambio de Equipo / Relevo:
+     * Si el operador menciona que va a cambiarse de máquina, entregó el equipo actual o va a tomar otro equipo (ej: "me bajo de la grúa", "cambio a camioneta", "entrego equipo"), establece 'cambio_equipo_solicitado' en true.
    - Números hablados como horómetros: "dos mil trescientos" = 2300, "tres mil" = 3000
    - IMPORTANTE (Carga de Combustible): Frases como "sin combustible", "no cargué combustible", "sin petróleo", "sin carga" al referirse al cierre significan únicamente que los litros de combustible cargados son 0 (petroleo_litros = 0). NUNCA interpretes estas frases como una falla del equipo o como estado "Detenido por Falla". Solo marca falla ('es_falla_critica: true' o estado 'Detenido por Falla') si el operador reporta una avería mecánica, pana, rotura o desperfecto físico.
    - IMPORTANTE: Si el operador corrige un dato anterior (ej: "me equivoqué, era doce mil trescientos cincuenta"), usa el NUEVO valor corregido.
@@ -421,6 +426,10 @@ Responde ÚNICAMENTE con un JSON válido. Esquema:
   "capacidad_estanque_litros": numero_o_null,
   "petroleo_litros": numero_o_null,
   "horometro_carga_combustible": numero_o_null,
+  "izajes": numero_entero_o_null,
+  "cantidad_produccion": numero_o_null,
+  "unidad_produccion": "m3 | m2 | Kg | Ton | ml | un | null",
+  "cambio_equipo_solicitado": false,
   "labores_descripcion": "Resumen técnico de labores y especialidades con que trabajó, o null",
   "es_falla_critica": true_o_false,
   "detalles_texto": "Transcripción resumida del operador",
@@ -580,6 +589,11 @@ Reglas de Mapeo Semántico ESTRICTAS:
   * UNIDAD DE MEDIDA AMBIGUA: Si el operador entrega un número de combustible sin unidad clara (ej: "combustible 40"), indícale amablemente en 'mensaje_conversacional_bot': "¿Me confirma si ese valor de combustible indicado corresponde a litros o a fracción/porcentaje de estanque (ej: 1/4, 1/2, 3/4, full)?".
 - Descripción de Labores Realizadas:
   * Si el operador describe qué hizo durante el día o al cierre y con qué especialidades trabajó, extrae un resumen técnico en 'labores_descripcion'.
+- Extracción de Movimientos e Izajes:
+  * Si el operador menciona cantidades de izajes o movimientos realizados (ej: "hice 4 izajes", "3 movimientos", "5 maniobras"), extrae el número entero en 'izajes'.
+  * Si menciona cantidades de material o producción movida (ej: "15 metros de cañería", "20 m3 de tierra", "8 toneladas", "10 spools"), extrae el valor en 'cantidad_produccion' y la unidad correspondiente en 'unidad_produccion' ("m3", "m2", "Kg", "Ton", "ml", "un").
+- Detección de Cambio de Equipo / Relevo:
+  * Si el operador menciona que va a cambiarse de máquina, entregó el equipo actual o va a tomar otro equipo (ej: "me bajo de la grúa", "cambio a camioneta", "entrego equipo"), establece 'cambio_equipo_solicitado' en true.
 - IMPORTANTE (Carga de Combustible): Frases como "sin combustible", "no cargué combustible", "sin petróleo" o "sin carga" al referirse al cierre significan petroleo_litros = 0. NUNCA las interpretes como falla o estado 'Detenido por Falla'.
 - Números hablados: "dos mil trescientos" = 2300
 - Regla de Pauta Preventiva (pauta_del_dia):
@@ -614,6 +628,10 @@ Esquema de retorno:
   "capacidad_estanque_litros": numero_o_null,
   "petroleo_litros": numero_o_null,
   "horometro_carga_combustible": numero_o_null,
+  "izajes": numero_entero_o_null,
+  "cantidad_produccion": numero_o_null,
+  "unidad_produccion": "m3 | m2 | Kg | Ton | ml | un | null",
+  "cambio_equipo_solicitado": false,
   "labores_descripcion": "Resumen técnico de labores y especialidades con que trabajó, o null",
   "es_falla_critica": true_o_false,
   "detalles_texto": "Transcripción resumida",
