@@ -43,14 +43,21 @@ export function normalizarIdentificador(str) {
  */
 export function formatearFechaSkynav(fecha) {
   if (!fecha) return "";
-  if (typeof fecha === "string" && /^\d{2}-\d{2}-\d{4}$/.test(fecha)) {
-    return fecha;
+  if (typeof fecha === "string") {
+    const trimmed = fecha.trim();
+    if (/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) {
+      return trimmed;
+    }
+    const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+      return `${match[3]}-${match[2]}-${match[1]}`;
+    }
   }
   const d = new Date(fecha);
   if (isNaN(d.getTime())) return "";
-  const dia = String(d.getDate()).padStart(2, "0");
-  const mes = String(d.getMonth() + 1).padStart(2, "0");
-  const anio = d.getFullYear();
+  const dia = String(d.getUTCDate()).padStart(2, "0");
+  const mes = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const anio = d.getUTCFullYear();
   return `${dia}-${mes}-${anio}`;
 }
 
@@ -72,23 +79,31 @@ export function skynavFechaAISO(fechaStr) {
  * Divide un rango de fechas en bloques de máximo 15 días para consultas seguras y rápidas a SKYNAV
  */
 export function dividirEnBloques15Dias(fechaDesde, fechaHasta) {
-  const d1 = new Date(fechaDesde);
-  const d2 = new Date(fechaHasta);
+  const sDesde = typeof fechaDesde === "string" ? skynavFechaAISO(fechaDesde) : fechaDesde.toISOString().slice(0, 10);
+  const sHasta = typeof fechaHasta === "string" ? skynavFechaAISO(fechaHasta) : fechaHasta.toISOString().slice(0, 10);
+
+  let cur = new Date(`${sDesde}T00:00:00Z`);
+  const fin = new Date(`${sHasta}T00:00:00Z`);
   const bloques = [];
 
-  let inicio = new Date(d1);
-  while (inicio <= d2) {
-    let fin = new Date(inicio);
-    fin.setDate(fin.getDate() + 14); // Bloques de 15 días máx
-    if (fin > d2) fin = new Date(d2);
+  while (cur <= fin) {
+    let bloqueFin = new Date(cur.getTime() + 14 * 24 * 60 * 60 * 1000);
+    if (bloqueFin > fin) bloqueFin = new Date(fin);
+
+    const f1Dia = String(cur.getUTCDate()).padStart(2, "0");
+    const f1Mes = String(cur.getUTCMonth() + 1).padStart(2, "0");
+    const f1Anio = cur.getUTCFullYear();
+
+    const f2Dia = String(bloqueFin.getUTCDate()).padStart(2, "0");
+    const f2Mes = String(bloqueFin.getUTCMonth() + 1).padStart(2, "0");
+    const f2Anio = bloqueFin.getUTCFullYear();
 
     bloques.push({
-      desde: formatearFechaSkynav(inicio),
-      hasta: formatearFechaSkynav(fin),
+      desde: `${f1Dia}-${f1Mes}-${f1Anio}`,
+      hasta: `${f2Dia}-${f2Mes}-${f2Anio}`,
     });
 
-    inicio = new Date(fin);
-    inicio.setDate(inicio.getDate() + 1);
+    cur = new Date(bloqueFin.getTime() + 24 * 60 * 60 * 1000);
   }
 
   return bloques;
