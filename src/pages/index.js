@@ -27,29 +27,31 @@ export default function Home() {
           .
         </p>
         <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", justifyContent: "center", marginTop: "2rem" }}>
-          <Link href="/admin-maquinaria" passHref>
-            <a style={{
+          <Link
+            href="/admin-maquinaria"
+            style={{
               padding: "0.75rem 1.5rem",
               background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
               color: "white",
               borderRadius: "8px",
               textDecoration: "none",
               fontWeight: 600,
-            }}>
-              Ir al Área de Gestión
-            </a>
+            }}
+          >
+            Ir al Área de Gestión
           </Link>
-          <Link href="/pod-publico" passHref>
-            <a style={{
+          <Link
+            href="/pod-publico"
+            style={{
               padding: "0.75rem 1.5rem",
               background: "linear-gradient(135deg, #10b981, #059669)",
               color: "white",
               borderRadius: "8px",
               textDecoration: "none",
               fontWeight: 600,
-            }}>
-              📅 Ver Disponibilidad y Plan del Día (Público)
-            </a>
+            }}
+          >
+            📅 Ver Disponibilidad y Plan del Día (Público)
           </Link>
         </div>
       </div>
