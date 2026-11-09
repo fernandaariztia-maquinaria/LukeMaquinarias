@@ -45,11 +45,14 @@ export default function TelemetriaTab({
 
   // Lista unificada de proyectos (desde hookProps o desde la API de telemetría)
   const listaProyectos = useMemo(() => {
+    if (hookProps?.proyectosCompleto?.data && hookProps.proyectosCompleto.data.length > 0) {
+      return hookProps.proyectosCompleto.data;
+    }
     if (hookProps?.proyectos?.data && hookProps.proyectos.data.length > 0) {
       return hookProps.proyectos.data;
     }
     return proyectosApi;
-  }, [hookProps?.proyectos?.data, proyectosApi]);
+  }, [hookProps?.proyectosCompleto?.data, hookProps?.proyectos?.data, proyectosApi]);
 
   const [kpis, setKpis] = useState({
     total_viajes: 0,
@@ -74,16 +77,10 @@ export default function TelemetriaTab({
   // Por defecto abarca desde el 01 de Octubre hasta hoy para ver todo el histórico guardado
   const [desdeFiltro, setDesdeFiltro] = useState("2026-10-01");
   const [hastaFiltro, setHastaFiltro] = useState(() => new Date().toISOString().slice(0, 10));
-  const [proyectoFiltro, setProyectoFiltro] = useState(() => currentUser?.proyecto_actual_id || "");
+  const [proyectoFiltro, setProyectoFiltro] = useState("");
   const [search, setSearch] = useState("");
   const [origenFiltro, setOrigenFiltro] = useState(""); // "" | "CAN" | "GPS"
   const [equipoFiltro, setEquipoFiltro] = useState("");
-
-  // Sincronizar si cambia el proyecto global del sidebar
-  useEffect(() => {
-    setProyectoFiltro(currentUser?.proyecto_actual_id || "");
-    setPagina(1);
-  }, [currentUser?.proyecto_actual_id]);
 
   // Rango para el panel de sincronización manual (solo visible para Administradores)
   const [syncDesde, setSyncDesde] = useState("2026-10-01");

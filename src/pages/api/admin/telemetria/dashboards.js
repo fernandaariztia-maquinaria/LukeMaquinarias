@@ -27,20 +27,16 @@ export default async function handler(req, res) {
   const terminoBusqueda = (busqueda || conductor || patente || "").trim();
 
   try {
-    // 1. Verificación de permisos de proyecto (Regla: sólo administradores pueden ver todos los proyectos)
+    // 1. Verificación y aplicación del filtro de proyecto/obra
     const esAdmin =
-      String(user_rol).toLowerCase().includes("admin") ||
-      String(user_rol).toLowerCase() === "administrador";
+      String(user_rol || "").toLowerCase().includes("admin") ||
+      String(user_rol || "").toLowerCase() === "administrador";
 
     let filtroProyecto = null;
-    if (esAdmin) {
-      if (proyecto_id && proyecto_id.trim() !== "") {
-        filtroProyecto = proyecto_id.trim();
-      }
-    } else {
-      if (user_proyecto_id && user_proyecto_id.trim() !== "") {
-        filtroProyecto = user_proyecto_id.trim();
-      }
+    if (proyecto_id && proyecto_id.trim() !== "") {
+      filtroProyecto = proyecto_id.trim();
+    } else if (user_proyecto_id && user_proyecto_id.trim() !== "") {
+      filtroProyecto = user_proyecto_id.trim();
     }
 
     // 2. Cargar Proyectos, Equipos y la Base de Asignaciones de Gerentes / Jefaturas
@@ -48,7 +44,7 @@ export default async function handler(req, res) {
       supabase
         .schema("maquinaria")
         .from("proyectos")
-        .select("id, nombre_proyecto, codigo_cc, estado")
+        .select("id, nombre_proyecto, codigo_cc, activa")
         .order("nombre_proyecto", { ascending: true }),
       supabase
         .schema("maquinaria")

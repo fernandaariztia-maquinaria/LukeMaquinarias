@@ -1,10 +1,11 @@
-import React, { useState, useRef } from "react";
-import { Plus, Pencil, QrCode, Save, X, Camera, Loader2, Trash2, MoreVertical } from "lucide-react";
+import React, { useState, useRef, useEffect } from "react";
+import { Plus, Pencil, QrCode, Save, X, Camera, Loader2, Trash2, MoreVertical, History, Calendar, Clock, MapPin, Building2, CheckCircle2, AlertCircle } from "lucide-react";
 import FormRow from "./Shared/FormRow";
 import { ESTADO_CONFIG } from "./Shared/constants";
 import QrEquipoModal from "./Shared/QrEquipoModal";
 import SearchableSelect from "./Shared/SearchableSelect";
 import { formatEquipoLabel } from "../../lib/equipoLabel";
+import HistorialUbicacionesModal from "./HistorialUbicacionesModal";
 
 const inputStyle = {
   width: "100%", background: "var(--bg-input)", border: "1px solid var(--border-input)",
@@ -144,6 +145,31 @@ export function EditarEquipoModal({ equipo, proyectos, onClose, onSave }) {
   const [seccionActiva, setSeccionActiva] = useState("general");
   const fileInputRef = useRef(null);
 
+  const hoyStr = new Date().toISOString().slice(0, 10);
+  const [trasladoData, setTrasladoData] = useState({
+    fecha_inicio_asignacion: hoyStr,
+    fecha_fin_estimada: "",
+    fecha_salida_anterior: hoyStr,
+    motivo_traslado: "",
+  });
+  const [modalHistorialAbierto, setModalHistorialAbierto] = useState(false);
+  const [historialCargado, setHistorialCargado] = useState([]);
+  const [cargandoHistorial, setCargandoHistorial] = useState(false);
+
+  // Recargar historial del equipo cuando se abre la pestaña de historial
+  useEffect(() => {
+    if (seccionActiva === "historial" && equipo?.id) {
+      setCargandoHistorial(true);
+      fetch(`/api/equipos/historial-ubicaciones?equipo_id=${equipo.id}`)
+        .then((r) => r.json())
+        .then((res) => {
+          if (res.success) setHistorialCargado(res.data || []);
+        })
+        .catch(console.error)
+        .finally(() => setCargandoHistorial(false));
+    }
+  }, [seccionActiva, equipo?.id]);
+
   const handleUploadFondo = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -194,12 +220,31 @@ export function EditarEquipoModal({ equipo, proyectos, onClose, onSave }) {
     setSaving(true);
     setErrorMsg("");
     try {
+      const proyOrig = equipo?.proyecto_actual_id || null;
+      const proyNuevo = formData.proyecto_actual_id === "" ? null : formData.proyecto_actual_id;
+      const obraCambio = proyOrig !== proyNuevo;
+
+      let historial_traslado = null;
+      if (obraCambio) {
+        const pFound = (proyectos || []).find((p) => p.id === proyNuevo);
+        historial_traslado = {
+          proyecto_id: proyNuevo,
+          proyecto_nombre: pFound ? pFound.nombre_proyecto : (proyNuevo ? "Obra Asignada" : "Sin Asignar / En Patio"),
+          proyecto_cc: pFound?.codigo_cc || "",
+          fecha_inicio: trasladoData.fecha_inicio_asignacion || hoyStr,
+          fecha_fin_estimada: trasladoData.fecha_fin_estimada || null,
+          fecha_salida_anterior: trasladoData.fecha_salida_anterior || hoyStr,
+          motivo_traslado: trasladoData.motivo_traslado.trim() || (proyNuevo ? "Cambio de obra desde Edición de Equipo" : "Desasignación / En Patio"),
+          registrado_por: "Administrador (Edición de Equipo)",
+        };
+      }
+
       const body = {
         id: equipo.id,
         codigo_interno: formData.codigo_interno.trim(),
         descripcion_equipo: formData.descripcion_equipo.trim(),
         proveedor: formData.proveedor.trim(),
-        proyecto_actual_id: formData.proyecto_actual_id === "" ? null : formData.proyecto_actual_id,
+        proyecto_actual_id: proyNuevo,
         estado_actual: formData.estado_actual,
         pauta_preventiva_activa: formData.pauta_preventiva_activa.trim() || null,
         patente: formData.patente.trim() || null,
@@ -224,6 +269,7 @@ export function EditarEquipoModal({ equipo, proyectos, onClose, onSave }) {
         tolerancia_pm: formData.tolerancia_pm.trim() !== "" ? parseFloat(formData.tolerancia_pm) : null,
         tipo_seguimiento: formData.tipo_seguimiento,
         usa_plataforma: formData.usa_plataforma,
+        historial_traslado,
       };
 
       const r = await fetch("/api/equipos", {
@@ -249,6 +295,7 @@ export function EditarEquipoModal({ equipo, proyectos, onClose, onSave }) {
   const SECCIONES = [
     { id: "general", label: "General" },
     { id: "comercial", label: "Estado y Comercial" },
+    { id: "historial", label: "Historial de Obras" },
     { id: "mantencion", label: "Mantención y Bot" },
     { id: "imagen", label: "Imagen" },
   ];
@@ -384,6 +431,116 @@ export function EditarEquipoModal({ equipo, proyectos, onClose, onSave }) {
               <option value="Detenido por Falla">Detenido por Falla (Taller)</option>
             </select>
           </FormRow>
+
+          {/* Panel interactivo de Fechas de Traslado si cambió la obra asignada */}
+          {(() => {
+            const proyOrigId = equipo?.proyecto_actual_id || "";
+            const proyNuevoId = formData.proyecto_actual_id || "";
+            const obraCambio = proyOrigId !== proyNuevoId;
+
+            if (!obraCambio) return null;
+
+            const proyOrigObj = (proyectos || []).find((p) => p.id === proyOrigId);
+            const proyNuevoObj = (proyectos || []).find((p) => p.id === proyNuevoId);
+            const nombreOrig = proyOrigObj ? proyOrigObj.nombre_proyecto : (proyOrigId ? "Obra previa" : "Sin Asignar / En Patio");
+            const nombreNuevo = proyNuevoObj ? proyNuevoObj.nombre_proyecto : (proyNuevoId ? "Nueva Obra" : "Sin Asignar / En Patio");
+
+            return (
+              <div style={{
+                gridColumn: "1 / -1",
+                background: "rgba(2, 132, 199, 0.06)",
+                border: "1.5px solid #0284c7",
+                borderRadius: "10px",
+                padding: "16px 18px",
+                marginTop: "4px",
+                boxShadow: "0 2px 10px rgba(2, 132, 199, 0.08)",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 800, fontSize: "14px", color: "#0284c7" }}>
+                    <History size={17} />
+                    <span>Registro de Fechas y Trazabilidad de Traslado</span>
+                  </div>
+                  <span style={{ fontSize: "11px", fontWeight: 700, backgroundColor: "#0284c7", color: "#ffffff", padding: "2px 10px", borderRadius: "12px" }}>
+                    Cambio de Ubicación Detectado
+                  </span>
+                </div>
+
+                <div style={{ fontSize: "12px", color: "var(--color-text-muted)", marginBottom: "14px", lineHeight: "1.4" }}>
+                  Se está moviendo el equipo desde <strong>{nombreOrig}</strong> hacia <strong>{nombreNuevo}</strong>.
+                  Indique las fechas reales para registrar el histórico exacto de días trabajados.
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: proyOrigId && proyNuevoId ? "1fr 1fr 1fr" : "1fr 1fr", gap: "12px" }}>
+                  {/* Si tenía obra anterior: consultar fecha real de salida */}
+                  {proyOrigId && (
+                    <div style={{ background: "rgba(239, 68, 68, 0.04)", border: "1px solid rgba(239, 68, 68, 0.3)", borderRadius: "8px", padding: "10px 12px" }}>
+                      <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#dc2626", marginBottom: "4px" }}>
+                        Fecha Real de Salida de Obra Anterior *
+                      </label>
+                      <input
+                        type="date"
+                        style={{ ...inputStyle, borderColor: "rgba(239, 68, 68, 0.5)", fontWeight: 600 }}
+                        value={trasladoData.fecha_salida_anterior}
+                        onChange={(e) => setTrasladoData((p) => ({ ...p, fecha_salida_anterior: e.target.value }))}
+                      />
+                      <div style={{ fontSize: "10px", color: "var(--color-text-muted)", marginTop: "4px", lineHeight: "1.3" }}>
+                        Cierra la estadía en <span style={{ color: "var(--color-text)", fontWeight: 600 }}>{nombreOrig}</span> con los días exactos que operó.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Si entra a una nueva obra: consultar fecha de inicio y término estimado */}
+                  {proyNuevoId && (
+                    <>
+                      <div style={{ background: "rgba(16, 185, 129, 0.05)", border: "1px solid rgba(16, 185, 129, 0.3)", borderRadius: "8px", padding: "10px 12px" }}>
+                        <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "var(--color-primary-hover)", marginBottom: "4px" }}>
+                          Fecha Inicio en Nueva Obra *
+                        </label>
+                        <input
+                          type="date"
+                          style={{ ...inputStyle, borderColor: "rgba(16, 185, 129, 0.5)", fontWeight: 600 }}
+                          value={trasladoData.fecha_inicio_asignacion}
+                          onChange={(e) => setTrasladoData((p) => ({ ...p, fecha_inicio_asignacion: e.target.value }))}
+                        />
+                        <div style={{ fontSize: "10px", color: "var(--color-text-muted)", marginTop: "4px", lineHeight: "1.3" }}>
+                          Día desde el cual el equipo entra a operar en <span style={{ color: "var(--color-text)", fontWeight: 600 }}>{nombreNuevo}</span>.
+                        </div>
+                      </div>
+
+                      <div style={{ background: "var(--bg-sidebar)", border: "1px solid var(--border-sidebar)", borderRadius: "8px", padding: "10px 12px" }}>
+                        <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "var(--color-text)", marginBottom: "4px" }}>
+                          Fecha Término Estimada (Opcional)
+                        </label>
+                        <input
+                          type="date"
+                          style={inputStyle}
+                          value={trasladoData.fecha_fin_estimada}
+                          onChange={(e) => setTrasladoData((p) => ({ ...p, fecha_fin_estimada: e.target.value }))}
+                        />
+                        <div style={{ fontSize: "10px", color: "var(--color-text-muted)", marginTop: "4px", lineHeight: "1.3" }}>
+                          Plazo proyectado. Si se retira antes, se ajustará con la fecha real de retiro.
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div style={{ marginTop: "12px" }}>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)", marginBottom: "4px" }}>
+                    Motivo o Comentario del Traslado (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej: Cambio de faena por finalización de fase de movimiento de tierras..."
+                    style={inputStyle}
+                    value={trasladoData.motivo_traslado}
+                    onChange={(e) => setTrasladoData((p) => ({ ...p, motivo_traslado: e.target.value }))}
+                  />
+                </div>
+              </div>
+            );
+          })()}
+
           <FormRow label="Clasificación Comercial">
             <select style={selectStyle} value={formData.clasificacion_comercial}
               onChange={e => setFormData(p => ({ ...p, clasificacion_comercial: e.target.value }))}>
@@ -439,6 +596,140 @@ export function EditarEquipoModal({ equipo, proyectos, onClose, onSave }) {
               onChange={e => setFormData(p => ({ ...p, combustible_nivel_porcentaje: e.target.value }))}
             />
           </FormRow>
+        </div>
+        )}
+
+        {seccionActiva === "historial" && (
+        <div style={{ marginBottom: "18px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+            <div>
+              <div style={{ fontSize: "14px", fontWeight: 700, color: "var(--color-text)", display: "flex", alignItems: "center", gap: "8px" }}>
+                <History size={16} color="#0284c7" />
+                Historial de Faenas y Ubicaciones
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--color-text-muted)", marginTop: "2px" }}>
+                Registro permanente de cada obra en que ha operado este equipo, con fechas reales de permanencia.
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setModalHistorialAbierto(true)}
+              style={{
+                background: "#0284c7",
+                border: "none",
+                borderRadius: "8px",
+                color: "#ffffff",
+                padding: "8px 14px",
+                fontSize: "12px",
+                fontWeight: 700,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                boxShadow: "0 2px 6px rgba(2, 132, 199, 0.25)",
+              }}
+            >
+              <Plus size={14} /> Registrar / Editar Traslados
+            </button>
+          </div>
+
+          {cargandoHistorial ? (
+            <div style={{ padding: "30px", textAlign: "center", color: "var(--color-text-muted)", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+              <Loader2 className="animate-spin" size={16} />
+              <span>Cargando historial de obras...</span>
+            </div>
+          ) : historialCargado.length === 0 ? (
+            <div style={{
+              background: "var(--bg-sidebar)",
+              border: "1px dashed var(--border-sidebar)",
+              borderRadius: "10px",
+              padding: "28px",
+              textAlign: "center",
+              color: "var(--color-text-muted)",
+              fontSize: "13px",
+            }}>
+              <Building2 size={32} style={{ margin: "0 auto 8px auto", opacity: 0.4 }} />
+              <div>No hay traslados históricos registrados aún para este equipo.</div>
+              <div style={{ fontSize: "11px", marginTop: "4px" }}>
+                Al asignarle una obra o cambiarla en la pestaña "Estado y Comercial", se creará automáticamente el registro.
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {historialCargado.map((h, idx) => {
+                const esActiva = h.estado === "ACTIVA";
+                const fmt = (str) => {
+                  if (!str) return "—";
+                  const p = str.slice(0, 10).split("-");
+                  return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : str;
+                };
+
+                return (
+                  <div
+                    key={h.id || idx}
+                    style={{
+                      background: esActiva ? "rgba(16, 185, 129, 0.05)" : "var(--bg-sidebar)",
+                      border: esActiva ? "1.5px solid #10b981" : "1px solid var(--border-sidebar)",
+                      borderRadius: "10px",
+                      padding: "12px 16px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <Building2 size={16} color={esActiva ? "#10b981" : "var(--color-text-muted)"} />
+                        <span style={{ fontWeight: 800, fontSize: "13px", color: "var(--color-text)" }}>
+                          {h.proyecto_cc ? `[${h.proyecto_cc}] ` : ""}{h.proyecto_nombre || "Sin Asignar"}
+                        </span>
+                      </div>
+
+                      <span
+                        style={{
+                          fontSize: "10px",
+                          fontWeight: 800,
+                          padding: "3px 8px",
+                          borderRadius: "12px",
+                          background: esActiva ? "#10b981" : "rgba(148, 163, 184, 0.2)",
+                          color: esActiva ? "#ffffff" : "var(--color-text-muted)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        {esActiva ? "🟢 ACTIVA EN FAENA" : "⚪ FINALIZADA"}
+                      </span>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "8px", fontSize: "11px", color: "var(--color-text-muted)" }}>
+                      <div>
+                        <span style={{ fontWeight: 600 }}>Inicio: </span>
+                        <span style={{ color: "var(--color-text)" }}>{fmt(h.fecha_inicio)}</span>
+                      </div>
+                      <div>
+                        <span style={{ fontWeight: 600 }}>{esActiva ? "Fin Estimada: " : "Salida Real: "}</span>
+                        <span style={{ color: "var(--color-text)" }}>{fmt(esActiva ? h.fecha_fin_estimada : (h.fecha_fin_real || h.fecha_fin_estimada))}</span>
+                      </div>
+                      <div>
+                        <span style={{ fontWeight: 600 }}>Días en Faena: </span>
+                        <span style={{ color: esActiva ? "var(--color-primary-hover)" : "var(--color-text)", fontWeight: 700 }}>
+                          {h.dias_reales ?? 0} días
+                        </span>
+                      </div>
+                    </div>
+
+                    {h.motivo_traslado && (
+                      <div style={{ fontSize: "11px", color: "var(--color-text-muted)", borderTop: "1px dashed var(--border-sidebar)", paddingTop: "6px" }}>
+                        <em>Motivo: {h.motivo_traslado}</em>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
         )}
 
@@ -610,6 +901,25 @@ export function EditarEquipoModal({ equipo, proyectos, onClose, onSave }) {
           </button>
         </div>
       </div>
+
+      {modalHistorialAbierto && (
+        <HistorialUbicacionesModal
+          equipo={equipo}
+          proyectos={proyectos}
+          onClose={() => setModalHistorialAbierto(false)}
+          onAsignacionCambiada={() => {
+            if (equipo?.id) {
+              fetch(`/api/equipos/historial-ubicaciones?equipo_id=${equipo.id}`)
+                .then((r) => r.json())
+                .then((res) => {
+                  if (res.success) setHistorialCargado(res.data || []);
+                })
+                .catch(console.error);
+            }
+            onSave();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -638,6 +948,7 @@ export default function EquiposTab({ hookProps }) {
 
   const [showForm, setShowForm] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState(null);
+  const [historialEquipo, setHistorialEquipo] = useState(null);
 
   const equiposAgrupados = React.useMemo(() => {
     const groups = {};
@@ -974,6 +1285,21 @@ export default function EquiposTab({ hookProps }) {
                             <span>Editar</span>
                           </button>
                           <button
+                            onClick={() => { setHistorialEquipo(eq); setActiveMenuId(null); }}
+                            style={{
+                              background: "transparent", border: "none",
+                              color: "var(--color-text)", borderRadius: "6px", padding: "8px 12px",
+                              fontSize: "12px", fontWeight: 600, cursor: "pointer",
+                              display: "flex", alignItems: "center", gap: "8px", width: "100%",
+                              textAlign: "left"
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.background = "rgba(2, 132, 199, 0.1)"}
+                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                          >
+                            <History size={12} color="#0284c7" />
+                            <span>Historial de Obras</span>
+                          </button>
+                          <button
                             onClick={() => { setQrEquipo(eq); setActiveMenuId(null); }}
                             style={{
                               background: "transparent", border: "none",
@@ -1044,6 +1370,18 @@ export default function EquiposTab({ hookProps }) {
           equipo={qrEquipo}
           botPhone={botPhone}
           onClose={() => setQrEquipo(null)}
+        />
+      )}
+
+      {historialEquipo && (
+        <HistorialUbicacionesModal
+          equipo={historialEquipo}
+          proyectos={proyectosCompleto?.data || []}
+          onClose={() => setHistorialEquipo(null)}
+          onAsignacionCambiada={() => {
+            equiposPaginado.refresh();
+            equiposCompleto.refresh();
+          }}
         />
       )}
     </>

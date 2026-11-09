@@ -12,12 +12,19 @@ export default async function handler(req, res) {
   // Si se solicita la lista de equipos disponibles para el selector
   if (action === "lista_equipos") {
     try {
-      const { data: eqList, error: errList } = await supabase
-        .schema("maquinaria")
-        .from("equipos")
-        .select("id, patente, codigo_interno, descripcion_equipo, tipo, categoria, marca, modelo")
-        .not("patente", "is", null)
-        .order("codigo_interno", { ascending: true });
+      const [{ data: eqList, error: errList }, { data: proyList }] = await Promise.all([
+        supabase
+          .schema("maquinaria")
+          .from("equipos")
+          .select("id, patente, codigo_interno, descripcion_equipo, tipo, categoria, marca, modelo, proyecto_actual_id, proyectos(id, nombre_proyecto, codigo_cc)")
+          .not("patente", "is", null)
+          .order("codigo_interno", { ascending: true }),
+        supabase
+          .schema("maquinaria")
+          .from("proyectos")
+          .select("id, nombre_proyecto, codigo_cc, activa")
+          .order("nombre_proyecto", { ascending: true }),
+      ]);
 
       if (errList) throw errList;
 
@@ -28,7 +35,11 @@ export default async function handler(req, res) {
           patente_raw: e.patente,
           patente: formatearPatente(e.patente),
           tipo_clasificado: clasificarTipoEquipo(e),
+          proyecto_id: e.proyecto_actual_id,
+          proyecto_nombre: e.proyectos?.nombre_proyecto || "Sin Asignar",
+          proyecto_cc: e.proyectos?.codigo_cc || "",
         })),
+        proyectos: proyList || [],
       });
     } catch (err) {
       console.error("[API telemetria/recorrido lista_equipos] Error:", err);

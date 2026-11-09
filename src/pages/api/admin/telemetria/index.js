@@ -28,7 +28,7 @@ export default async function handler(req, res) {
       supabase
         .schema("maquinaria")
         .from("proyectos")
-        .select("id, nombre_proyecto, codigo_cc, estado")
+        .select("id, nombre_proyecto, codigo_cc, activa")
         .order("nombre_proyecto", { ascending: true }),
       supabase
         .schema("maquinaria")

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import {
   MapPin, Calendar, Car, Navigation, Clock, Fuel, Search,
   RefreshCw, ChevronRight, Layers, Eye, User, ShieldAlert,
-  Sliders, ArrowRight, CheckCircle2, AlertCircle
+  Sliders, ArrowRight, CheckCircle2, AlertCircle, Building2
 } from "lucide-react";
 import { formatearPatente, clasificarTipoEquipo, TIPOS_EQUIPO_FILTROS } from "../../lib/telemetriaUtils";
 
@@ -10,14 +10,29 @@ export default function TelemetriaMapaTab({
   patentesDisponibles = [],
   fechaInicial = "",
   patenteInicial = "",
+  hookProps,
+  currentUser,
 }) {
   // Estados de búsqueda
   const [listaEquipos, setListaEquipos] = useState([]);
+  const [proyectosApi, setProyectosApi] = useState([]);
+  const [proyectoFiltro, setProyectoFiltro] = useState("");
   const [patenteSeleccionada, setPatenteSeleccionada] = useState(() => patenteInicial || "");
   const [tipoEquipoFiltro, setTipoEquipoFiltro] = useState("todos"); // "todos" | "camionetas" | "camiones" | "gruas" | "maquinaria" | "buses" | "otros"
   const [fechaFiltro, setFechaFiltro] = useState(
     () => fechaInicial || new Date().toISOString().slice(0, 10)
   );
+
+  // Lista unificada de proyectos
+  const listaProyectos = useMemo(() => {
+    if (hookProps?.proyectosCompleto?.data && hookProps.proyectosCompleto.data.length > 0) {
+      return hookProps.proyectosCompleto.data;
+    }
+    if (hookProps?.proyectos?.data && hookProps.proyectos.data.length > 0) {
+      return hookProps.proyectos.data;
+    }
+    return proyectosApi;
+  }, [hookProps?.proyectosCompleto?.data, hookProps?.proyectos?.data, proyectosApi]);
 
   // Estados de datos
   const [cargando, setCargando] = useState(false);
@@ -49,10 +64,15 @@ export default function TelemetriaMapaTab({
     fetch("/api/admin/telemetria/recorrido?action=lista_equipos")
       .then((r) => r.json())
       .then((res) => {
-        if (res.success && res.equipos?.length > 0) {
-          setListaEquipos(res.equipos);
-          if (!patenteSeleccionada) {
-            setPatenteSeleccionada(res.equipos[0].patente);
+        if (res.success) {
+          if (res.equipos?.length > 0) {
+            setListaEquipos(res.equipos);
+            if (!patenteSeleccionada) {
+              setPatenteSeleccionada(res.equipos[0].patente);
+            }
+          }
+          if (res.proyectos?.length > 0) {
+            setProyectosApi(res.proyectos);
           }
         }
       })
@@ -65,11 +85,17 @@ export default function TelemetriaMapaTab({
     if (fechaInicial) setFechaFiltro(fechaInicial);
   }, [patenteInicial, fechaInicial]);
 
-  // Filtrar lista de equipos según tipo seleccionado
+  // Filtrar lista de equipos según proyecto y tipo seleccionados
   const equiposFiltrados = useMemo(() => {
-    if (tipoEquipoFiltro === "todos") return listaEquipos;
-    return listaEquipos.filter((eq) => clasificarTipoEquipo(eq) === tipoEquipoFiltro);
-  }, [listaEquipos, tipoEquipoFiltro]);
+    let list = listaEquipos;
+    if (proyectoFiltro) {
+      list = list.filter((eq) => eq.proyecto_id === proyectoFiltro);
+    }
+    if (tipoEquipoFiltro !== "todos") {
+      list = list.filter((eq) => clasificarTipoEquipo(eq) === tipoEquipoFiltro);
+    }
+    return list;
+  }, [listaEquipos, proyectoFiltro, tipoEquipoFiltro]);
 
   // Cargar datos de recorrido desde el endpoint de API
   const cargarRecorrido = useCallback(async (patente, fecha) => {
@@ -406,10 +432,48 @@ export default function TelemetriaMapaTab({
           justifyContent: "space-between", gap: "12px",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+            {/* Filtro por Proyecto / Faena */}
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <Building2 size={16} color="#0284c7" />
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#334155" }}>Proyecto:</span>
+              <select
+                value={proyectoFiltro}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setProyectoFiltro(val);
+                  const matched = listaEquipos.filter((eq) => {
+                    const matchProy = !val || eq.proyecto_id === val;
+                    const matchTipo = tipoEquipoFiltro === "todos" || clasificarTipoEquipo(eq) === tipoEquipoFiltro;
+                    return matchProy && matchTipo;
+                  });
+                  if (matched.length > 0 && !matched.some((m) => (m.patente || m) === patenteSeleccionada)) {
+                    setPatenteSeleccionada(matched[0].patente || matched[0]);
+                  }
+                }}
+                style={{
+                  fontSize: "12px", padding: "6px 10px", borderRadius: "6px",
+                  border: proyectoFiltro ? "1.5px solid #0284c7" : "1px solid #cbd5e1",
+                  backgroundColor: proyectoFiltro ? "#f0f9ff" : "#ffffff",
+                  color: proyectoFiltro ? "#0369a1" : "#0f172a",
+                  outline: "none", fontWeight: proyectoFiltro ? 700 : 500,
+                  minWidth: "210px",
+                }}
+              >
+                <option value="">🌎 Todos los Proyectos (Flota Completa)</option>
+                {listaProyectos.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.codigo_cc ? `[${p.codigo_cc}] ` : ""}{p.nombre_proyecto}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Selector de Patente / Equipo */}
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <Car size={16} color="#0284c7" />
-              <span style={{ fontSize: "12px", fontWeight: 600, color: "#334155" }}>Equipo:</span>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                Equipo {equiposFiltrados.length > 0 ? `(${equiposFiltrados.length}):` : ":"}
+              </span>
               <select
                 value={patenteSeleccionada}
                 onChange={(e) => setPatenteSeleccionada(e.target.value)}
@@ -419,7 +483,9 @@ export default function TelemetriaMapaTab({
                   fontWeight: 700, color: "#0f172a", minWidth: "220px",
                 }}
               >
-                <option value="">Seleccionar patente...</option>
+                <option value="">
+                  {equiposFiltrados.length === 0 ? "No hay equipos en este filtro" : "Seleccionar patente..."}
+                </option>
                 {equiposFiltrados.map((p, idx) => {
                   const rawPat = typeof p === "string" ? p : p.patente;
                   const pat = formatearPatente(rawPat);
