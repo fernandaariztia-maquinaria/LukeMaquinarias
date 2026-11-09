@@ -117,10 +117,53 @@ export async function getProyectoSpence() {
 }
 
 /**
- * Obtiene el Lookahead paginado
+ * Calcula la duración en días calendario de una actividad del Lookahead
+ */
+export function calcularDuracionDias(t) {
+  if (!t) return null;
+  if (t.duracion !== null && t.duracion !== undefined && String(t.duracion).trim() !== "") {
+    const num = Number(String(t.duracion).replace(/[^0-9.]/g, ""));
+    if (!isNaN(num) && num > 0) return Math.round(num);
+  }
+
+  const startStr = t["3wl_start"] || t.date_start_ini;
+  const finishStr = t["3wl_finish"] || t.date_finish_ini;
+  if (!startStr || !finishStr) return null;
+
+  const parseFecha = (str) => {
+    if (!str) return null;
+    const parts = String(str).trim().split(/[-\/]/);
+    if (parts.length === 3) {
+      if (parts[2].length === 4) return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+      if (parts[0].length === 4) return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    }
+    return null;
+  };
+
+  const d1 = parseFecha(startStr);
+  const d2 = parseFecha(finishStr);
+  if (d1 && d2 && !isNaN(d1.getTime()) && !isNaN(d2.getTime())) {
+    const diffMs = d2.getTime() - d1.getTime();
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1;
+    return diffDays > 0 ? diffDays : 1;
+  }
+  return null;
+}
+
+/**
+ * Obtiene el Lookahead paginado enriqueciendo la duración calculada si no viene provista
  */
 export async function getLookahead(projectId = "418", numPage = 1) {
-  return eimiplannerFetch(`/getLookahead?projectId=${projectId}&numPage=${numPage}`);
+  const res = await eimiplannerFetch(`/getLookahead?projectId=${projectId}&numPage=${numPage}`);
+  if (res?.datos && Array.isArray(res.datos)) {
+    res.datos.forEach((t) => {
+      const d = calcularDuracionDias(t);
+      if (d !== null) {
+        t.duracion = d;
+      }
+    });
+  }
+  return res;
 }
 
 /**
@@ -287,7 +330,7 @@ export async function syncEimiplannerActivities(supabase, projectId = "418") {
         especialidad_id: espId,
         nombre,
         codigo: t.group || null,
-        descripcion: `[EIMIPLANNER ${t.idtask}] ${t.type_task === "SA" ? "Subactividad" : "Actividad"}${t.group ? " · WBS: " + t.group : ""}${t.unid ? " · " + t.unid : ""}`,
+        descripcion: `[EIMIPLANNER ${t.idtask}] ${t.type_task === "SA" ? "Subactividad" : "Actividad"}${t.group ? " · WBS: " + t.group : ""}${t.duracion ? " · Duración: " + t.duracion + " d" : ""}${t.unid ? " · " + t.unid : ""}`,
         activa: true,
         es_libre: false,
       });

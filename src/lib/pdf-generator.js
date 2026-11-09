@@ -174,47 +174,47 @@ export async function generarReportePDF({
         doc.fontSize(9).font("Helvetica").fillColor("#64748b").text("LukeEquipos", 54, 78);
       }
 
-      // Título en el centro con espaciado vertical dinámico (sin solapamiento)
-      const tituloX = 180;
-      const tituloW = 210;
+      // Título en el centro con espaciado vertical dinámico y alineación centrada (sin solapamiento)
+      const tituloX = 165;
+      const tituloW = 215;
       doc
         .fillColor(AZUL_OSCURO)
-        .fontSize(12)
+        .fontSize(11.5)
         .font("Helvetica-Bold")
-        .text("REPORTE DIARIO DE JORNADA", tituloX, 50, { width: tituloW });
+        .text("REPORTE DIARIO DE JORNADA", tituloX, 48, { width: tituloW, align: "center" });
 
-      const subY = doc.y + 2;
+      const subY = Math.max(doc.y + 3, 67);
       doc
         .fontSize(8.5)
         .font("Helvetica")
         .fillColor("#475569")
-        .text("LukeEquipos — Control Operacional", tituloX, subY, { width: tituloW });
+        .text("LukeEquipos — Control Operacional", tituloX, subY, { width: tituloW, align: "center" });
 
-      const genY = doc.y + 1;
+      const genY = Math.max(doc.y + 2, 81);
       doc
         .fontSize(7.5)
         .font("Helvetica")
         .fillColor("#64748b")
-        .text(`Generado: ${new Date().toLocaleString("es-CL")}`, tituloX, genY, { width: tituloW });
+        .text(`Generado: ${new Date().toLocaleString("es-CL")}`, tituloX, genY, { width: tituloW, align: "center" });
 
       // Código de equipo a la derecha en una pastilla proporcionada y con ajuste dinámico
       const codeW = 160;
       const codeX = 50 + W - codeW;
-      const codeBadgeH = 48;
-      doc.roundedRect(codeX, 48, codeW, codeBadgeH, 5).fillAndStroke("#f8fafc", "#cbd5e1");
+      const codeBadgeH = 50;
+      doc.roundedRect(codeX, 46, codeW, codeBadgeH, 5).fillAndStroke("#f8fafc", "#cbd5e1");
       doc
         .fontSize(7)
         .font("Helvetica-Bold")
         .fillColor("#64748b")
-        .text("CÓDIGO DE EQUIPO", codeX, 53, { width: codeW, align: "center" });
+        .text("CÓDIGO DE EQUIPO", codeX, 51, { width: codeW, align: "center" });
 
       const labelEq = formatEquipoLabel(equipo);
-      const codeFontSize = labelEq.length > 24 ? 7.5 : (labelEq.length > 16 ? 8.5 : 10);
+      const codeFontSize = labelEq.length > 24 ? 7.5 : (labelEq.length > 16 ? 8.5 : 9.5);
       doc
         .fontSize(codeFontSize)
         .font("Helvetica-Bold")
         .fillColor(NARANJA)
-        .text(labelEq, codeX + 4, 65, { width: codeW - 8, align: "center", lineGap: 1 });
+        .text(labelEq, codeX + 4, 63, { width: codeW - 8, align: "center", lineGap: 1 });
 
       // Línea divisoria inferior de la cabecera
       doc.moveTo(50, 115).lineTo(50 + W, 115).strokeColor(AZUL_ACENTO).lineWidth(2).stroke();
@@ -290,18 +290,25 @@ export async function generarReportePDF({
       // Caja de métricas
       const boxW = (W - 18) / 4; 
       const esVehiculo = equipo.tipo_seguimiento === 'vehiculo';
+
+      const formatCombustibleValor = (litros) => {
+        if (litros === 0 || litros === "0") return "Sin carga";
+        if (litros != null && Number(litros) > 0) return `${Number(litros).toLocaleString("es-CL")} L`;
+        return "Sin carga";
+      };
+
       const metricas = esVehiculo
         ? [
             { label: "Odóm. Inicio", value: reporte.km_inicial ? `${reporte.km_inicial.toLocaleString("es-CL")} km` : "—" },
             { label: "Odóm. Final", value: reporte.km_final ? `${reporte.km_final.toLocaleString("es-CL")} km` : "—" },
             { label: "Km Recorridos", value: (reporte.km_final && reporte.km_inicial) ? `${(reporte.km_final - reporte.km_inicial).toLocaleString("es-CL")} km` : "—" },
-            { label: "Combustible", value: reporte.petroleo_litros ? `${reporte.petroleo_litros} L` : "—" },
+            { label: "Combustible", value: formatCombustibleValor(reporte.petroleo_litros) },
           ]
         : [
             { label: "Hr. Inicio", value: reporte.horometro_inicio?.toLocaleString("es-CL") || "—" },
             { label: "Hr. Final", value: reporte.horometro_final?.toLocaleString("es-CL") || "—" },
             { label: "Horas Trabajadas", value: horasEfectivasStr },
-            { label: "Combustible", value: reporte.petroleo_litros ? `${reporte.petroleo_litros} L` : "—" },
+            { label: "Combustible", value: formatCombustibleValor(reporte.petroleo_litros) },
           ];
 
       metricas.forEach((m, i) => {
@@ -352,10 +359,12 @@ export async function generarReportePDF({
           // Sanitizar y limpiar la nota para evitar prefijos técnicos
           let notaRaw = ev.nota_transcripcion || "—";
           notaRaw = notaRaw
-            .replace(/^📍?\s*Check-in Web\s*\[[^\]]+\]:\s*/i, "Inicio de turno: ")
-            .replace(/^📍?\s*Check-in\s*\[[^\]]+\]:\s*/i, "Inicio de turno: ")
-            .replace(/^CHECK-OUT:\s*/i, "Término de jornada: ")
-            .replace(/^Check-out:\s*/i, "Término de jornada: ")
+            .replace(/^📍?\s*Check-?in\s*(?:Web)?\s*\[[^\]]+\]:\s*/i, "Inicio de turno: ")
+            .replace(/^📍?\s*Check-?in\s*(?:Web)?:\s*/i, "Inicio de turno: ")
+            .replace(/^CHECK-?OUT\s*(?:Web)?:\s*/i, "Término de jornada: ")
+            .replace(/^Check-?out\s*(?:Web)?:\s*/i, "Término de jornada: ")
+            .replace(/\bcheck-?in\s*(?:web)?\b/gi, "inicio de turno")
+            .replace(/\bcheck-?out\s*(?:web)?\b/gi, "término de jornada")
             .replace(/\s*\|\s*Ubicación:.*$/i, "")
             .replace(/\s*Ubicación:\s*Lat\s*[-0-9.]+,?\s*Lng\s*[-0-9.]+.*$/i, "");
           const notaLimpia = sanitizarTexto(notaRaw);

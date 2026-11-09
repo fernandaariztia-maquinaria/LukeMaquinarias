@@ -33,6 +33,22 @@ export function parseFechaEimi(str) {
   return null;
 }
 
+export function calcularDuracionTarea(t) {
+  if (t?.duracion && !Number.isNaN(Number(t.duracion))) {
+    return Number(t.duracion);
+  }
+  const iniStr = t?.["3wl_start"] || t?.date_start_ini;
+  const finStr = t?.["3wl_finish"] || t?.date_finish_ini;
+  if (!iniStr || !finStr) return null;
+  const d1 = parseFechaEimi(iniStr);
+  const d2 = parseFechaEimi(finStr);
+  if (d1 && d2 && !isNaN(d1.getTime()) && !isNaN(d2.getTime())) {
+    const diffDias = Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1;
+    return diffDias > 0 ? diffDias : 1;
+  }
+  return null;
+}
+
 export function getSemanaLookahead(str) {
   const dObj = parseFechaEimi(str);
   if (!dObj || isNaN(dObj.getTime())) {
@@ -167,6 +183,8 @@ export default function EimiplannerTab({ currentUser }) {
   const [filtroTipoLookahead, setFiltroTipoLookahead] = useState("TODOS");
   const [filtroEspecialidadLookahead, setFiltroEspecialidadLookahead] = useState("TODAS");
   const [filtroSemanaLookahead, setFiltroSemanaLookahead] = useState("TODAS");
+  const [filtroDuracionLookahead, setFiltroDuracionLookahead] = useState("TODAS");
+  const [sortDuracion, setSortDuracion] = useState("DEFAULT"); // 'DEFAULT' | 'DESC' | 'ASC'
   const [pageLookahead, setPageLookahead] = useState(1);
   const PAGE_SIZE_LOOKAHEAD = 25;
 
@@ -294,7 +312,7 @@ export default function EimiplannerTab({ currentUser }) {
   // --- FILTRADO Y PAGINACIÓN DE LOOKAHEAD ---
   const lookaheadFiltrado = useMemo(() => {
     const list = data?.lookaheadSample || [];
-    return list.filter((t) => {
+    const filtrado = list.filter((t) => {
       const matchSearch =
         !searchLookahead ||
         (t.activity_name && t.activity_name.toLowerCase().includes(searchLookahead.toLowerCase())) ||
@@ -317,9 +335,26 @@ export default function EimiplannerTab({ currentUser }) {
         filtroSemanaLookahead === "TODAS" ||
         sem.key === filtroSemanaLookahead;
 
-      return matchSearch && matchTipo && matchEsp && matchSemana;
+      const dur = calcularDuracionTarea(t);
+      const matchDuracion =
+        filtroDuracionLookahead === "TODAS" ||
+        (filtroDuracionLookahead === "1_3" && dur && dur >= 1 && dur <= 3) ||
+        (filtroDuracionLookahead === "4_7" && dur && dur >= 4 && dur <= 7) ||
+        (filtroDuracionLookahead === "8_14" && dur && dur >= 8 && dur <= 14) ||
+        (filtroDuracionLookahead === "15_MAS" && dur && dur >= 15);
+
+      return matchSearch && matchTipo && matchEsp && matchSemana && matchDuracion;
     });
-  }, [data, searchLookahead, filtroTipoLookahead, filtroEspecialidadLookahead, filtroSemanaLookahead]);
+
+    if (sortDuracion === "DESC") {
+      return [...filtrado].sort((a, b) => (calcularDuracionTarea(b) || 0) - (calcularDuracionTarea(a) || 0));
+    }
+    if (sortDuracion === "ASC") {
+      return [...filtrado].sort((a, b) => (calcularDuracionTarea(a) || 0) - (calcularDuracionTarea(b) || 0));
+    }
+
+    return filtrado;
+  }, [data, searchLookahead, filtroTipoLookahead, filtroEspecialidadLookahead, filtroSemanaLookahead, filtroDuracionLookahead, sortDuracion]);
 
   const totalPagesLookahead = Math.ceil(lookaheadFiltrado.length / PAGE_SIZE_LOOKAHEAD) || 1;
   const lookaheadPaginado = useMemo(() => {
@@ -1198,6 +1233,32 @@ export default function EimiplannerTab({ currentUser }) {
                   <option value="SA">Subactividades (SA)</option>
                 </select>
               </div>
+
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <span style={{ fontSize: "12px", color: "var(--color-text-muted)", fontWeight: 600 }}>Duración:</span>
+                <select
+                  value={filtroDuracionLookahead}
+                  onChange={(e) => {
+                    setFiltroDuracionLookahead(e.target.value);
+                    setPageLookahead(1);
+                  }}
+                  style={{
+                    background: "var(--bg-input)",
+                    border: "1px solid var(--border-input)",
+                    color: "var(--color-text)",
+                    borderRadius: "8px",
+                    padding: "6px 10px",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                  }}
+                >
+                  <option value="TODAS">Todas las duraciones</option>
+                  <option value="1_3">1 a 3 días (Corta)</option>
+                  <option value="4_7">4 a 7 días (Media)</option>
+                  <option value="8_14">8 a 14 días (Semanal)</option>
+                  <option value="15_MAS">15+ días (Extensa)</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -1220,7 +1281,24 @@ export default function EimiplannerTab({ currentUser }) {
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Área / Ubicación</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>WBS / Grupo</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Fechas (3WL)</th>
-                    <th style={{ padding: "12px 16px", fontWeight: 700 }}>Duración</th>
+                    <th
+                      onClick={() => {
+                        setSortDuracion((prev) => (prev === "DEFAULT" ? "DESC" : prev === "DESC" ? "ASC" : "DEFAULT"));
+                        setPageLookahead(1);
+                      }}
+                      style={{ padding: "12px 16px", fontWeight: 700, cursor: "pointer", userSelect: "none" }}
+                      title="Haz clic para ordenar por duración (Mayor / Menor / Por defecto)"
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                        <span>Duración</span>
+                        <ArrowUpDown size={12} color={sortDuracion !== "DEFAULT" ? "#2563eb" : "var(--color-text-muted)"} />
+                        {sortDuracion !== "DEFAULT" && (
+                          <span style={{ fontSize: "10px", color: "#2563eb", fontWeight: 800 }}>
+                            {sortDuracion === "DESC" ? "↓ Mayor" : "↑ Menor"}
+                          </span>
+                        )}
+                      </div>
+                    </th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Especialidad</th>
                   </tr>
                 </thead>
@@ -1313,8 +1391,32 @@ export default function EimiplannerTab({ currentUser }) {
                               );
                             })()}
                           </td>
-                          <td style={{ padding: "12px 16px", fontSize: "12px", color: "var(--color-text-muted)" }}>
-                            {t.duracion ? `${t.duracion} d` : "—"}
+                          <td style={{ padding: "12px 16px", fontSize: "12px", whiteSpace: "nowrap" }}>
+                            {(() => {
+                              const dur = calcularDuracionTarea(t);
+                              if (!dur) return <span style={{ color: "var(--color-text-muted)" }}>—</span>;
+                              const isCorta = dur <= 3;
+                              const isMedia = dur > 3 && dur <= 7;
+                              const bgBadge = isCorta ? "rgba(16, 185, 129, 0.12)" : isMedia ? "rgba(59, 130, 246, 0.12)" : "rgba(245, 158, 11, 0.12)";
+                              const colorBadge = isCorta ? "#059669" : isMedia ? "#2563eb" : "#d97706";
+                              return (
+                                <span
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "4px",
+                                    background: bgBadge,
+                                    color: colorBadge,
+                                    padding: "3px 8px",
+                                    borderRadius: "6px",
+                                    fontSize: "11px",
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  <Clock size={11} /> {dur} {dur === 1 ? "día" : "días"}
+                                </span>
+                              );
+                            })()}
                           </td>
                           <td style={{ padding: "12px 16px", fontSize: "12px" }}>
                             {t.especialidad ? (
