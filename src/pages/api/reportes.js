@@ -24,7 +24,11 @@ export default async function handler(req, res) {
     if (equipo_id) query = query.eq("equipo_id", equipo_id);
     if (operador_id) query = query.eq("operador_id", operador_id);
     if (proyecto_id && proyecto_id !== "null" && proyecto_id !== "undefined") {
-      query = query.eq("equipos.proyecto_actual_id", proyecto_id);
+      if (proyecto_id.includes(",")) {
+        query = query.in("equipos.proyecto_actual_id", proyecto_id.split(",").map(p => p.trim()).filter(Boolean));
+      } else {
+        query = query.eq("equipos.proyecto_actual_id", proyecto_id);
+      }
     }
 
     const { data, error, count } = await query;

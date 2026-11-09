@@ -35,8 +35,30 @@ const STORAGE_KEY_USER = "luke_user";
 // PAGE PRINCIPAL
 // ================================================================
 function AdminMaquinariaContent({ currentUser, setCurrentUser, onChangeUser, onSignOut }) {
-  const hookProps = useAdminMaquinaria(currentUser?.proyecto_actual_id || null, currentUser?.rol || null);
+  const proyectoFiltroEfectivo = useMemo(() => {
+    if (currentUser?.proyectos_permitidos && currentUser.proyectos_permitidos.length > 0) {
+      if (!currentUser.proyecto_actual_id || currentUser.proyecto_actual_id === "ALL" || currentUser.proyecto_actual_id === "MIS_PROYECTOS") {
+        return currentUser.proyectos_permitidos.join(",");
+      }
+    }
+    return currentUser?.proyecto_actual_id || null;
+  }, [currentUser]);
+
+  const hookProps = useAdminMaquinaria(proyectoFiltroEfectivo, currentUser?.rol || null);
   const { tab, setTab, msg, registros, proyectosCompleto } = hookProps;
+
+  // Filtrar proyectos disponibles según los permisos del usuario (ej: Juan Carlos Ovalle -> Spence y Andina)
+  const proyectosVisibles = useMemo(() => {
+    const list = proyectosCompleto?.data || [];
+    if (currentUser?.proyectos_permitidos && currentUser.proyectos_permitidos.length > 0) {
+      return list.filter(
+        (p) =>
+          currentUser.proyectos_permitidos.includes(p.id) ||
+          currentUser.codigos_cc_permitidos?.includes(p.codigo_cc)
+      );
+    }
+    return list;
+  }, [proyectosCompleto?.data, currentUser]);
 
   const esAdminGlobal = currentUser?.rol === "Administrador";
   const puedeGestionarRegistros = esAdminGlobal || currentUser?.rol === "Jefe de Area";
@@ -366,11 +388,10 @@ function AdminMaquinariaContent({ currentUser, setCurrentUser, onChangeUser, onS
                       value={currentUser.proyecto_actual_id || ""}
                       onChange={e => {
                         const val = e.target.value;
-                        const projList = proyectosCompleto?.data || [];
-                        const found = projList.find(p => p.id === val);
+                        const found = proyectosVisibles.find(p => p.id === val);
                         const updated = {
                           ...currentUser,
-                          proyecto_actual_id: val || null,
+                          proyecto_actual_id: val || (currentUser.proyectos_permitidos ? currentUser.proyectos_permitidos.join(",") : null),
                           proyecto: found || null
                         };
                         setCurrentUser(updated);
@@ -393,8 +414,14 @@ function AdminMaquinariaContent({ currentUser, setCurrentUser, onChangeUser, onS
                         outline: "none"
                       }}
                     >
-                      <option value="">🌎 Ver Todos los Proyectos</option>
-                      {(proyectosCompleto?.data || []).map(p => (
+                      {currentUser?.proyectos_permitidos ? (
+                        <option value={currentUser.proyectos_permitidos.join(",")}>
+                          🏭 Spence y Andina (Ambos proyectos)
+                        </option>
+                      ) : (
+                        <option value="">🌎 Ver Todos los Proyectos</option>
+                      )}
+                      {proyectosVisibles.map(p => (
                         <option key={p.id} value={p.id}>
                           {p.codigo_cc} — {p.nombre_proyecto}
                         </option>

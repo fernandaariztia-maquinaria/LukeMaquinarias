@@ -1389,46 +1389,52 @@ export default function PlanificacionPodTab({ hookProps, currentUser, setCurrent
           </div>
 
           {/* Selector de proyecto directo en la Sala POD para Administrador */}
-          {currentUser?.rol === "Administrador" && (hookProps.proyectosCompleto?.data || []).length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", background: "var(--bg-sidebar)", border: "1px solid var(--border-sidebar)", borderRadius: "10px", padding: "5px 10px" }}>
-              <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)" }}>Proyecto:</span>
-              <select
-                value={proyectoActivoId || ""}
-                onChange={e => {
-                  const val = e.target.value;
-                  const projList = hookProps.proyectosCompleto?.data || [];
-                  const found = projList.find(p => p.id === val);
-                  if (setCurrentUser) {
-                    const updated = {
-                      ...currentUser,
-                      proyecto_actual_id: val || null,
-                      proyecto: found || null
-                    };
-                    setCurrentUser(updated);
-                    try {
-                      localStorage.setItem("luke_filtro_proyecto_id", val || "");
-                      localStorage.setItem("luke_user", JSON.stringify(updated));
-                    } catch (err) {}
-                  }
-                }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  outline: "none",
-                  fontSize: "12px",
-                  fontWeight: 700,
-                  color: "var(--color-text)",
-                  cursor: "pointer",
-                  maxWidth: "280px"
-                }}
-              >
-                <option value="">Selecciona Proyecto para la POD...</option>
-                {(hookProps.proyectosCompleto.data || []).map(p => (
-                  <option key={p.id} value={p.id}>{p.codigo_cc} — {p.nombre_proyecto}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          {currentUser?.rol === "Administrador" && (hookProps.proyectosCompleto?.data || []).length > 0 && (() => {
+            const listProys = hookProps.proyectosCompleto?.data || [];
+            const proysVisibles = (currentUser?.proyectos_permitidos && currentUser.proyectos_permitidos.length > 0)
+              ? listProys.filter(p => currentUser.proyectos_permitidos.includes(p.id) || currentUser.codigos_cc_permitidos?.includes(p.codigo_cc))
+              : listProys;
+
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", background: "var(--bg-sidebar)", border: "1px solid var(--border-sidebar)", borderRadius: "10px", padding: "5px 10px" }}>
+                <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--color-text-muted)" }}>Proyecto:</span>
+                <select
+                  value={proyectoActivoId || ""}
+                  onChange={e => {
+                    const val = e.target.value;
+                    const found = proysVisibles.find(p => p.id === val);
+                    if (setCurrentUser) {
+                      const updated = {
+                        ...currentUser,
+                        proyecto_actual_id: val || null,
+                        proyecto: found || null
+                      };
+                      setCurrentUser(updated);
+                      try {
+                        localStorage.setItem("luke_filtro_proyecto_id", val || "");
+                        localStorage.setItem("luke_user", JSON.stringify(updated));
+                      } catch (err) {}
+                    }
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    outline: "none",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    color: "var(--color-text)",
+                    cursor: "pointer",
+                    maxWidth: "280px"
+                  }}
+                >
+                  <option value="">Selecciona Proyecto para la POD...</option>
+                  {proysVisibles.map(p => (
+                    <option key={p.id} value={p.id}>{p.codigo_cc} — {p.nombre_proyecto}</option>
+                  ))}
+                </select>
+              </div>
+            );
+          })()}
         </div>
 
         <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>

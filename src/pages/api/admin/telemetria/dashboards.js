@@ -64,7 +64,14 @@ export default async function handler(req, res) {
         .maybeSingle(),
     ]);
 
-    const proyectos = proyectosRaw || [];
+    let proyectos = proyectosRaw || [];
+    if (!esAdmin && user_proyecto_id) {
+      const allowedIds = user_proyecto_id.split(",").map((p) => p.trim());
+      proyectos = proyectos.filter((p) => allowedIds.includes(p.id));
+    } else if (filtroProyecto && filtroProyecto.includes(",")) {
+      const allowedIds = filtroProyecto.split(",").map((p) => p.trim());
+      proyectos = proyectos.filter((p) => allowedIds.includes(p.id));
+    }
     const todosEquipos = equiposRaw || [];
 
     // Parsear la base de asignaciones de camionetas a gerentes o jefaturas
@@ -211,7 +218,10 @@ export default async function handler(req, res) {
       // Filtrado por faena/proyecto si aplica
       if (filtroProyecto) {
         const proyId = eqMatched?.proyecto_actual_id;
-        if (!proyId || proyId !== filtroProyecto) {
+        const matches = filtroProyecto.includes(",")
+          ? filtroProyecto.split(",").map((p) => p.trim()).includes(proyId)
+          : proyId === filtroProyecto;
+        if (!proyId || !matches) {
           continue;
         }
       }

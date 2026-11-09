@@ -238,6 +238,15 @@ export default function EimiplannerTab({ currentUser }) {
     };
   }, [data]);
 
+  // Mapa de tareas Lookahead indexadas por idtask para asociar duración y fechas
+  const taskMap = useMemo(() => {
+    const map = new Map();
+    (data?.lookaheadSample || []).forEach((t) => {
+      if (t.idtask) map.set(Number(t.idtask), t);
+    });
+    return map;
+  }, [data?.lookaheadSample]);
+
   // --- FILTRADO DE RESTRICCIONES ---
   const restriccionesFiltradas = useMemo(() => {
     const list = data?.logRequisitos || [];
@@ -942,6 +951,7 @@ export default function EimiplannerTab({ currentUser }) {
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Vencimiento & Plazo</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Categoría / Disciplina</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Actividad & Restricción</th>
+                    <th style={{ padding: "12px 16px", fontWeight: 700, whiteSpace: "nowrap" }}>Duración Actividad</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Responsable</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Fechas Clave</th>
                     <th style={{ padding: "12px 16px", fontWeight: 700 }}>Estado</th>
@@ -951,7 +961,7 @@ export default function EimiplannerTab({ currentUser }) {
                 <tbody>
                   {restriccionesFiltradas.length === 0 ? (
                     <tr>
-                      <td colSpan={8} style={{ padding: "32px", textAlign: "center", color: "var(--color-text-muted)" }}>
+                      <td colSpan={9} style={{ padding: "32px", textAlign: "center", color: "var(--color-text-muted)" }}>
                         No se encontraron restricciones con los filtros actuales.
                       </td>
                     </tr>
@@ -961,6 +971,8 @@ export default function EimiplannerTab({ currentUser }) {
                       const esP2 = String(r.prioridad) === "2";
                       const estado = (r.estado || "").toUpperCase();
                       const vInfo = getVencimientoInfo(r);
+                      const tareaAsociada = taskMap.get(Number(r.id_task));
+                      const durActividad = tareaAsociada ? (tareaAsociada.duracion || calcularDuracionTarea(tareaAsociada)) : null;
 
                       const badgeEstadoStyle =
                         estado === "CERRADA" || estado === "RESUELTA"
@@ -1032,9 +1044,30 @@ export default function EimiplannerTab({ currentUser }) {
                             <div style={{ fontWeight: 700, color: "var(--color-text)" }}>{r.categoria || r.disciplina || "General"}</div>
                             <div style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>{r.subcategoria || "—"}</div>
                           </td>
-                          <td style={{ padding: "12px 16px", maxWidth: "340px" }}>
-                            <div style={{ fontWeight: 600, color: "var(--color-text)", marginBottom: "3px" }}>
-                              {r.nombre_actividad || "Sin actividad"}
+                          <td style={{ padding: "12px 16px", maxWidth: "320px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap", marginBottom: "3px" }}>
+                              <span style={{ fontWeight: 600, color: "var(--color-text)" }}>
+                                {r.nombre_actividad || "Sin actividad"}
+                              </span>
+                              {durActividad && (
+                                <span
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "3px",
+                                    background: "rgba(37, 99, 235, 0.12)",
+                                    color: "#2563eb",
+                                    padding: "2px 6px",
+                                    borderRadius: "5px",
+                                    fontSize: "10px",
+                                    fontWeight: 700,
+                                    whiteSpace: "nowrap",
+                                  }}
+                                  title={`Duración programada en Lookahead: ${durActividad} días`}
+                                >
+                                  <Clock size={10} /> {durActividad} {durActividad === 1 ? "día" : "días"}
+                                </span>
+                              )}
                             </div>
                             <div style={{ fontSize: "12px", color: "var(--color-text-muted)", lineHeight: 1.4 }}>
                               {r.descripcion_restriccion || "Sin descripción"}
@@ -1043,6 +1076,44 @@ export default function EimiplannerTab({ currentUser }) {
                               <div style={{ fontSize: "11px", color: "#6b7280", fontStyle: "italic", marginTop: "3px" }}>
                                 💡 {r.observacion}
                               </div>
+                            )}
+                          </td>
+                          <td style={{ padding: "12px 16px", whiteSpace: "nowrap" }}>
+                            {durActividad ? (
+                              <div>
+                                <span
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "4px",
+                                    background:
+                                      durActividad <= 3
+                                        ? "rgba(16, 185, 129, 0.12)"
+                                        : durActividad <= 7
+                                        ? "rgba(59, 130, 246, 0.12)"
+                                        : "rgba(245, 158, 11, 0.12)",
+                                    color:
+                                      durActividad <= 3
+                                        ? "#059669"
+                                        : durActividad <= 7
+                                        ? "#2563eb"
+                                        : "#d97706",
+                                    padding: "3px 8px",
+                                    borderRadius: "6px",
+                                    fontSize: "11px",
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  <Clock size={11} /> {durActividad} {durActividad === 1 ? "día" : "días"}
+                                </span>
+                                {(tareaAsociada?.["3wl_start"] || tareaAsociada?.date_start_ini) && (
+                                  <div style={{ fontSize: "10px", color: "var(--color-text-muted)", marginTop: "3px" }}>
+                                    {tareaAsociada["3wl_start"] || tareaAsociada.date_start_ini} → {tareaAsociada["3wl_finish"] || tareaAsociada.date_finish_ini}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span style={{ color: "var(--color-text-muted)" }}>—</span>
                             )}
                           </td>
                           <td style={{ padding: "12px 16px" }}>
@@ -1901,6 +1972,24 @@ export default function EimiplannerTab({ currentUser }) {
                   <div style={{ fontWeight: 600, color: "#ff303e" }}>{selectedRestriccion.fecha_comprometida || "—"}</div>
                 </div>
               </div>
+
+              {(() => {
+                const tSel = taskMap.get(Number(selectedRestriccion.id_task));
+                const durSel = tSel ? (tSel.duracion || calcularDuracionTarea(tSel)) : null;
+                if (!tSel && !durSel) return null;
+                return (
+                  <div style={{ background: "rgba(37, 99, 235, 0.08)", border: "1px solid rgba(37, 99, 235, 0.2)", borderRadius: "10px", padding: "10px 14px", marginTop: "8px" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#2563eb", textTransform: "uppercase" }}>
+                      ⏱️ Actividad Asociada en Lookahead
+                    </div>
+                    <div style={{ fontSize: "12px", marginTop: "4px", display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+                      {durSel && <div><strong>Duración:</strong> {durSel} {durSel === 1 ? "día" : "días"}</div>}
+                      {tSel?.["3wl_start"] && <div><strong>Fechas 3WL:</strong> {tSel["3wl_start"]} → {tSel["3wl_finish"]}</div>}
+                      {tSel?.group && <div><strong>WBS:</strong> {tSel.group}</div>}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {(() => {
                 const vSel = getVencimientoInfo(selectedRestriccion);

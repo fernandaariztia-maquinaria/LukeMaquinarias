@@ -31,7 +31,11 @@ export default async function handler(req, res) {
       .eq("activo", true);
 
     if (proyecto_id && proyecto_id !== "null" && proyecto_id !== "undefined") {
-      query = query.eq("proyecto_actual_id", proyecto_id);
+      if (proyecto_id.includes(",")) {
+        query = query.in("proyecto_actual_id", proyecto_id.split(",").map(p => p.trim()).filter(Boolean));
+      } else {
+        query = query.eq("proyecto_actual_id", proyecto_id);
+      }
     }
 
     // Filtrar por búsqueda si se provee

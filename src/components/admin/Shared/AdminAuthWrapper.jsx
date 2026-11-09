@@ -82,8 +82,38 @@ export default function AdminAuthWrapper({ children }) {
 
       if (persona && persona.activo) {
         const esAdmin = persona.rol === "Administrador";
-        const projIdFinal = (esAdmin && savedProjId) ? savedProjId : (persona.proyecto_actual_id || null);
-        const projFinal = (esAdmin && savedProj) ? savedProj : (persona.proyectos || null);
+
+        // Proyectos permitidos por perfil (ej: Juan Carlos Ovalle -> Spence EIMI00418 y Andina EIMI00413)
+        let proyectosPermitidos = null;
+        let codigosCcPermitidos = null;
+
+        const esJuanCarlosOvalle =
+          cleanEmail === "jcovalle@eimontajes.cl" ||
+          (persona.nombre_completo && persona.nombre_completo.toLowerCase().includes("ovalle"));
+
+        if (esJuanCarlosOvalle) {
+          proyectosPermitidos = [
+            "a5f2e764-582d-4746-8f73-9f799d6e6a42", // Spence (EIMI00418)
+            "59afe319-7567-4552-bd9d-b0d313dd1072", // Andina (EIMI00413)
+          ];
+          codigosCcPermitidos = ["EIMI00418", "EIMI00413"];
+        }
+
+        let projIdFinal = persona.proyecto_actual_id || null;
+        let projFinal = persona.proyectos || null;
+
+        if (proyectosPermitidos) {
+          if (savedProjId && (proyectosPermitidos.includes(savedProjId) || savedProjId === proyectosPermitidos.join(","))) {
+            projIdFinal = savedProjId;
+            projFinal = savedProj || persona.proyectos || null;
+          } else if (!proyectosPermitidos.includes(projIdFinal)) {
+            projIdFinal = proyectosPermitidos[0]; // Spence por defecto
+            projFinal = null;
+          }
+        } else if (esAdmin && savedProjId) {
+          projIdFinal = savedProjId;
+          projFinal = savedProj || persona.proyectos || null;
+        }
 
         return {
           id: persona.id,
@@ -91,7 +121,9 @@ export default function AdminAuthWrapper({ children }) {
           rol: persona.rol, // Puede ser Supervisor, Operador, Administrador, etc.
           proyecto_actual_id: projIdFinal,
           proyecto: projFinal,
-          email: cleanEmail
+          email: cleanEmail,
+          proyectos_permitidos: proyectosPermitidos,
+          codigos_cc_permitidos: codigosCcPermitidos,
         };
       }
     } catch (err) {

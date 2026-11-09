@@ -27,11 +27,21 @@ export default function MapTab({ hookProps, currentUser }) {
   }, [currentUser?.proyecto_actual_id]);
 
   const listaProyectos = useMemo(() => {
+    let list = [];
     if (hookProps?.proyectos?.data && hookProps.proyectos.data.length > 0) {
-      return hookProps.proyectos.data;
+      list = hookProps.proyectos.data;
+    } else {
+      list = proyectosApi;
     }
-    return proyectosApi;
-  }, [hookProps?.proyectos?.data, proyectosApi]);
+    if (currentUser?.proyectos_permitidos && currentUser.proyectos_permitidos.length > 0) {
+      return list.filter(
+        (p) =>
+          currentUser.proyectos_permitidos.includes(p.id) ||
+          currentUser.codigos_cc_permitidos?.includes(p.codigo_cc)
+      );
+    }
+    return list;
+  }, [hookProps?.proyectos?.data, proyectosApi, currentUser]);
 
   // Referencias para Leaflet
   const mapContainerRef = useRef(null);

@@ -149,7 +149,18 @@ export default function ConductoresOperadoresTab({ currentUser, hookProps }) {
   }, [cargarDatos]);
 
   const diasPeriodo = dashData?.periodo?.dias_totales || 30;
-  const listaProyectos = dashData?.proyectos_disponibles || [];
+  // Proyectos disponibles para selector (filtrados por permisos si aplica)
+  const listaProyectos = useMemo(() => {
+    const list = dashData?.proyectos_disponibles || [];
+    if (currentUser?.proyectos_permitidos && currentUser.proyectos_permitidos.length > 0) {
+      return list.filter(
+        (p) =>
+          currentUser.proyectos_permitidos.includes(p.id) ||
+          currentUser.codigos_cc_permitidos?.includes(p.codigo_cc)
+      );
+    }
+    return list;
+  }, [dashData?.proyectos_disponibles, currentUser]);
   const equiposDisponibles = dashData?.equipos_disponibles || [];
 
   // Equipos asignados a gerencia
