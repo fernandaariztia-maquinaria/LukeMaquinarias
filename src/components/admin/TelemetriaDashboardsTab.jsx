@@ -72,7 +72,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
   // Por defecto cubre el mes de octubre (datos históricos de telemetría cargados)
   const [desde, setDesde] = useState("2026-10-01");
   const [hasta, setHasta] = useState(() => new Date().toISOString().slice(0, 10));
-  const [proyectoFiltro, setProyectoFiltro] = useState(() => (esAdmin ? "" : userProyectoId));
+  const [proyectoFiltro, setProyectoFiltro] = useState("");
   // Filtro unificado de búsqueda (Conductor, RUT, Patente o Vehículo)
   const [busquedaFiltro, setBusquedaFiltro] = useState("");
   const [tipoEquipoFiltro, setTipoEquipoFiltro] = useState("todos"); // "todos" | "camionetas" | "camiones" | "gruas" | "maquinaria" | "buses" | "otros"
@@ -91,12 +91,7 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
   const [seccionActiva, setSeccionActiva] = useState("general");
   const [filtroUtilizacion, setFiltroUtilizacion] = useState("todos"); // "todos" | "optimo" | "en_rango" | "subutilizado" | "sobreutilizado"
 
-  // Sincronizar proyecto si cambia el usuario y no es admin
-  useEffect(() => {
-    if (!esAdmin && userProyectoId) {
-      setProyectoFiltro(userProyectoId);
-    }
-  }, [esAdmin, userProyectoId]);
+
 
   // Etiqueta legible del tipo de equipo activo
   const labelTipoActivo = useMemo(() => {
@@ -291,7 +286,12 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
   }, [equiposConUtilizacion, filtroUtilizacion]);
 
   // Proyectos disponibles para selector
-  const listaProyectos = dashData?.proyectos_disponibles || [];
+  const listaProyectos = useMemo(() => {
+    const fromDash = dashData?.proyectos_disponibles || [];
+    if (fromDash.length > 0) return fromDash;
+    const fromHook = hookProps?.proyectosCompleto?.data || hookProps?.proyectos?.data || [];
+    return fromHook;
+  }, [dashData?.proyectos_disponibles, hookProps?.proyectosCompleto?.data, hookProps?.proyectos?.data]);
   const equiposDisponibles = dashData?.equipos_disponibles || [];
 
   // Encontrar nombre del proyecto actual si no es admin
@@ -480,35 +480,27 @@ export default function TelemetriaDashboardsTab({ currentUser, hookProps }) {
             </span>
             <div>
               <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "3px" }}>
-                {esAdmin ? "Seleccionar Faena:" : "Obra Asignada:"}
+                Seleccionar Faena / Obra:
               </label>
-              {esAdmin ? (
-                <select
-                  value={proyectoFiltro}
-                  onChange={(e) => setProyectoFiltro(e.target.value)}
-                  style={{
-                    width: "100%", fontSize: "12px", padding: "6px 8px", borderRadius: "6px",
-                    border: "1.5px solid #cbd5e1", backgroundColor: "#ffffff", outline: "none",
-                    fontWeight: 600, color: "#0f172a", boxSizing: "border-box",
-                  }}
-                >
-                  <option value="">-- Todos los Proyectos (Flota Completa) --</option>
-                  {listaProyectos.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.codigo_cc ? `[${p.codigo_cc}] ` : ""}{p.nombre_proyecto}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div style={{
-                  display: "flex", alignItems: "center", gap: "6px",
-                  padding: "6px 10px", borderRadius: "6px",
-                  backgroundColor: "#fef3c7", border: "1.5px solid #fde68a",
-                  fontSize: "12px", fontWeight: 600, color: "#92400e",
-                }} title="Acceso limitado a su obra asignada">
-                  <span>🔒 {nombreProyectoObra}</span>
-                </div>
-              )}
+              <select
+                value={proyectoFiltro}
+                onChange={(e) => setProyectoFiltro(e.target.value)}
+                style={{
+                  width: "100%", fontSize: "12px", padding: "6px 8px", borderRadius: "6px",
+                  border: proyectoFiltro ? "1.5px solid #0284c7" : "1.5px solid #cbd5e1",
+                  backgroundColor: proyectoFiltro ? "#f0f9ff" : "#ffffff",
+                  outline: "none",
+                  fontWeight: 600, color: proyectoFiltro ? "#0369a1" : "#0f172a", boxSizing: "border-box",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="">🌎 Todos los Proyectos (Flota Completa)</option>
+                {listaProyectos.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.codigo_cc ? `[${p.codigo_cc}] ` : ""}{p.nombre_proyecto}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
