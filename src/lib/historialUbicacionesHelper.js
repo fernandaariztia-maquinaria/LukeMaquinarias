@@ -145,3 +145,4 @@ export async function registrarCambioUbicacion(supabase, {
     await guardarHistorialConfig(supabase, list);
   }
 }
+

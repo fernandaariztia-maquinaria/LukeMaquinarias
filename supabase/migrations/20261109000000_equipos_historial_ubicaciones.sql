@@ -26,3 +26,4 @@ CREATE INDEX IF NOT EXISTS idx_historial_ub_fecha ON maquinaria.historial_ubicac
 GRANT ALL ON TABLE maquinaria.historial_ubicaciones_equipos TO anon, authenticated, service_role;
 
 NOTIFY pgrst, 'reload schema';
+
