@@ -1,4 +1,5 @@
 import { createAdminClient } from "../../lib/supabase-server";
+import { registrarCambioUbicacion } from "../../lib/historialUbicacionesHelper";
 
 export default async function handler(req, res) {
   const supabase = createAdminClient();
@@ -169,12 +170,37 @@ export default async function handler(req, res) {
       .single();
 
     if (error) return res.status(500).json({ success: false, error: error.message });
+
+    // Registrar asignación inicial en historial si viene con proyecto
+    if (data && cleanProyectoId) {
+      try {
+        let proyNom = "Obra Asignada";
+        let proyCc = "";
+        const { data: pFound } = await supabase.schema("maquinaria").from("proyectos").select("nombre_proyecto, codigo_cc").eq("id", cleanProyectoId).maybeSingle();
+        if (pFound) {
+          proyNom = pFound.nombre_proyecto;
+          proyCc = pFound.codigo_cc || "";
+        }
+        await registrarCambioUbicacion(supabase, {
+          equipo_id: data.id,
+          proyecto_id: cleanProyectoId,
+          proyecto_nombre: proyNom,
+          proyecto_cc: proyCc,
+          fecha_inicio: req.body.fecha_inicio_asignacion || new Date().toISOString().slice(0, 10),
+          fecha_fin_estimada: req.body.fecha_fin_estimada || null,
+          motivo_traslado: "Asignación inicial al registrar equipo",
+        });
+      } catch (e) {
+        console.warn("[POST /api/equipos] Advertencia al registrar historial inicial:", e.message);
+      }
+    }
+
     return res.status(201).json({ success: true, data });
   }
 
   if (req.method === "PATCH") {
     // Actualizar equipo (pauta, estado, proyecto, capacidad estanque)
-    const { id, ...updates } = req.body;
+    const { id, historial_traslado, ...updates } = req.body;
     if (!id) return res.status(400).json({ success: false, message: "Falta id" });
 
     if (updates.hasOwnProperty("proyecto_actual_id") && updates.proyecto_actual_id === "") {
@@ -193,6 +219,19 @@ export default async function handler(req, res) {
       .single();
 
     if (error) return res.status(500).json({ success: false, error: error.message });
+
+    // Si viene registro explícito de traslado / cambio de obra en el payload
+    if (historial_traslado) {
+      try {
+        await registrarCambioUbicacion(supabase, {
+          equipo_id: id,
+          ...historial_traslado,
+        });
+      } catch (e) {
+        console.warn("[PATCH /api/equipos] Advertencia al registrar historial de traslado:", e.message);
+      }
+    }
+
     return res.status(200).json({ success: true, data });
   }
 
