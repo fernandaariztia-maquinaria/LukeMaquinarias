@@ -165,6 +165,45 @@ export function getVencimientoInfo(r, hoy = new Date()) {
   };
 }
 
+export function evaluarVigenciaRestriccion(r, hoy = new Date()) {
+  const hoyClean = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  const day = hoyClean.getDay();
+  const diffToMon = day === 0 ? -6 : 1 - day;
+  const inicioSemana = new Date(hoyClean.getFullYear(), hoyClean.getMonth(), hoyClean.getDate() + diffToMon);
+  const finSemana = new Date(inicioSemana.getFullYear(), inicioSemana.getMonth(), inicioSemana.getDate() + 6, 23, 59, 59);
+
+  const estado = (r.estado || "").toUpperCase();
+  const esCerrada = estado === "CERRADA" || estado === "RESUELTA";
+
+  const fComp = parseFechaEimi(r.fecha_comprometida || r.fecha_requerida_resolucion);
+  const fRes = parseFechaEimi(r.fecha_resolucion);
+  const fId = parseFechaEimi(r.fecha_identificacion);
+
+  const esHoy = (dt) =>
+    dt &&
+    !isNaN(dt.getTime()) &&
+    dt.getFullYear() === hoyClean.getFullYear() &&
+    dt.getMonth() === hoyClean.getMonth() &&
+    dt.getDate() === hoyClean.getDate();
+
+  const enEstaSemana = (dt) => dt && !isNaN(dt.getTime()) && dt >= inicioSemana && dt <= finSemana;
+
+  const esDeHoy = esHoy(fComp) || esHoy(fRes) || esHoy(fId);
+  const esDeEstaSemana = enEstaSemana(fComp) || enEstaSemana(fRes) || enEstaSemana(fId);
+
+  const esAbierta = !esCerrada;
+  const esAtrasada = esAbierta && fComp && fComp < hoyClean;
+
+  return {
+    esCerrada,
+    esAbierta,
+    esAtrasada,
+    esDeHoy,
+    esDeEstaSemana,
+    esVigentePorDefecto: esAbierta || esAtrasada || esDeHoy || esDeEstaSemana,
+  };
+}
+
 export default function EimiplannerTab({ currentUser }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -175,7 +214,7 @@ export default function EimiplannerTab({ currentUser }) {
   const [searchRestricciones, setSearchRestricciones] = useState("");
   const [filtroEstadoRestr, setFiltroEstadoRestr] = useState("TODOS");
   const [filtroDisciplinaRestr, setFiltroDisciplinaRestr] = useState("TODAS");
-  const [filtroVencimientoRestr, setFiltroVencimientoRestr] = useState("TODOS"); // 'TODOS' | 'ATRASADAS' | 'POR_VENCER' | 'CRITICAS' | 'EN_PLAZO' | 'RESUELTAS'
+  const [filtroVencimientoRestr, setFiltroVencimientoRestr] = useState("VIGENTES"); // 'VIGENTES' | 'HOY' | 'ESTA_SEMANA' | 'ATRASADAS' | 'POR_VENCER' | 'CRITICAS' | 'EN_PLAZO' | 'RESUELTAS' | 'TODOS'
   const [selectedRestriccion, setSelectedRestriccion] = useState(null);
 
   // Filtros de Lookahead
@@ -219,13 +258,21 @@ export default function EimiplannerTab({ currentUser }) {
     let porVencer = 0;
     let enPlazo = 0;
     let resueltas = 0;
+    let vigentes = 0;
+    let hoy = 0;
+    let estaSemana = 0;
 
     list.forEach((r) => {
       const v = getVencimientoInfo(r);
+      const vig = evaluarVigenciaRestriccion(r);
       if (v.tipo === "ATRASADA") atrasadas++;
       else if (v.tipo === "POR_VENCER") porVencer++;
       else if (v.tipo === "EN_PLAZO") enPlazo++;
       else if (v.tipo === "RESUELTA") resueltas++;
+
+      if (vig.esVigentePorDefecto) vigentes++;
+      if (vig.esDeHoy || vig.esAtrasada) hoy++;
+      if (vig.esDeEstaSemana || vig.esAtrasada) estaSemana++;
     });
 
     return {
@@ -235,6 +282,9 @@ export default function EimiplannerTab({ currentUser }) {
       criticas: atrasadas + porVencer,
       enPlazo,
       resueltas,
+      vigentes,
+      hoy,
+      estaSemana,
     };
   }, [data]);
 
@@ -247,10 +297,10 @@ export default function EimiplannerTab({ currentUser }) {
     return map;
   }, [data?.lookaheadSample]);
 
-  // --- FILTRADO DE RESTRICCIONES ---
+  // --- FILTRADO Y ORDENAMIENTO DE RESTRICCIONES ---
   const restriccionesFiltradas = useMemo(() => {
     const list = data?.logRequisitos || [];
-    return list.filter((r) => {
+    const filtradas = list.filter((r) => {
       const matchSearch =
         !searchRestricciones ||
         (r.nombre_actividad && r.nombre_actividad.toLowerCase().includes(searchRestricciones.toLowerCase())) ||
@@ -270,8 +320,13 @@ export default function EimiplannerTab({ currentUser }) {
         (r.categoria || "").toUpperCase() === filtroDisciplinaRestr;
 
       const vInfo = getVencimientoInfo(r);
+      const vig = evaluarVigenciaRestriccion(r);
+
       const matchVencimiento =
         filtroVencimientoRestr === "TODOS" ||
+        (filtroVencimientoRestr === "VIGENTES" && vig.esVigentePorDefecto) ||
+        (filtroVencimientoRestr === "HOY" && (vig.esDeHoy || vig.esAtrasada)) ||
+        (filtroVencimientoRestr === "ESTA_SEMANA" && (vig.esDeEstaSemana || vig.esAtrasada)) ||
         (filtroVencimientoRestr === "ATRASADAS" && vInfo.tipo === "ATRASADA") ||
         (filtroVencimientoRestr === "POR_VENCER" && vInfo.tipo === "POR_VENCER") ||
         (filtroVencimientoRestr === "CRITICAS" && (vInfo.tipo === "ATRASADA" || vInfo.tipo === "POR_VENCER")) ||
@@ -279,6 +334,28 @@ export default function EimiplannerTab({ currentUser }) {
         (filtroVencimientoRestr === "RESUELTAS" && vInfo.tipo === "RESUELTA");
 
       return matchSearch && matchEstado && matchDisc && matchVencimiento;
+    });
+
+    // Ordenar: 1) Atrasadas, 2) De hoy abiertas, 3) Por vencer (esta semana), 4) Abiertas en plazo, 5) Resueltas recientes
+    return [...filtradas].sort((a, b) => {
+      const getScore = (item) => {
+        const vi = getVencimientoInfo(item);
+        const vig = evaluarVigenciaRestriccion(item);
+        if (vi.tipo === "ATRASADA") return 1;
+        if (vig.esDeHoy && vig.esAbierta) return 2;
+        if (vi.tipo === "POR_VENCER") return 3;
+        if (vig.esAbierta) return 4;
+        if (vig.esDeEstaSemana) return 5;
+        return 6;
+      };
+      const sA = getScore(a);
+      const sB = getScore(b);
+      if (sA !== sB) return sA - sB;
+
+      const fA = parseFechaEimi(a.fecha_comprometida || a.fecha_requerida_resolucion || a.fecha_resolucion)?.getTime() || 0;
+      const fB = parseFechaEimi(b.fecha_comprometida || b.fecha_requerida_resolucion || b.fecha_resolucion)?.getTime() || 0;
+      if (sA <= 4) return fA - fB;
+      return fB - fA;
     });
   }, [data, searchRestricciones, filtroEstadoRestr, filtroDisciplinaRestr, filtroVencimientoRestr]);
 
@@ -671,7 +748,7 @@ export default function EimiplannerTab({ currentUser }) {
             }}
           >
             <button
-              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "ATRASADAS" ? "TODOS" : "ATRASADAS")}
+              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "ATRASADAS" ? "VIGENTES" : "ATRASADAS")}
               style={{
                 background: filtroVencimientoRestr === "ATRASADAS" ? "rgba(239, 68, 68, 0.16)" : "var(--bg-container)",
                 border: filtroVencimientoRestr === "ATRASADAS" ? "2px solid #ef4444" : "1px solid var(--border-container)",
@@ -699,7 +776,7 @@ export default function EimiplannerTab({ currentUser }) {
             </button>
 
             <button
-              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "POR_VENCER" ? "TODOS" : "POR_VENCER")}
+              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "POR_VENCER" ? "VIGENTES" : "POR_VENCER")}
               style={{
                 background: filtroVencimientoRestr === "POR_VENCER" ? "rgba(245, 158, 11, 0.18)" : "var(--bg-container)",
                 border: filtroVencimientoRestr === "POR_VENCER" ? "2px solid #f59e0b" : "1px solid var(--border-container)",
@@ -727,7 +804,7 @@ export default function EimiplannerTab({ currentUser }) {
             </button>
 
             <button
-              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "CRITICAS" ? "TODOS" : "CRITICAS")}
+              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "CRITICAS" ? "VIGENTES" : "CRITICAS")}
               style={{
                 background: filtroVencimientoRestr === "CRITICAS" ? "rgba(234, 88, 12, 0.16)" : "var(--bg-container)",
                 border: filtroVencimientoRestr === "CRITICAS" ? "2px solid #ea580c" : "1px solid var(--border-container)",
@@ -755,7 +832,7 @@ export default function EimiplannerTab({ currentUser }) {
             </button>
 
             <button
-              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "EN_PLAZO" ? "TODOS" : "EN_PLAZO")}
+              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "EN_PLAZO" ? "VIGENTES" : "EN_PLAZO")}
               style={{
                 background: filtroVencimientoRestr === "EN_PLAZO" ? "rgba(59, 130, 246, 0.14)" : "var(--bg-container)",
                 border: filtroVencimientoRestr === "EN_PLAZO" ? "2px solid #3b82f6" : "1px solid var(--border-container)",
@@ -783,7 +860,7 @@ export default function EimiplannerTab({ currentUser }) {
             </button>
 
             <button
-              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "RESUELTAS" ? "TODOS" : "RESUELTAS")}
+              onClick={() => setFiltroVencimientoRestr(filtroVencimientoRestr === "RESUELTAS" ? "VIGENTES" : "RESUELTAS")}
               style={{
                 background: filtroVencimientoRestr === "RESUELTAS" ? "rgba(16, 185, 129, 0.16)" : "var(--bg-container)",
                 border: filtroVencimientoRestr === "RESUELTAS" ? "2px solid #10b981" : "1px solid var(--border-container)",
@@ -866,20 +943,23 @@ export default function EimiplannerTab({ currentUser }) {
                   onChange={(e) => setFiltroVencimientoRestr(e.target.value)}
                   style={{
                     background: "var(--bg-input)",
-                    border: filtroVencimientoRestr === "ATRASADAS" ? "1px solid #ef4444" : filtroVencimientoRestr === "POR_VENCER" ? "1px solid #f59e0b" : "1px solid var(--border-input)",
-                    color: filtroVencimientoRestr === "ATRASADAS" ? "#dc2626" : filtroVencimientoRestr === "POR_VENCER" ? "#d97706" : "var(--color-text)",
+                    border: filtroVencimientoRestr === "ATRASADAS" ? "1px solid #ef4444" : filtroVencimientoRestr === "POR_VENCER" ? "1px solid #f59e0b" : filtroVencimientoRestr === "VIGENTES" ? "1px solid #2563eb" : "1px solid var(--border-input)",
+                    color: filtroVencimientoRestr === "ATRASADAS" ? "#dc2626" : filtroVencimientoRestr === "POR_VENCER" ? "#d97706" : filtroVencimientoRestr === "VIGENTES" ? "#2563eb" : "var(--color-text)",
                     borderRadius: "8px",
                     padding: "6px 10px",
                     fontSize: "12px",
                     fontWeight: 700,
                   }}
                 >
-                  <option value="TODOS">Todos los plazos</option>
+                  <option value="VIGENTES">📅 Hoy / Esta Semana + Abiertas y Atrasadas ({conteosVencimiento.vigentes})</option>
+                  <option value="HOY">📌 Solo Hoy + Atrasadas ({conteosVencimiento.hoy})</option>
+                  <option value="ESTA_SEMANA">🗓️ Esta Semana + Atrasadas ({conteosVencimiento.estaSemana})</option>
                   <option value="ATRASADAS">🚨 Solo Atrasadas / Vencidas ({conteosVencimiento.atrasadas})</option>
                   <option value="POR_VENCER">⏳ Solo Por Vencer en 7d ({conteosVencimiento.porVencer})</option>
                   <option value="CRITICAS">⚠️ Atrasadas + Por Vencer ({conteosVencimiento.criticas})</option>
                   <option value="EN_PLAZO">🟢 En Plazo ({conteosVencimiento.enPlazo})</option>
                   <option value="RESUELTAS">✔️ Resueltas / Cerradas ({conteosVencimiento.resueltas})</option>
+                  <option value="TODOS">Todos los plazos / Históricas ({conteosVencimiento.total})</option>
                 </select>
               </div>
 
