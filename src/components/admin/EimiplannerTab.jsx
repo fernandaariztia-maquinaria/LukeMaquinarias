@@ -354,8 +354,12 @@ export default function EimiplannerTab({ currentUser }) {
 
       const fA = parseFechaEimi(a.fecha_comprometida || a.fecha_requerida_resolucion || a.fecha_resolucion)?.getTime() || 0;
       const fB = parseFechaEimi(b.fecha_comprometida || b.fecha_requerida_resolucion || b.fecha_resolucion)?.getTime() || 0;
-      if (sA <= 4) return fA - fB;
-      return fB - fA;
+      if (fA !== fB) {
+        return sA <= 4 ? fA - fB : fB - fA;
+      }
+      const pA = Number(a.prioridad) || 99;
+      const pB = Number(b.prioridad) || 99;
+      return pA - pB;
     });
   }, [data, searchRestricciones, filtroEstadoRestr, filtroDisciplinaRestr, filtroVencimientoRestr]);
 
@@ -609,7 +613,7 @@ export default function EimiplannerTab({ currentUser }) {
           <div
             onClick={() => {
               setSubTab("restricciones");
-              setFiltroVencimientoRestr(filtroVencimientoRestr === "ATRASADAS" ? "TODOS" : "ATRASADAS");
+              setFiltroVencimientoRestr(filtroVencimientoRestr === "ATRASADAS" ? "VIGENTES" : "ATRASADAS");
             }}
             style={{
               background: filtroVencimientoRestr === "ATRASADAS" && subTab === "restricciones"
@@ -1247,6 +1251,44 @@ export default function EimiplannerTab({ currentUser }) {
                   )}
                 </tbody>
               </table>
+            </div>
+
+            <div
+              style={{
+                padding: "12px 16px",
+                borderTop: "1px solid var(--border-container)",
+                background: "var(--bg-sidebar)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: "10px",
+                fontSize: "12px",
+                color: "var(--color-text-muted)",
+              }}
+            >
+              <span>
+                Mostrando <strong style={{ color: "var(--color-text)" }}>{restriccionesFiltradas.length}</strong> de{" "}
+                <strong style={{ color: "var(--color-text)" }}>{conteosVencimiento.total}</strong> restricciones totales{" "}
+                <span style={{ opacity: 0.85 }}>(las tarjetas superiores mantienen el total global acumulado)</span>
+              </span>
+              {filtroVencimientoRestr !== "TODOS" && (
+                <button
+                  onClick={() => setFiltroVencimientoRestr("TODOS")}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid var(--border-container)",
+                    borderRadius: "6px",
+                    padding: "4px 10px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    color: "var(--color-text)",
+                    cursor: "pointer",
+                  }}
+                >
+                  Ver todas ({conteosVencimiento.total})
+                </button>
+              )}
             </div>
           </div>
         </div>
