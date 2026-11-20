@@ -10,6 +10,7 @@ import {
   procesarMensajeConContexto
 } from "../../gemini";
 import { formatEquipoLabel } from "../../equipoLabel";
+import { formatFechaHoraChile } from "../../timeUtils";
 import { crearConsultaPendiente, parseMetricasFallback } from "../services/podConsultaService";
 import { convertirPalabrasANumeros } from "../../gemini";
 
@@ -751,7 +752,7 @@ export async function handleJornadaFlow(ctx, res) {
     const motivoFalla = motivoTexto || "Falla técnica indicada por el operador";
 
     // 1. Guardar evento en eventos_jornada
-    await supabase.from("eventos_jornada").insert({
+    await supabase.schema("maquinaria").from("eventos_jornada").insert({
       reporte_id: sesion.reporte_activo_id,
       estado_hito: "Detenido por Falla",
       hora_evento: new Date().toISOString(),
@@ -760,30 +761,34 @@ export async function handleJornadaFlow(ctx, res) {
 
     // 2. Guardar o actualizar en historial_fallas_equipos
     try {
-      const { data: fallaExistente } = await supabase
-        .from("historial_fallas_equipos")
-        .select("id")
-        .eq("equipo_id", reporteActual.equipo_id)
-        .eq("reporte_id", sesion.reporte_activo_id)
-        .eq("estado", "abierta")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (fallaExistente?.id) {
-        await supabase
+      if (reporteActual?.equipo_id) {
+        const { data: fallaExistente } = await supabase
+          .schema("maquinaria")
           .from("historial_fallas_equipos")
-          .update({ motivo_falla: motivoFalla })
-          .eq("id", fallaExistente.id);
-      } else {
-        await supabase.from("historial_fallas_equipos").insert({
-          equipo_id: reporteActual.equipo_id,
-          reporte_id: sesion.reporte_activo_id,
-          operador_id: personal.id,
-          hora_inicio: new Date().toISOString(),
-          motivo_falla: motivoFalla,
-          estado: "abierta"
-        });
+          .select("id")
+          .eq("equipo_id", reporteActual.equipo_id)
+          .eq("reporte_id", sesion.reporte_activo_id)
+          .eq("estado", "abierta")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (fallaExistente?.id) {
+          await supabase
+            .schema("maquinaria")
+            .from("historial_fallas_equipos")
+            .update({ motivo_falla: motivoFalla })
+            .eq("id", fallaExistente.id);
+        } else {
+          await supabase.schema("maquinaria").from("historial_fallas_equipos").insert({
+            equipo_id: reporteActual.equipo_id,
+            reporte_id: sesion.reporte_activo_id,
+            operador_id: personal.id,
+            hora_inicio: new Date().toISOString(),
+            motivo_falla: motivoFalla,
+            estado: "abierta"
+          });
+        }
       }
     } catch (eHisto) {
       console.warn("[jornadaHandler] Error guardando historial_fallas_equipos:", eHisto.message);
@@ -792,12 +797,14 @@ export async function handleJornadaFlow(ctx, res) {
     // 3. Registrar en reportes_diarios.observaciones
     try {
       const { data: repPrev } = await supabase
+        .schema("maquinaria")
         .from("reportes_diarios")
         .select("observaciones")
         .eq("id", sesion.reporte_activo_id)
         .maybeSingle();
       const obsPrev = repPrev?.observaciones ? `${repPrev.observaciones} | ` : "";
       await supabase
+        .schema("maquinaria")
         .from("reportes_diarios")
         .update({
           observaciones: `${obsPrev}[Falla ${formatFechaHoraChile()}]: ${motivoFalla}`
@@ -808,12 +815,14 @@ export async function handleJornadaFlow(ctx, res) {
     }
 
     // 4. Actualizar estado del equipo
-    await supabase.from("equipos").update({
-      estado_actual: "Detenido por Falla"
-    }).eq("id", reporteActual.equipo_id);
+    if (reporteActual?.equipo_id) {
+      await supabase.schema("maquinaria").from("equipos").update({
+        estado_actual: "Detenido por Falla"
+      }).eq("id", reporteActual.equipo_id);
+    }
 
     // 5. Restablecer estado de sesión
-    await supabase.from("sesiones_whatsapp").update({
+    await supabase.schema("maquinaria").from("sesiones_whatsapp").update({
       estado_espera: null,
       updated_at: new Date().toISOString()
     }).eq("id", sesion.id);
@@ -957,23 +966,26 @@ export async function handleJornadaFlow(ctx, res) {
   if (estadoHito === "Detenido por Falla") {
     const rawTexto = (resultado.detalles_texto || message || "").trim();
     const sinKeywords = rawTexto
-      .replace(/\b(detenido\s+por\s+falla|detenido\s+por\s+pana|detenido\s+por\s+panne|en\s+panne|en\s+pana|falla\s+mecanica|falla\s+electrica|falla|panne|pana|averia|averiado|detenido)\b/gi, "")
+      .replace(/\b(el\s+)?equipo\s+(presenta|tiene|esta|está|con)?\s*(una)?\s*/gi, "")
+      .replace(/\b(detenido\s+por\s+falla|detenido\s+por\s+pana|detenido\s+por\s+panne|en\s+panne|en\s+pana|falla\s+mecanica|falla\s+eléctrica|falla\s+electrica|falla|panne|pana|averia|avería|averiado|detenido|con\s+falla)\b/gi, "")
       .replace(/^[,\s.:;-]+|[,\s.:;-]+$/g, "")
       .trim();
 
     const tieneMotivoExplicito = sinKeywords.length >= 6;
 
     if (!tieneMotivoExplicito) {
-      await supabase.from("sesiones_whatsapp").update({
+      await supabase.schema("maquinaria").from("sesiones_whatsapp").update({
         estado_espera: "ESPERANDO_MOTIVO_FALLA",
         updated_at: new Date().toISOString()
       }).eq("id", sesion.id);
 
-      await supabase.from("equipos").update({
-        estado_actual: "Detenido por Falla"
-      }).eq("id", reporteActual.equipo_id);
+      if (reporteActual?.equipo_id) {
+        await supabase.schema("maquinaria").from("equipos").update({
+          estado_actual: "Detenido por Falla"
+        }).eq("id", reporteActual.equipo_id);
+      }
 
-      await supabase.from("eventos_jornada").insert({
+      await supabase.schema("maquinaria").from("eventos_jornada").insert({
         reporte_id: sesion.reporte_activo_id,
         estado_hito: "Detenido por Falla",
         hora_evento: new Date().toISOString(),
@@ -981,20 +993,22 @@ export async function handleJornadaFlow(ctx, res) {
       });
 
       try {
-        await supabase.from("historial_fallas_equipos").insert({
-          equipo_id: reporteActual.equipo_id,
-          reporte_id: sesion.reporte_activo_id,
-          operador_id: personal.id,
-          hora_inicio: new Date().toISOString(),
-          motivo_falla: "Pendiente de detalle del operador",
-          estado: "abierta"
-        });
+        if (reporteActual?.equipo_id) {
+          await supabase.schema("maquinaria").from("historial_fallas_equipos").insert({
+            equipo_id: reporteActual.equipo_id,
+            reporte_id: sesion.reporte_activo_id,
+            operador_id: personal.id,
+            hora_inicio: new Date().toISOString(),
+            motivo_falla: "Pendiente de detalle del operador",
+            estado: "abierta"
+          });
+        }
       } catch (eHisto) {}
 
       const msgPedirMotivo =
         `🔴 *Equipo marcado como Detenido por Falla* ⚠️\n\n` +
         `Hola *${personal.nombre_completo}*, por favor indícanos por *audio o texto* el **motivo o detalle de la falla** que presenta el equipo (ej: manguera hidráulica cortada, recalentamiento, fuga de aire, alarma en tablero, etc.).\n\n` +
-        `Esto quedará registrado en la hoja de vida del equipo y se alertará de inmediato a tu supervisor y a mantención.`;
+        `Esto quedará registrado en el reporte diario y se alertará de inmediato a tu supervisor y a mantención.`;
 
       await guardarMensajeChat(supabase, phoneClean, "model", msgPedirMotivo, "texto", sesion.reporte_activo_id);
       await enviarMensajeWhatsApp(jid, phoneClean, msgPedirMotivo, false, geminiKey);
@@ -1002,7 +1016,7 @@ export async function handleJornadaFlow(ctx, res) {
     } else {
       const motivoFalla = sinKeywords;
 
-      await supabase.from("eventos_jornada").insert({
+      await supabase.schema("maquinaria").from("eventos_jornada").insert({
         reporte_id: sesion.reporte_activo_id,
         estado_hito: "Detenido por Falla",
         hora_evento: new Date().toISOString(),
@@ -1010,24 +1024,28 @@ export async function handleJornadaFlow(ctx, res) {
       });
 
       try {
-        await supabase.from("historial_fallas_equipos").insert({
-          equipo_id: reporteActual.equipo_id,
-          reporte_id: sesion.reporte_activo_id,
-          operador_id: personal.id,
-          hora_inicio: new Date().toISOString(),
-          motivo_falla: motivoFalla,
-          estado: "abierta"
-        });
+        if (reporteActual?.equipo_id) {
+          await supabase.schema("maquinaria").from("historial_fallas_equipos").insert({
+            equipo_id: reporteActual.equipo_id,
+            reporte_id: sesion.reporte_activo_id,
+            operador_id: personal.id,
+            hora_inicio: new Date().toISOString(),
+            motivo_falla: motivoFalla,
+            estado: "abierta"
+          });
+        }
       } catch (eHisto) {}
 
       try {
         const { data: repPrev } = await supabase
+          .schema("maquinaria")
           .from("reportes_diarios")
           .select("observaciones")
           .eq("id", sesion.reporte_activo_id)
           .maybeSingle();
         const obsPrev = repPrev?.observaciones ? `${repPrev.observaciones} | ` : "";
         await supabase
+          .schema("maquinaria")
           .from("reportes_diarios")
           .update({
             observaciones: `${obsPrev}[Falla ${formatFechaHoraChile()}]: ${motivoFalla}`
@@ -1035,9 +1053,11 @@ export async function handleJornadaFlow(ctx, res) {
           .eq("id", sesion.reporte_activo_id);
       } catch (eObs) {}
 
-      await supabase.from("equipos").update({
-        estado_actual: "Detenido por Falla"
-      }).eq("id", reporteActual.equipo_id);
+      if (reporteActual?.equipo_id) {
+        await supabase.schema("maquinaria").from("equipos").update({
+          estado_actual: "Detenido por Falla"
+        }).eq("id", reporteActual.equipo_id);
+      }
 
       if (reporteActual.supervisor_id) {
         const textoAlerta =
