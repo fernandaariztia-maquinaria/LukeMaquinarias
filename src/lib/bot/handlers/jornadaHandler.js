@@ -338,10 +338,10 @@ export async function handleJornadaFlow(ctx, res) {
   // ================================================================
   const msgUpperC = (message || "").trim().toUpperCase();
 
-  // Cancelar estados de espera interactivos
-  if (msgUpperC === "CANCELAR" && (sesion.estado_espera?.startsWith("ESPERANDO_CHECKOUT") || sesion.estado_espera === "ESPERANDO_MOTIVO_FALLA" || sesion.estado_espera?.startsWith("ESPERANDO_CAMBIO_EQUIPO"))) {
-    await supabase.from("sesiones_whatsapp").update({
-      estado_espera: null,
+  // Cancelar estados de espera interactivos de checkout o cambio de equipo
+  if (msgUpperC === "CANCELAR" && (sesion.estado_espera?.startsWith("ESPERANDO_CHECKOUT") || sesion.estado_espera?.startsWith("ESPERANDO_CAMBIO_EQUIPO"))) {
+    await supabase.schema("maquinaria").from("sesiones_whatsapp").update({
+      estado_espera: "SESION_ABIERTA_INTERMEDIA",
       updated_at: new Date().toISOString()
     }).eq("id", sesion.id);
 
@@ -529,6 +529,25 @@ export async function handleJornadaFlow(ctx, res) {
     .eq("id", sesion.reporte_activo_id)
     .maybeSingle();
 
+  // Consultar si hay una falla abierta pendiente de detalle para este reporte/equipo
+  let fallaPendienteDetalle = null;
+  if (reporteActual?.equipo_id) {
+    try {
+      const { data: fp } = await supabase
+        .schema("maquinaria")
+        .from("historial_fallas_equipos")
+        .select("id, motivo_falla")
+        .eq("equipo_id", reporteActual.equipo_id)
+        .eq("reporte_id", sesion.reporte_activo_id)
+        .eq("estado", "abierta")
+        .eq("motivo_falla", "Pendiente de detalle del operador")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      fallaPendienteDetalle = fp;
+    } catch (eFp) {}
+  }
+
   const seguimientoCompleto = reporteActual?.equipos?.seguimiento_completo !== false;
   const tipoSeguimiento = reporteActual?.equipos?.tipo_seguimiento || 'estandar';
 
@@ -620,7 +639,7 @@ export async function handleJornadaFlow(ctx, res) {
       return res.status(200).json({ success: true, action: "AUDIO_CAMBIO_EQUIPO_REINTENTO_TEXTO" });
     }
 
-    if (sesion.estado_espera === "ESPERANDO_MOTIVO_FALLA") {
+    if (sesion.estado_espera === "ESPERANDO_MOTIVO_FALLA" || Boolean(fallaPendienteDetalle)) {
       const msgErrorFalla =
         `🎧 *No pudimos entender tu nota de voz*\n\n` +
         `Por favor escribe el **motivo o detalle de la falla** en un **mensaje de texto** para registrarlo en el historial del equipo.`;
@@ -746,8 +765,39 @@ export async function handleJornadaFlow(ctx, res) {
     }
   }
 
-  // --- SUB-FLUJO: CAPTURA DE MOTIVO DE FALLA CUANDO ESTÁ EN ESPERANDO_MOTIVO_FALLA ---
-  if (sesion.estado_espera === "ESPERANDO_MOTIVO_FALLA") {
+  // --- SUB-FLUJO: CAPTURA DE MOTIVO DE FALLA CUANDO ESTÁ PENDIENTE DE DETALLE ---
+  const estaEsperandoFalla = sesion.estado_espera === "ESPERANDO_MOTIVO_FALLA" || Boolean(fallaPendienteDetalle);
+  if (estaEsperandoFalla) {
+    if (msgUpperC === "CANCELAR") {
+      if (fallaPendienteDetalle?.id) {
+        try {
+          await supabase
+            .schema("maquinaria")
+            .from("historial_fallas_equipos")
+            .delete()
+            .eq("id", fallaPendienteDetalle.id);
+        } catch (eDel) {}
+      }
+      if (reporteActual?.equipo_id) {
+        await supabase.schema("maquinaria").from("equipos").update({
+          estado_actual: "Equipo Operativo"
+        }).eq("id", reporteActual.equipo_id);
+      }
+      try {
+        await supabase.schema("maquinaria").from("sesiones_whatsapp").update({
+          estado_espera: "SESION_ABIERTA_INTERMEDIA",
+          updated_at: new Date().toISOString()
+        }).eq("id", sesion.id);
+      } catch (eSes) {}
+
+      await enviarMensajeWhatsApp(jid, phoneClean,
+        `✅ Reporte de falla cancelado. El equipo vuelve a estar marcado como Operativo.${RECORDATORIO_ESTADOS_OPERADOR}`,
+        !!audio,
+        geminiKey
+      );
+      return res.status(200).json({ success: true, action: "FALLA_CANCELADA" });
+    }
+
     const motivoTexto = (resultado?.detalles_texto || message || "").trim();
     const motivoFalla = motivoTexto || "Falla técnica indicada por el operador";
 
@@ -761,7 +811,13 @@ export async function handleJornadaFlow(ctx, res) {
 
     // 2. Guardar o actualizar en historial_fallas_equipos
     try {
-      if (reporteActual?.equipo_id) {
+      if (fallaPendienteDetalle?.id) {
+        await supabase
+          .schema("maquinaria")
+          .from("historial_fallas_equipos")
+          .update({ motivo_falla: motivoFalla })
+          .eq("id", fallaPendienteDetalle.id);
+      } else if (reporteActual?.equipo_id) {
         const { data: fallaExistente } = await supabase
           .schema("maquinaria")
           .from("historial_fallas_equipos")
@@ -821,11 +877,13 @@ export async function handleJornadaFlow(ctx, res) {
       }).eq("id", reporteActual.equipo_id);
     }
 
-    // 5. Restablecer estado de sesión
-    await supabase.schema("maquinaria").from("sesiones_whatsapp").update({
-      estado_espera: null,
-      updated_at: new Date().toISOString()
-    }).eq("id", sesion.id);
+    // 5. Restablecer estado de sesión (SESION_ABIERTA_INTERMEDIA respeta el check constraint)
+    try {
+      await supabase.schema("maquinaria").from("sesiones_whatsapp").update({
+        estado_espera: "SESION_ABIERTA_INTERMEDIA",
+        updated_at: new Date().toISOString()
+      }).eq("id", sesion.id);
+    } catch (eSes) {}
 
     // 6. Notificar supervisor
     if (reporteActual.supervisor_id) {
@@ -974,10 +1032,12 @@ export async function handleJornadaFlow(ctx, res) {
     const tieneMotivoExplicito = sinKeywords.length >= 6;
 
     if (!tieneMotivoExplicito) {
-      await supabase.schema("maquinaria").from("sesiones_whatsapp").update({
-        estado_espera: "ESPERANDO_MOTIVO_FALLA",
-        updated_at: new Date().toISOString()
-      }).eq("id", sesion.id);
+      try {
+        await supabase.schema("maquinaria").from("sesiones_whatsapp").update({
+          estado_espera: "SESION_ABIERTA_INTERMEDIA",
+          updated_at: new Date().toISOString()
+        }).eq("id", sesion.id);
+      } catch (eSes) {}
 
       if (reporteActual?.equipo_id) {
         await supabase.schema("maquinaria").from("equipos").update({
