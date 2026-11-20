@@ -11,19 +11,31 @@ import { generarReportePDF } from "../../pdf-generator.js";
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "evidencias-montaje";
 
 export async function compilarYSubirPDF(supabase, reporteId, personal) {
+  if (!reporteId) {
+    throw new Error("compilarYSubirPDF: reporteId es requerido");
+  }
+
   const { data: reporteCompleto } = await supabase
     .schema("maquinaria")
     .from("reportes_diarios")
     .select("*")
     .eq("id", reporteId)
-    .single();
+    .maybeSingle();
+
+  if (!reporteCompleto) {
+    throw new Error(`compilarYSubirPDF: no se encontró el reporte ${reporteId}`);
+  }
 
   const { data: equipo } = await supabase
     .schema("maquinaria")
     .from("equipos")
     .select("*")
     .eq("id", reporteCompleto.equipo_id)
-    .single();
+    .maybeSingle();
+
+  if (!equipo) {
+    throw new Error(`compilarYSubirPDF: no se encontró el equipo para reporte ${reporteId}`);
+  }
 
   let supervisor = null;
   if (reporteCompleto.supervisor_id) {

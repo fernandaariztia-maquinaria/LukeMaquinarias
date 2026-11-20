@@ -16,7 +16,29 @@ export async function handleCierreFlow(ctx, res) {
   const sesion = ctx.sesion;
   const resultado = ctx.resultadoIA || {};
   const tipoSeguimiento = ctx.tipoSeguimiento || "estandar";
-  const reporteActual = ctx.reporteActual;
+  const reporteId = ctx.reporteActual?.id || sesion?.reporte_activo_id;
+  const reporteActual = {
+    ...(ctx.reporteActual || {}),
+    id: reporteId,
+    equipo_id: ctx.reporteActual?.equipo_id || ctx.reporteActual?.equipos?.id
+  };
+
+  // Si no tenemos equipo_id, buscarlo directamente en reportes_diarios
+  if (!reporteActual.equipo_id && reporteId) {
+    const { data: repLookup } = await supabase
+      .schema("maquinaria")
+      .from("reportes_diarios")
+      .select("equipo_id, supervisor_id, km_inicial, horometro_inicio")
+      .eq("id", reporteId)
+      .maybeSingle();
+    if (repLookup) {
+      reporteActual.equipo_id = repLookup.equipo_id;
+      if (!reporteActual.supervisor_id) reporteActual.supervisor_id = repLookup.supervisor_id;
+      if (reporteActual.km_inicial == null) reporteActual.km_inicial = repLookup.km_inicial;
+      if (reporteActual.horometro_inicio == null) reporteActual.horometro_inicio = repLookup.horometro_inicio;
+    }
+  }
+
   const mensajeRaw = (ctx.message || resultado.detalles_texto || "").trim();
 
   const esVehiculo = tipoSeguimiento === "vehiculo";
@@ -332,6 +354,9 @@ export async function handleCierreFlow(ctx, res) {
     .update({
       estado_final: estadoFinalReporte,
       observaciones: obsFinal,
+      ...(esVehiculo
+        ? { km_final: lecturaFinal }
+        : { horometro_final: lecturaFinal }),
     })
     .eq("id", reporteActual.id);
 

@@ -520,10 +520,11 @@ export async function handleJornadaFlow(ctx, res) {
     return res.status(200).json({ success: true });
   }
 
-  const { data: especialidades } = await supabase.from("especialidades").select("*");
+  const { data: especialidades } = await supabase.schema("maquinaria").from("especialidades").select("*");
   const { data: reporteActual } = await supabase
+    .schema("maquinaria")
     .from("reportes_diarios")
-    .select("equipo_id, horometro_inicio, km_inicial, horometro_final, km_final, petroleo_litros, horometro_carga_combustible, combustible_final_porcentaje, supervisor_id, created_at, equipos(id, codigo_interno, descripcion_equipo, pauta_preventiva_activa, seguimiento_completo, tipo_seguimiento, usa_plataforma, patente)")
+    .select("id, equipo_id, horometro_inicio, km_inicial, horometro_final, km_final, petroleo_litros, horometro_carga_combustible, combustible_final_porcentaje, supervisor_id, created_at, equipos(id, codigo_interno, descripcion_equipo, pauta_preventiva_activa, seguimiento_completo, tipo_seguimiento, usa_plataforma, patente)")
     .eq("id", sesion.reporte_activo_id)
     .maybeSingle();
 
