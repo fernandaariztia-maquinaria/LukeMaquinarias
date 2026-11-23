@@ -216,23 +216,6 @@ export async function handleCierreFlow(ctx, res) {
     });
   }
 
-      await guardarMensajeChat(supabase, phoneClean, "model", msgPedirCombustible, "texto", sesion.reporte_activo_id);
-      await enviarMensajeWhatsApp(jid, phoneClean, msgPedirCombustible, !!audio, geminiKey);
-      return res.status(200).json({ success: true, action: "ESPERANDO_CHECKOUT_COMBUSTIBLE" });
-    }
-  } else if (cargaInfo.tieneCarga) {
-    // Si declaró combustible en el mismo mensaje inicial
-    await registrarCargaCombustible(supabase, {
-      reporteId: reporteActual.id,
-      personalId: personal.id,
-      litros: cargaInfo.litros,
-      horaTexto: cargaInfo.horaTexto,
-      horaIso: cargaInfo.horaIso,
-      servicentro: "Terreno / Faena",
-      observacion: "(Carga informada al término de jornada)"
-    });
-  }
-
   // ============================================================
   // PASO 3: REGISTRO DE FALLAS DEL EQUIPO AL CIERRE (Requerimiento 2.2)
   // ============================================================
