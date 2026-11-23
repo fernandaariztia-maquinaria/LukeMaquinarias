@@ -8,7 +8,7 @@ import { convertirPalabrasANumeros } from "../../gemini.js";
 /**
  * Extrae datos de carga de combustible desde un texto (litros y hora).
  */
-export function extraerCargaCombustible(texto = "") {
+export function extraerCargaCombustible(texto = "", { contextoEsperandoCombustible = false } = {}) {
   if (!texto) return { respondio: false, tieneCarga: false, sinCarga: false, litros: null, horaTexto: null };
 
   const textoConNum = convertirPalabrasANumeros(String(texto));
@@ -17,9 +17,8 @@ export function extraerCargaCombustible(texto = "") {
   // Negación explícita de carga
   const niegaCarga =
     /\b(sin\s+carga|sin\s+combustible|sin\s+petroleo|no\s+cargue|no\s+se\s+cargo|no\s+hubo|ninguna|cero\s+litros?|0\s*litros?|0\s*lts?|0\s*l\b|combustible\s+0|carga\s+0|petroleo\s+0)\b/.test(lower) ||
-    lower === "no" ||
-    lower === "0" ||
-    lower === "sin carga";
+    lower === "sin carga" ||
+    (contextoEsperandoCombustible && (lower === "no" || lower === "0" || lower === "nop"));
 
   if (niegaCarga) {
     return {
@@ -32,19 +31,19 @@ export function extraerCargaCombustible(texto = "") {
     };
   }
 
-  // Detección de litros
+  // Detección de litros con unidades o palabras clave de combustible
   let litros = null;
   const matchLitros =
-    lower.match(/(\d+(?:[.,]\d+)?)\s*(?:litros|lts|l\b)/) ||
-    lower.match(/(?:cargue|cargamos|cargaron|carga|combustible|petroleo)\s*(?:de|:)?\s*(\d+(?:[.,]\d+)?)(?!\s*%)/) ||
+    lower.match(/(\d+(?:[.,]\d+)?)\s*(?:litros|lts|lt|l\b)/) ||
+    lower.match(/(?:cargue|cargamos|cargaron|carga\s+de|carga|combustible|petroleo)\s*(?:de|:)?\s*(\d+(?:[.,]\d+)?)(?!\s*%)/) ||
     lower.match(/(\d+(?:[.,]\d+)?)\s*(?:de combustible|de petroleo)/);
 
   if (matchLitros) {
     litros = parseFloat(matchLitros[1].replace(",", "."));
   }
 
-  // Si solo ingresó un número en contexto de combustible (ej: "80")
-  if (litros === null) {
+  // Si solo ingresó un número, EXCLUSIVAMENTE cuando el bot está preguntando explícitamente por combustible
+  if (litros === null && contextoEsperandoCombustible) {
     const soloNum = lower.match(/^(\d+(?:[.,]\d+)?)$/);
     if (soloNum) {
       litros = parseFloat(soloNum[1].replace(",", "."));

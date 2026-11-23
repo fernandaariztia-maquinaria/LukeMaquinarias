@@ -63,28 +63,53 @@ export async function handleCierreFlow(ctx, res) {
     }
   }
 
-  // Analizar datos de combustible en el mensaje
-  const cargaInfo = extraerCargaCombustible(mensajeRaw);
+  const estadoEsperaActual = sesion.estado_espera;
+
+  // Consultar el último mensaje del bot para saber qué se le preguntó al operador
+  let ultimoModelText = "";
+  try {
+    const { data: ultimosMsg } = await supabase
+      .schema("maquinaria")
+      .from("mensajes_chat")
+      .select("rol, contenido")
+      .eq("reporte_id", reporteActual.id)
+      .eq("rol", "model")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    ultimoModelText = ultimosMsg?.[0]?.contenido || "";
+  } catch (eMsg) {}
+
+  const botPreguntoLectura =
+    ultimoModelText.includes("horómetro final") ||
+    ultimoModelText.includes("odómetro (kilometraje) final") ||
+    ultimoModelText.includes("Término de Jornada Iniciado");
+  const botPreguntoCombustible =
+    ultimoModelText.includes("Registro de Combustible al Cierre") ||
+    ultimoModelText.includes("Información de Combustible Requerida");
+  const botPreguntoFalla = ultimoModelText.includes("Condición Operacional del Equipo");
+  const botPreguntoFallaDetalle = ultimoModelText.includes("Descripción Detallada de la Falla Requerida");
+
+  const enPasoCombustible = estadoEsperaActual === "ESPERANDO_CHECKOUT_COMBUSTIBLE" || botPreguntoCombustible;
+  const enPasoFallaDetalle = estadoEsperaActual === "ESPERANDO_CHECKOUT_FALLA_DETALLE" || botPreguntoFallaDetalle;
+  const enPasoFalla = (estadoEsperaActual === "ESPERANDO_CHECKOUT_FALLA" || botPreguntoFalla) && !enPasoFallaDetalle;
+  const enPasoLectura = !enPasoCombustible && !enPasoFalla && !enPasoFallaDetalle;
+
+  // Analizar datos de combustible en el mensaje (solo admite número puro si estamos en el paso de combustible)
+  const cargaInfo = extraerCargaCombustible(mensajeRaw, { contextoEsperandoCombustible: enPasoCombustible });
   // Analizar condición de falla en el mensaje
   const fallaInfo = evaluarFallaTexto(mensajeRaw);
-
-  const estadoEsperaActual = sesion.estado_espera;
 
   // ============================================================
   // PASO 1: VALIDACIÓN Y SOLICITUD DE HORÓMETRO / ODÓMETRO FINAL
   // ============================================================
-  const enPasoLectura =
-    !estadoEsperaActual ||
-    estadoEsperaActual === "SESION_ABIERTA_INTERMEDIA" ||
-    estadoEsperaActual === "ESPERANDO_CHECKOUT_AUDIO" ||
-    estadoEsperaActual === "ESPERANDO_CHECKOUT_HOROMETRO";
-
   if (enPasoLectura && (lecturaFinal === null || lecturaFinal === undefined)) {
-    await supabase
-      .schema("maquinaria")
-      .from("sesiones_whatsapp")
-      .update({ estado_espera: "ESPERANDO_CHECKOUT_HOROMETRO", updated_at: new Date().toISOString() })
-      .eq("id", sesion.id);
+    try {
+      await supabase
+        .schema("maquinaria")
+        .from("sesiones_whatsapp")
+        .update({ estado_espera: "ESPERANDO_CHECKOUT_AUDIO", updated_at: new Date().toISOString() })
+        .eq("id", sesion.id);
+    } catch (eSes) {}
 
     const msgPedirLectura =
       `🏁 *Término de Jornada Iniciado*\n\n` +
@@ -109,9 +134,6 @@ export async function handleCierreFlow(ctx, res) {
   // ============================================================
   // PASO 2: VALIDACIÓN DE COMBUSTIBLE AL CIERRE (Requerimiento 2.1)
   // ============================================================
-  // Si estamos en espera de combustible o aún no se ha informado si hubo carga
-  const enPasoCombustible = estadoEsperaActual === "ESPERANDO_CHECKOUT_COMBUSTIBLE";
-
   if (enPasoCombustible || (enPasoLectura && !cargaInfo.respondio)) {
     if (enPasoCombustible) {
       if (cargaInfo.tieneCarga) {
@@ -163,11 +185,13 @@ export async function handleCierreFlow(ctx, res) {
       }
     } else {
       // Venimos del paso de lectura y no declaró combustible en el mismo mensaje -> Solicitarlo
-      await supabase
-        .schema("maquinaria")
-        .from("sesiones_whatsapp")
-        .update({ estado_espera: "ESPERANDO_CHECKOUT_COMBUSTIBLE", updated_at: new Date().toISOString() })
-        .eq("id", sesion.id);
+      try {
+        await supabase
+          .schema("maquinaria")
+          .from("sesiones_whatsapp")
+          .update({ estado_espera: "ESPERANDO_CHECKOUT_AUDIO", updated_at: new Date().toISOString() })
+          .eq("id", sesion.id);
+      } catch (eSes) {}
 
       const msgPedirCombustible =
         `⛽ *Registro de Combustible al Cierre*\n\n` +
@@ -192,12 +216,26 @@ export async function handleCierreFlow(ctx, res) {
     });
   }
 
+      await guardarMensajeChat(supabase, phoneClean, "model", msgPedirCombustible, "texto", sesion.reporte_activo_id);
+      await enviarMensajeWhatsApp(jid, phoneClean, msgPedirCombustible, !!audio, geminiKey);
+      return res.status(200).json({ success: true, action: "ESPERANDO_CHECKOUT_COMBUSTIBLE" });
+    }
+  } else if (cargaInfo.tieneCarga) {
+    // Si declaró combustible en el mismo mensaje inicial
+    await registrarCargaCombustible(supabase, {
+      reporteId: reporteActual.id,
+      personalId: personal.id,
+      litros: cargaInfo.litros,
+      horaTexto: cargaInfo.horaTexto,
+      horaIso: cargaInfo.horaIso,
+      servicentro: "Terreno / Faena",
+      observacion: "(Carga informada al término de jornada)"
+    });
+  }
+
   // ============================================================
   // PASO 3: REGISTRO DE FALLAS DEL EQUIPO AL CIERRE (Requerimiento 2.2)
   // ============================================================
-  const enPasoFalla = estadoEsperaActual === "ESPERANDO_CHECKOUT_FALLA";
-  const enPasoFallaDetalle = estadoEsperaActual === "ESPERANDO_CHECKOUT_FALLA_DETALLE";
-
   let fallaConfirmada = false;
   let motivoFallaCierre = null;
 
@@ -229,11 +267,13 @@ export async function handleCierreFlow(ctx, res) {
           });
         } else {
           // Dijo solo "Sí" -> Pedir descripción obligatoria
-          await supabase
-            .schema("maquinaria")
-            .from("sesiones_whatsapp")
-            .update({ estado_espera: "ESPERANDO_CHECKOUT_FALLA_DETALLE", updated_at: new Date().toISOString() })
-            .eq("id", sesion.id);
+          try {
+            await supabase
+              .schema("maquinaria")
+              .from("sesiones_whatsapp")
+              .update({ estado_espera: "ESPERANDO_CHECKOUT_AUDIO", updated_at: new Date().toISOString() })
+              .eq("id", sesion.id);
+          } catch (eSes) {}
 
           const msgPedirDetalleFalla =
             `⚠️ *Descripción Detallada de la Falla Requerida*\n\n` +
@@ -257,11 +297,13 @@ export async function handleCierreFlow(ctx, res) {
       }
     } else {
       // Venimos del paso anterior y no declaró estado de fallas -> Preguntar
-      await supabase
-        .schema("maquinaria")
-        .from("sesiones_whatsapp")
-        .update({ estado_espera: "ESPERANDO_CHECKOUT_FALLA", updated_at: new Date().toISOString() })
-        .eq("id", sesion.id);
+      try {
+        await supabase
+          .schema("maquinaria")
+          .from("sesiones_whatsapp")
+          .update({ estado_espera: "ESPERANDO_CHECKOUT_AUDIO", updated_at: new Date().toISOString() })
+          .eq("id", sesion.id);
+      } catch (eSes) {}
 
       const msgPreguntaFalla =
         `🛠️ *Condición Operacional del Equipo*\n\n` +
