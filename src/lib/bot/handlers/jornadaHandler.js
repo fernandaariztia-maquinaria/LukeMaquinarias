@@ -525,7 +525,7 @@ export async function handleJornadaFlow(ctx, res) {
   const { data: reporteActual } = await supabase
     .schema("maquinaria")
     .from("reportes_diarios")
-    .select("id, equipo_id, horometro_inicio, km_inicial, horometro_final, km_final, petroleo_litros, horometro_carga_combustible, combustible_final_porcentaje, supervisor_id, created_at, equipos(id, codigo_interno, descripcion_equipo, pauta_preventiva_activa, seguimiento_completo, tipo_seguimiento, usa_plataforma, patente)")
+    .select("id, equipo_id, horometro_inicio, km_inicial, horometro_final, km_final, petroleo_litros, horometro_carga_combustible, combustible_final_porcentaje, supervisor_id, created_at, equipos(id, codigo_interno, descripcion_equipo, pauta_preventiva_activa, seguimiento_completo, tipo_seguimiento, usa_plataforma, patente, estado_actual)")
     .eq("id", sesion.reporte_activo_id)
     .maybeSingle();
 
@@ -1208,11 +1208,11 @@ export async function handleJornadaFlow(ctx, res) {
 
     if (bloque) {
       if (bloque.supervisor_id) {
-        await supabase.from("reportes_diarios").update({ supervisor_id: bloque.supervisor_id }).eq("id", sesion.reporte_activo_id);
+        await supabase.schema("maquinaria").from("reportes_diarios").update({ supervisor_id: bloque.supervisor_id }).eq("id", sesion.reporte_activo_id);
       }
       if (bloque.actividad_id) {
         // Escenario 1: Actividad ya asignada en planificación (bloque.actividad_id)
-        await supabase.from("eventos_jornada").insert({
+        await supabase.schema("maquinaria").from("eventos_jornada").insert({
           reporte_id: sesion.reporte_activo_id,
           estado_hito: estadoHito,
           especialidad_id: resultado.especialidad_id,
@@ -1233,6 +1233,7 @@ export async function handleJornadaFlow(ctx, res) {
       } else if (bloque.supervisor?.whatsapp) {
         // Escenario 2: Actividad vacía → preguntar al supervisor con lista de tareas programadas
         const { data: nuevoEvento } = await supabase
+          .schema("maquinaria")
           .from("eventos_jornada")
           .insert({
             reporte_id: sesion.reporte_activo_id,
@@ -1269,7 +1270,7 @@ export async function handleJornadaFlow(ctx, res) {
   }
 
   if (!hitoInsertado) {
-    await supabase.from("eventos_jornada").insert({
+    await supabase.schema("maquinaria").from("eventos_jornada").insert({
       reporte_id: sesion.reporte_activo_id,
       estado_hito: estadoHito,
       especialidad_id: resultado.especialidad_id || null,
@@ -1289,70 +1290,13 @@ export async function handleJornadaFlow(ctx, res) {
 
   if (izajesDetectados || cantidadDetectada) {
     const textoAvance = `📦 Avance reportado por operador: ${izajesDetectados ? `${izajesDetectados} izajes` : ""}${cantidadDetectada ? ` | ${cantidadDetectada} ${unidadDetectada}` : ""}${resultado.especialidad_detectada ? ` (${resultado.especialidad_detectada})` : ""}`.trim();
-    await supabase.from("eventos_jornada").insert({
+    await supabase.schema("maquinaria").from("eventos_jornada").insert({
       reporte_id: sesion.reporte_activo_id,
       estado_hito: "Trabajando",
       especialidad_id: resultado.especialidad_id || null,
       hora_evento: new Date().toISOString(),
       nota_transcripcion: textoAvance
     });
-  }
-
-  // Cuantificar horas de detención si el equipo saliendo de Detenido por Falla
-  let textoDetencionCuantificada = "";
-  if (reporteActual.equipos?.estado_actual === "Detenido por Falla") {
-    const { data: ultFallaEv } = await supabase
-      .from("eventos_jornada")
-      .select("hora_evento, nota_transcripcion")
-      .eq("reporte_id", sesion.reporte_activo_id)
-      .eq("estado_hito", "Detenido por Falla")
-      .order("hora_evento", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (ultFallaEv?.hora_evento) {
-      const inicioMs = new Date(ultFallaEv.hora_evento).getTime();
-      const ahoraMs = Date.now();
-      const diffHoras = Math.max(0, (ahoraMs - inicioMs) / (1000 * 60 * 60));
-      const horasNum = Number(diffHoras.toFixed(2));
-      const tiempoTexto = diffHoras < 1
-        ? `${Math.max(1, Math.round(diffHoras * 60))} minutos`
-        : `${diffHoras.toFixed(1)} horas`;
-
-      textoDetencionCuantificada = `\n\n⏱️ *Fin de detención:* El equipo estuvo detenido *${tiempoTexto}* por falla. Horas registradas en el reporte diario.`;
-
-      try {
-        await supabase
-          .from("historial_fallas_equipos")
-          .update({
-            hora_fin: new Date().toISOString(),
-            horas_detencion: horasNum,
-            estado: "resuelta"
-          })
-          .eq("equipo_id", reporteActual.equipo_id)
-          .eq("estado", "abierta");
-      } catch (eHisto) {}
-
-      try {
-        const { data: repPrev } = await supabase
-          .from("reportes_diarios")
-          .select("horas_detencion, observaciones")
-          .eq("id", sesion.reporte_activo_id)
-          .maybeSingle();
-
-        const horasPrev = Number(repPrev?.horas_detencion || 0);
-        const obsPrev = repPrev?.observaciones ? `${repPrev.observaciones} | ` : "";
-        updatesReporte.horas_detencion = Number((horasPrev + horasNum).toFixed(2));
-        updatesReporte.observaciones = `${obsPrev}[Detención superada]: ${tiempoTexto} detenido`;
-      } catch (eRep) {}
-
-      await supabase.from("eventos_jornada").insert({
-        reporte_id: sesion.reporte_activo_id,
-        estado_hito: estadoHito,
-        hora_evento: new Date().toISOString(),
-        nota_transcripcion: `🟢 Fin de detención por falla tras ${tiempoTexto} (${horasNum} hrs). Equipo operativo.`
-      });
-    }
   }
 
   // Actualizar combustible si se mencionó
@@ -1363,8 +1307,130 @@ export async function handleJornadaFlow(ctx, res) {
     updatesReporte.combustible_nivel_porcentaje = resultado.combustible_nivel_porcentaje;
   }
 
+  // Cuantificar horas de detención y resolver fallas cuando el equipo pasa a Disponible / Trabajando
+  let textoDetencionCuantificada = "";
+  const esEstadoOperativo = estadoHito !== "Detenido por Falla";
+
+  if (esEstadoOperativo && reporteActual?.equipo_id) {
+    // Buscar si hay alguna falla abierta registrada para este equipo
+    let fallaAbierta = null;
+    try {
+      const { data: fa } = await supabase
+        .schema("maquinaria")
+        .from("historial_fallas_equipos")
+        .select("id, hora_inicio, motivo_falla, created_at")
+        .eq("equipo_id", reporteActual.equipo_id)
+        .eq("estado", "abierta")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      fallaAbierta = fa;
+    } catch (eFa) {}
+
+    const estabaEnFalla =
+      !!fallaAbierta ||
+      reporteActual.equipos?.estado_actual === "Detenido por Falla";
+
+    if (estabaEnFalla) {
+      // Buscar la hora de inicio de la detención
+      let inicioMs = null;
+      if (fallaAbierta?.hora_inicio) {
+        inicioMs = new Date(fallaAbierta.hora_inicio).getTime();
+      } else if (fallaAbierta?.created_at) {
+        inicioMs = new Date(fallaAbierta.created_at).getTime();
+      } else {
+        const { data: ultFallaEv } = await supabase
+          .schema("maquinaria")
+          .from("eventos_jornada")
+          .select("hora_evento")
+          .eq("reporte_id", sesion.reporte_activo_id)
+          .eq("estado_hito", "Detenido por Falla")
+          .order("hora_evento", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (ultFallaEv?.hora_evento) {
+          inicioMs = new Date(ultFallaEv.hora_evento).getTime();
+        }
+      }
+
+      const ahoraMs = Date.now();
+      const diffHoras = inicioMs ? Math.max(0, (ahoraMs - inicioMs) / (1000 * 60 * 60)) : 0;
+      const horasNum = Number(diffHoras.toFixed(2));
+      const tiempoTexto = diffHoras < (1 / 60)
+        ? "menos de 1 minuto"
+        : diffHoras < 1
+        ? `${Math.max(1, Math.round(diffHoras * 60))} minutos`
+        : `${diffHoras.toFixed(1)} horas`;
+
+      textoDetencionCuantificada = `\n\n⏱️ *Fin de detención:* El equipo estuvo detenido *${tiempoTexto}* por falla. La falla ha sido resuelta y el equipo vuelve a estar disponible/operativo.`;
+
+      // 1. Marcar fallas abiertas como resueltas en historial_fallas_equipos
+      try {
+        await supabase
+          .schema("maquinaria")
+          .from("historial_fallas_equipos")
+          .update({
+            hora_fin: new Date().toISOString(),
+            horas_detencion: horasNum,
+            estado: "resuelta"
+          })
+          .eq("equipo_id", reporteActual.equipo_id)
+          .eq("estado", "abierta");
+      } catch (eHisto) {
+        console.warn("[jornadaHandler] Error cerrando historial_fallas_equipos:", eHisto.message);
+      }
+
+      // 2. Acumular horas de detención en el reporte diario
+      try {
+        const { data: repPrev } = await supabase
+          .schema("maquinaria")
+          .from("reportes_diarios")
+          .select("horas_detencion, observaciones")
+          .eq("id", sesion.reporte_activo_id)
+          .maybeSingle();
+
+        const horasPrev = Number(repPrev?.horas_detencion || 0);
+        const obsPrev = repPrev?.observaciones ? `${repPrev.observaciones} | ` : "";
+        const detalleMotivo = fallaAbierta?.motivo_falla && fallaAbierta.motivo_falla !== "Pendiente de detalle del operador"
+          ? ` (${fallaAbierta.motivo_falla})`
+          : "";
+
+        updatesReporte.horas_detencion = Number((horasPrev + horasNum).toFixed(2));
+        updatesReporte.observaciones = `${obsPrev}[Falla solucionada]: ${tiempoTexto} detenido${detalleMotivo}. Equipo operativo.`;
+      } catch (eRep) {
+        console.warn("[jornadaHandler] Error actualizando horas_detencion en reporte:", eRep.message);
+      }
+
+      // 3. Registrar evento de solución de falla
+      try {
+        await supabase
+          .schema("maquinaria")
+          .from("eventos_jornada")
+          .insert({
+            reporte_id: sesion.reporte_activo_id,
+            estado_hito: estadoHito,
+            hora_evento: new Date().toISOString(),
+            nota_transcripcion: `🟢 Falla solucionada tras ${tiempoTexto} (${horasNum} hrs). Equipo operativo / disponible.`
+          });
+      } catch (eEvt) {}
+
+      // 4. Alertar al supervisor de que el equipo superó la falla
+      if (reporteActual?.supervisor_id) {
+        try {
+          await notificarSupervisor(
+            supabase,
+            reporteActual.supervisor_id,
+            `🟢 *Alerta de Terreno - Falla Solucionada*\nEquipo: ${reporteActual.equipos ? formatEquipoLabel(reporteActual.equipos) : "Equipo"}\nOperador: ${personal.nombre_completo}\n\nEl equipo superó la detención (${tiempoTexto} de detención) y vuelve a estar *${estadoHito}*.`,
+            geminiKey
+          );
+        } catch (eSup) {}
+      }
+    }
+  }
+
   if (Object.keys(updatesReporte).length > 0) {
     await supabase
+      .schema("maquinaria")
       .from("reportes_diarios")
       .update(updatesReporte)
       .eq("id", sesion.reporte_activo_id);
@@ -1381,7 +1447,9 @@ export async function handleJornadaFlow(ctx, res) {
     eqUpdateHito.estado_actual = mapEstadoEquipoDB(estadoHitoRaw);
   }
   if (Object.keys(eqUpdateHito).length > 0 && reporteActual?.equipo_id) {
-    await supabase.from("equipos")
+    await supabase
+      .schema("maquinaria")
+      .from("equipos")
       .update(eqUpdateHito)
       .eq("id", reporteActual.equipo_id);
   }

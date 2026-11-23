@@ -9,16 +9,24 @@ import { notificarSupervisor } from "./messageService.js";
 /**
  * Evalúa si el texto del operador indica presencia o ausencia de fallas al cierre.
  */
-export function evaluarFallaTexto(texto = "") {
+export function evaluarFallaTexto(texto = "", { contextoEsperandoFalla = false } = {}) {
   if (!texto) return { respondio: false, presentaFalla: false, descripcion: null };
 
   const lower = String(texto).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
+  // Si el texto está informando exclusivamente combustible o recarga, no es una declaración de falla
+  const tieneTerminoFallaExplicito =
+    /\b(presenta\s+falla|tiene\s+falla|con\s+falla|hay\s+falla|pana|panne|averia|roto|averiado|fuga|desperfecto|ruido\s+raro|problema\s+en|problema\s+mecanico|problema\s+hidraulico|problema\s+electrico|temperatura\s+alta)\b/.test(lower);
+
+  const esMensajeCombustible = /\b(recarga|carga\s+de|combustible|petroleo|litros|lts)\b/.test(lower);
+  if (esMensajeCombustible && !tieneTerminoFallaExplicito) {
+    return { respondio: false, presentaFalla: false, descripcion: null };
+  }
+
   // Negación explícita de fallas
   const niegaFalla =
-    /\b(sin\s+falla|sin\s+fallas|sin\s+novedad|sin\s+novedades|sin\s+pana|sin\s+panne|sin\s+problemas?|no\s+presenta|no\s+tiene|operativo|todo\s+bien|todo\s+operativo|ninguna|impeque|bien)\b/.test(lower) ||
-    lower === "no" ||
-    lower === "nop";
+    /\b(sin\s+falla|sin\s+fallas|sin\s+novedad|sin\s+novedades|sin\s+pana|sin\s+panne|sin\s+problemas?|no\s+presenta|no\s+tiene|operativo|todo\s+bien|todo\s+operativo|ninguna|impeque|bien|ningun\s+problema|disponible|equipo\s+operativo)\b/.test(lower) ||
+    (contextoEsperandoFalla && (lower === "no" || lower === "nop" || lower === "ninguna"));
 
   if (niegaFalla) {
     return {
@@ -28,14 +36,15 @@ export function evaluarFallaTexto(texto = "") {
     };
   }
 
-  // Afirmación de falla
+  // Afirmación de falla: sólo si tiene término explícito de falla o si estamos esperando respuesta a la pregunta de falla
   const afirmaFalla =
-    /\b(si|presenta\s+falla|tiene\s+falla|con\s+falla|hay\s+falla|pana|panne|averia|roto|averiado|fuga|desperfecto|problema\s+en|ruido\s+raro|temperatura|hidraulico|electrico)\b/.test(lower);
+    tieneTerminoFallaExplicito ||
+    (contextoEsperandoFalla && /\b(si|si\s+presenta|si\s+tiene|si\s+hay|afirmativo|correcto)\b/.test(lower));
 
   if (afirmaFalla) {
     // Si respondió algo más que un simple "sí", usarlo como descripción inicial
     let descripcion = String(texto).trim();
-    if (lower === "si" || lower === "sí" || lower === "si presenta" || lower === "si tiene") {
+    if (lower === "si" || lower === "sí" || lower === "si presenta" || lower === "si tiene" || lower === "afirmativo") {
       descripcion = null; // Requiere descripción detallada
     }
     return {

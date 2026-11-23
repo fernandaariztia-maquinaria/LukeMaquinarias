@@ -97,7 +97,7 @@ export async function handleCierreFlow(ctx, res) {
   // Analizar datos de combustible en el mensaje (solo admite número puro si estamos en el paso de combustible)
   const cargaInfo = extraerCargaCombustible(mensajeRaw, { contextoEsperandoCombustible: enPasoCombustible });
   // Analizar condición de falla en el mensaje
-  const fallaInfo = evaluarFallaTexto(mensajeRaw);
+  const fallaInfo = evaluarFallaTexto(mensajeRaw, { contextoEsperandoFalla: enPasoFalla || enPasoFallaDetalle });
 
   // ============================================================
   // PASO 1: VALIDACIÓN Y SOLICITUD DE HORÓMETRO / ODÓMETRO FINAL
@@ -351,9 +351,28 @@ export async function handleCierreFlow(ctx, res) {
     motivoObservacion = `Horómetro final (${lecturaFinal}) menor al inicial (${lecturaInicio})`;
   }
 
+  // Determinar si hay alguna falla abierta real en la base de datos o reportada al cierre
+  let hayFallaReal = fallaConfirmada;
+  if (!hayFallaReal && reporteActual.equipo_id) {
+    try {
+      const { data: fallasAbiertas } = await supabase
+        .schema("maquinaria")
+        .from("historial_fallas_equipos")
+        .select("id, motivo_falla")
+        .eq("equipo_id", reporteActual.equipo_id)
+        .eq("estado", "abierta")
+        .limit(1);
+
+      if (fallasAbiertas && fallasAbiertas.length > 0) {
+        hayFallaReal = true;
+        motivoFallaCierre = fallasAbiertas[0].motivo_falla;
+      }
+    } catch (eFallaChk) {}
+  }
+
   // Determinar estado final del reporte y del equipo
   let estadoFinalReporte = "Disponible";
-  if (fallaConfirmada) {
+  if (hayFallaReal) {
     estadoFinalReporte = "Detenido por Falla";
   } else if (esObservado) {
     estadoFinalReporte = "Observado";
@@ -399,7 +418,7 @@ export async function handleCierreFlow(ctx, res) {
   }
 
   // Registrar evento final de cierre
-  const labelEstadoCierre = fallaConfirmada
+  const labelEstadoCierre = hayFallaReal
     ? "Detenido por Falla"
     : esObservado
     ? "Observado"
@@ -420,7 +439,7 @@ export async function handleCierreFlow(ctx, res) {
     .schema("maquinaria")
     .from("equipos")
     .update({
-      estado_actual: fallaConfirmada ? "Detenido por Falla" : "Disponible",
+      estado_actual: hayFallaReal ? "Detenido por Falla" : "Disponible",
       ...(esVehiculo ? { ultimo_odometro: lecturaFinal } : { ultimo_horometro: lecturaFinal }),
     })
     .eq("id", reporteActual.equipo_id);
@@ -466,7 +485,7 @@ export async function handleCierreFlow(ctx, res) {
         `📊 *${esVehiculo ? "Odómetro" : "Horómetro"}:* ${lecturaInicio} → ${lecturaFinal} ${unidadLectura}\n` +
         `⏱ *Horas trabajadas:* ${Math.max(0, diffLectura).toFixed(1)} ${unidadLectura}\n` +
         `⛽ *Combustible:* ${combustibleStr}\n` +
-        `🛠️ *Condición final:* ${fallaConfirmada ? `Detenido por Falla (${motivoFallaCierre})` : "Operativo y sin fallas"}\n\n` +
+        `🛠️ *Condición final:* ${hayFallaReal ? `Detenido por Falla (${motivoFallaCierre})` : "Operativo y sin fallas"}\n\n` +
         `📄 *Descarga tu reporte en PDF aquí:*\n` +
         `👉 ${baseUrl}${pdfUrl}\n\n` +
         `¡Buen descanso, ${personal.nombre_completo}! 👷‍♂️`;

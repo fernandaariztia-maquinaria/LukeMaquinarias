@@ -14,9 +14,10 @@ export function extraerCargaCombustible(texto = "", { contextoEsperandoCombustib
   const textoConNum = convertirPalabrasANumeros(String(texto));
   const lower = textoConNum.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
-  // Negación explícita de carga
+  // Negación explícita de carga o confirmación de que ya fueron registradas previamente
   const niegaCarga =
     /\b(sin\s+carga|sin\s+combustible|sin\s+petroleo|no\s+cargue|no\s+se\s+cargo|no\s+hubo|ninguna|cero\s+litros?|0\s*litros?|0\s*lts?|0\s*l\b|combustible\s+0|carga\s+0|petroleo\s+0)\b/.test(lower) ||
+    /\b(las\s+cargas\s+ya\s+(fueron|estan)\s+registradas?|ya\s+(estan|fueron|las|se)\s+(registradas?|cargadas?|informadas?|anotadas?)|ya\s+registradas?|ya\s+las?\s+registre|ya\s+las?\s+cargue|registradas?\s+previamente)\b/.test(lower) ||
     lower === "sin carga" ||
     (contextoEsperandoCombustible && (lower === "no" || lower === "0" || lower === "nop"));
 
