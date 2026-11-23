@@ -170,7 +170,7 @@ export function parsearMensajeOperadorFallback(textoRaw = "", listaEspecialidade
       { keywords: ["electric", "cable", "bandeja", "escalerilla", "tablero", "canalizacion", "subestacion", "transformador", "luminaria"], matchName: "electricidad" },
       { keywords: ["instrument", "fibra", "sensor", "transmisor", "plc", "lazo", "calibracion"], matchName: "instrumentacion" },
       { keywords: ["izaje", "maniobra", "tandem", "carga critica", "rigging", "estrobado"], matchName: "izaje" },
-      { keywords: ["mecanica", "mecanico", "bomba", "chancador", "molino", "correa", "reductor", "alimentador", "harnero", "tambor"], matchName: "mecanica" },
+      { keywords: ["mecanica", "mecanico", "mecanicos", "montaje mecanico", "bomba", "chancador", "molino", "correa", "reductor", "alimentador", "harnero", "tambor"], matchName: "mecan" },
       { keywords: ["andamio", "andamiero", "cuerpo de andamio", "roset", "layher"], matchName: "andamios" },
       { keywords: ["aislacion", "aislador", "aislamiento", "lana", "calorifugo"], matchName: "aislacion" },
       { keywords: ["pintura", "revestimiento", "arenado"], matchName: "pintura" },
@@ -187,8 +187,10 @@ export function parsearMensajeOperadorFallback(textoRaw = "", listaEspecialidade
     }
 
     if (!especialidad_id) {
+      const lowerSinFallaMecanica = lower.replace(/\b(falla|problema|desperfecto|averia)\s+mecanic[ao]s?\b/g, "");
       for (const grupo of sinonimosEspecialidad) {
-        if (grupo.keywords.some((k) => lower.includes(k))) {
+        const textoBusqueda = grupo.matchName === "mecan" ? lowerSinFallaMecanica : lower;
+        if (grupo.keywords.some((k) => textoBusqueda.includes(k))) {
           const found = listaEspecialidades.find((e) =>
             String(e.nombre_oficial || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(grupo.matchName)
           );
@@ -373,12 +375,13 @@ REGLAS ESTRICTAS DE INTERACCIÓN Y RESPUESTA:
    - "fierreros", "montadores", "estructuras", "vigas" → especialidad 'Estructuras'
    - "aisladores", "aislación", "aislamiento", "lana", "calorífugos" → especialidad 'Aislación'
    - "andamieros", "andamios", "andamio", "cuerpos de andamio" → especialidad 'Andamios'
+   - "mecánica", "mecánicos", "mecánico", "montaje mecánico", "trabajando con mecánica", "trabajando con mecánicos" → especialidad 'Mecánicos' con tipo_evento 'Trabajando'. REGLA CRÍTICA: Cuando el operador diga "trabajando con mecánica", "trabajando con mecánicos", "apoyando a los mecánicos" o similar, se refiere a la ESPECIALIDAD OPERACIONAL 'Mecánicos' (equipo operativo trabajando en terreno). NUNCA lo interpretes como falla mecánica ('Detenido por Falla'), panne ni como equipo en mantención ('Equipo en Mantención Programada' ni especialidad 'Mantenimiento').
    - Mapeo de Estados de Faena y Operacionales:
      * "operativo", "máquina lista", "trabajando normal" → 'Equipo Operativo' o 'Trabajando'
      * "panne", "pana", "avería", "roto", "fuera de servicio", "falla" → 'Equipo Fuera de Servicio (Panne)' o 'Detenido por Falla'
      * "sin operador", "libre sin chofer", "falta operador" → 'Equipo Disponible sin Operador'
      * "en traslado", "trasladando", "traslado a otro frente", "cama baja" → 'Equipo traslado'
-     * "en mantención", "en taller", "pauta de mantención", "cambio de filtros/aceite" → 'Equipo en Mantención Programada'
+     * "en mantención", "en taller", "pauta de mantención", "cambio de filtros/aceite" → 'Equipo en Mantención Programada' (SOLO si la máquina misma está siendo reparada o en mantención; NO cuando trabaja apoyando a la especialidad 'Mecánicos')
      * "desvinculado pero en obra", "baja pero en faena" → 'Equipo Desvinculado pero en Obra'
      * "desvinculado", "fuera de faena", "devuelto" → 'Equipo Desvinculado'
      * "acreditación", "pase de ingreso", "proceso de acreditación" → 'Equipo en Proceso de Acreditación'
@@ -564,13 +567,14 @@ Reglas de Mapeo Semántico ESTRICTAS:
 - "fierreros", "montadores", "estructuras" → 'Estructuras'
 - "aislación", "aisladores", "lana", "aislamiento" → 'Aislación'
 - "andamios", "andamio", "andamieros" → 'Andamios'
-- "colación" → 'En Colacion' | "disponible/esperando" → 'Disponible' | "falla" → 'Detenido por Falla' (solo por pana o avería física, no por decir 'sin carga de combustible') | "cierre/fin" → 'CIERRE'
+- "mecánica", "mecánicos", "mecánico", "montaje mecánico", "trabajando con mecánica", "trabajando con mecánicos" → especialidad 'Mecánicos' con tipo_evento 'Trabajando'. REGLA CRÍTICA: Si dice "trabajando con mecánica" o "trabajando con mecánicos" se refiere a la ESPECIALIDAD 'Mecánicos' (equipo operativo). NUNCA lo clasifiques como falla ('Detenido por Falla'), panne ni mantención ('Equipo en Mantención Programada' o 'Mantenimiento').
+- "colación" → 'En Colacion' | "disponible/esperando" → 'Disponible' | "falla" → 'Detenido por Falla' (solo por pana o avería física, no por decir 'sin carga de combustible' ni por trabajar con la especialidad Mecánicos) | "cierre/fin" → 'CIERRE'
 - Mapeo de Estados de Faena y Operacionales:
   * "operativo", "trabajando normal" → 'Equipo Operativo' o 'Trabajando'
   * "panne", "pana", "avería", "roto", "fuera de servicio", "falla" → 'Equipo Fuera de Servicio (Panne)' o 'Detenido por Falla'
   * "sin operador", "libre sin chofer", "falta chofer" → 'Equipo Disponible sin Operador'
   * "en traslado", "trasladando", "traslado" → 'Equipo traslado'
-  * "en mantención", "en taller", "pauta de mantención" → 'Equipo en Mantención Programada'
+  * "en mantención", "en taller", "pauta de mantención" → 'Equipo en Mantención Programada' (SOLO si la máquina misma está en taller o mantención; NO cuando trabaja con la especialidad 'Mecánicos')
   * "desvinculado pero en obra" → 'Equipo Desvinculado pero en Obra'
   * "desvinculado" → 'Equipo Desvinculado'
   * "acreditación", "pase de ingreso" → 'Equipo en Proceso de Acreditación'

@@ -182,6 +182,33 @@ export async function handleCheckinFlow(ctx, res) {
 
   console.log(`[checkinHandler] Gemini checkin [${tipoEntradaLog}]:`, JSON.stringify(resultado));
 
+  // Guardrail por software para especialidad Mecánicos (evitar confusión con falla o mantención)
+  if (resultado && seguimientoCompleto) {
+    const textoRawMecan = (transcripcionEntrada || resultado.detalles_texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const mencionaMecanicaEsp =
+      /\b(trabajando|apoyando|operando|con\s+los?|en\s+frente|en\s+area|pasamos\s+a|retomando|continuando|turno)\b.*\bmecanic[oa]s?\b/.test(textoRawMecan) ||
+      /^\s*(con\s+)?(la\s+|los\s+)?mecanic[oa]s?\s*$/.test(textoRawMecan);
+    const mencionaFallaOMantencionReal =
+      /\b(falla|pana|panne|averia|averiado|roto|fuga|desperfecto|pinchado|da[nñ]o|en\s+taller|en\s+mantencion|en\s+mantenimiento|pauta\s+de\s+mantencion|detenido)\b/.test(textoRawMecan);
+
+    if (mencionaMecanicaEsp && !mencionaFallaOMantencionReal) {
+      const espMecanicos = (especialidades || []).find((e) =>
+        String(e.nombre_oficial || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").startsWith("mecan")
+      );
+      if (espMecanicos) {
+        resultado.especialidad_id = espMecanicos.id;
+        resultado.especialidad_detectada = espMecanicos.nombre_oficial;
+      }
+      resultado.es_falla_critica = false;
+      if (["Detenido por Falla", "Equipo Fuera de Servicio (Panne)", "Equipo en Mantención Programada"].includes(resultado.tipo_evento)) {
+        resultado.tipo_evento = "Trabajando";
+      }
+      if (resultado.mensaje_conversacional_bot && /\b(falla|panne|pana|mantenci[oó]n|mantenimiento|taller|detenido)\b/i.test(resultado.mensaje_conversacional_bot)) {
+        resultado.mensaje_conversacional_bot = null;
+      }
+    }
+  }
+
   // Actualizar chat log con la transcripción real si es audio
   if (audio && resultado.detalles_texto && msgUsuario?.id) {
     await supabase

@@ -16,6 +16,7 @@ const UNIDAD_POR_DISCIPLINA = {
   "piping": "ml",
   "electrico": "ml",
   "mecanica": "Ton",
+  "mecanicos": "Ton",
   "caldereria": "Ton",
 };
 
